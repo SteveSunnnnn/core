@@ -13,7 +13,7 @@ namespace core {
 class ResearchSystem;
 
 enum class DiplomaticPlayPhase : std::uint8_t { Opening, Maneuvering, Countdown, War, Resolved };
-enum class TreatyKind : std::uint8_t { Alliance, DefensivePact, MilitaryAccess, TransitRights, InvestmentRights, TradeAgreement, Custom, PeaceTreaty };
+enum class TreatyKind : std::uint8_t { Alliance, DefensivePact, MilitaryAccess, TransitRights, InvestmentRights, TradeAgreement, CustomsUnion, Custom, PeaceTreaty };
 
 
 struct TechnologyRecord { CountryId country{}; std::uint64_t key_hash=0; std::uint32_t progress_ppm=0; bool unlocked=false; };

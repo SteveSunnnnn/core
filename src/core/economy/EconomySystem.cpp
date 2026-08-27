@@ -283,7 +283,7 @@ JobDispatchStats EconomySystem::production(World& world, JobSystem& jobs) {
             const EconomyAmount available = saturating_add(supply[gi], inventory[gi]);
             fulfillment[gi] = demand[gi] > 0
                 ? std::min(mul_div_nonnegative(std::min(available, demand[gi]), ppm_scale, demand[gi]), ppm_scale)
-                : ppm_scale;
+                : (available > 0 ? ppm_scale : 0);
         }
     }
     world.markets.clear_flows();
@@ -323,12 +323,15 @@ JobDispatchStats EconomySystem::production(World& world, JobSystem& jobs) {
                     }
                     const auto inputs = input_flows.subspan(input_begin, input_count);
                     const auto outputs = output_flows.subspan(output_begin, output_count);
-                    // Input shortage rationing: throttle throughput to the worst
-                    // input availability observed last tick so buildings stop
-                    // demanding inputs the market never delivers.
+                    // Input shortage rationing: if a building requires raw materials (inputs),
+                    // and ANY input is missing / 0 available, throughput MUST drop to 0!
+                    // (Cannot produce output goods out of thin air without raw materials!)
                     for (const auto& flow : inputs) {
                         throughput_ppm = static_cast<std::int32_t>(std::min<std::int64_t>(
                             throughput_ppm, fulfillment[flow.good.value()]));
+                    }
+                    if (!inputs.empty() && throughput_ppm <= 0) {
+                        throughput_ppm = 0;
                     }
                     building_throughput_ppm_[bi] = throughput_ppm;
                     for (const auto& flow : inputs) {

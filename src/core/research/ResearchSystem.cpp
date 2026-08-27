@@ -365,6 +365,7 @@ void ResearchSystem::run_tech_spread_weekly(World& world) {
 
                 std::uint32_t chance = rules_.tech_spread_base_chance_ppm;
                 if (rel >= 50'000) chance += 50'000u;
+                if (world.grand_strategy.has_active_treaty(country, neighbor, TreatyKind::CustomsUnion)) chance += 125'000u;
                 if (world.grand_strategy.has_active_treaty(country, neighbor, TreatyKind::TradeAgreement)) chance += 100'000u;
                 if (world.grand_strategy.has_active_treaty(country, neighbor, TreatyKind::Alliance)) chance += 75'000u;
                 if (world.grand_strategy.has_active_treaty(country, neighbor, TreatyKind::InvestmentRights)) chance += 50'000u;

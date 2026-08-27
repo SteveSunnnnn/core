@@ -35,6 +35,7 @@ void seed(core::CoreEngine& e) {
     w.grand_strategy.add_treaty({c,c,core::TreatyKind::TradeAgreement,44,true});
     w.grand_strategy.add_army({c,state,5000,900000});
     w.grand_strategy.add_investment_pool({c,10000,100});
+    w.markets.inventory_row(core::MarketId{0})[tools.value()] = 100'000;
     e.initialize_economy();
 }
 

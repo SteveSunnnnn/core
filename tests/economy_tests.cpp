@@ -686,6 +686,46 @@ void test_realistic_gradual_transitions_and_governance() {
     assert(res_after < 750'000u); // Naturally decayed towards integration
 }
 
+static void test_raw_material_shortage_zero_throughput() {
+    EconomyDefinitions definitions;
+    const auto iron = definitions.add_good({"iron", 1000});
+    const auto tools = definitions.add_good({"tools", 2000});
+    const std::array<NeedFlow, 0> no_needs{};
+    const auto worker_needs = definitions.add_need_profile("workers", no_needs);
+
+    const std::array<RecipeFlow, 1> tools_in{{{iron, 1000}}};
+    const std::array<RecipeFlow, 1> tools_out{{{tools, 1000}}};
+    const auto toolworks_type = definitions.add_building_type("toolworks", 1000, tools_in, tools_out);
+
+    World world;
+    const auto country = world.countries.create({"TST", 1000.0, 100.0, 100.0, 0.2});
+    world.markets.resize(1, definitions);
+    world.markets.set_owner(MarketId{0}, country);
+    const auto b = world.buildings.create({MarketId{0}, toolworks_type, 1u, 1000, 50'000});
+    world.pops.create({MarketId{0}, 1000u, b, worker_needs});
+
+    EconomySystem economy{definitions};
+    economy.rebuild_indices(world);
+    JobSystem jobs{1u};
+
+    // Week 1: Market has 0 iron. Toolworks has workers, but 0 iron available!
+    assert(world.markets.supply(MarketId{0}, iron) == 0);
+    assert(world.markets.inventory(MarketId{0}, iron) == 0);
+
+    economy.run_weekly(world, jobs);
+
+    // Throughput MUST be 0, tools produced MUST be 0!
+    assert(world.markets.supply(MarketId{0}, tools) == 0);
+
+    // Now supply iron to the market inventory
+    world.markets.inventory_row(MarketId{0})[iron.value()] = 50'000;
+
+    economy.run_weekly(world, jobs);
+
+    // With iron available, throughput recovers and tools are produced!
+    assert(world.markets.supply(MarketId{0}, tools) > 0);
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -707,6 +747,7 @@ int main() {
     test_authored_trade_route_tariff_and_logistics_capacity();
     test_construction_queue_and_pm_gradual_transition();
     test_realistic_gradual_transitions_and_governance();
+    test_raw_material_shortage_zero_throughput();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }
