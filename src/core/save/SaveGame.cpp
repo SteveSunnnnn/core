@@ -900,6 +900,7 @@ void encode_fx_section(Writer& w, const CurrencyStore& currencies, const Country
         w.u32(c.sovereign_leader.value());
         w.i64(c.exchange_rate_ppm);
         w.i64(c.target_rate_ppm);
+        w.boolean(c.convertibility_suspended);
     }
     w.u32(static_cast<std::uint32_t>(countries.size()));
     for (std::size_t i = 0; i < countries.size(); ++i) {
@@ -908,6 +909,10 @@ void encode_fx_section(Writer& w, const CurrencyStore& currencies, const Country
         w.i64(countries.foreign_reserves_milli(id));
         w.i64(countries.balance_of_payments_milli(id));
         w.f64(countries.prestige(id));
+        w.i64(countries.national_debt_milli(id));
+        w.u8(static_cast<std::uint8_t>(countries.credit_rating(id)));
+        w.i64(countries.bond_yield_ppm(id));
+        w.u16(countries.default_weeks(id));
     }
 }
 
@@ -928,11 +933,13 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         const auto rate = r.i64();
         const auto target = r.i64();
         (void)target;
+        const auto suspended = r.boolean();
         currencies.register_currency(key, name, std_val, gold_mg, silver_mg, rate);
         currencies.set_exchange_rate_ppm(key, rate);
         currencies.set_monetary_standard(key, std_val);
         currencies.set_gold_parity_mg(key, gold_mg);
         currencies.set_silver_parity_mg(key, silver_mg);
+        currencies.set_convertibility_suspended(key, suspended);
         if (leader_val != 0xFFFFFFFFu) {
             currencies.set_sovereign_leader(key, CountryId{leader_val}, 0.0);
         }
@@ -945,10 +952,19 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         const auto primary_cur = r.u64();
         const auto reserves = r.i64();
         const auto bop = r.i64();
+        const auto prestige = r.f64();
+        const auto debt = r.i64();
+        const auto rating_val = r.u8();
+        const auto bond_yield = r.i64();
+        const auto def_weeks = r.u16();
         countries.set_primary_currency(id, primary_cur);
         countries.set_foreign_reserves_milli(id, reserves);
         countries.set_balance_of_payments_milli(id, bop);
-        countries.set_prestige(id, r.f64());
+        countries.set_prestige(id, prestige);
+        countries.set_national_debt_milli(id, debt);
+        countries.set_credit_rating(id, static_cast<CreditRating>(rating_val));
+        countries.set_bond_yield_ppm(id, bond_yield);
+        countries.set_default_weeks(id, def_weeks);
     }
     return decoded;
 }

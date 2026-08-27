@@ -37,6 +37,10 @@ void CountryStore::reserve(std::size_t count) {
     primary_currencies_.reserve(count);
     foreign_reserves_milli_.reserve(count);
     balance_of_payments_milli_.reserve(count);
+    national_debt_milli_.reserve(count);
+    credit_ratings_.reserve(count);
+    bond_yields_ppm_.reserve(count);
+    default_weeks_.reserve(count);
 }
 
 CountryId CountryStore::create(CountryInit init) {
@@ -51,6 +55,10 @@ CountryId CountryStore::create(CountryInit init) {
     primary_currencies_.push_back(init.primary_currency != 0u ? init.primary_currency : default_currency_key);
     foreign_reserves_milli_.push_back(init.foreign_reserves_milli);
     balance_of_payments_milli_.push_back(0);
+    national_debt_milli_.push_back(std::max<EconomyAmount>(0, init.national_debt_milli));
+    credit_ratings_.push_back(CreditRating::AAA);
+    bond_yields_ppm_.push_back(30'000); // 3.0% standard benchmark yield
+    default_weeks_.push_back(0);
     // Default TaxPolicy: income_tax = tax_rate converted to PPM
     TaxPolicy default_policy;
     default_policy.income_tax_ppm = static_cast<std::int32_t>(std::clamp(init.tax_rate, 0.0, 1.0) * static_cast<double>(ppm_scale) + 0.5);
@@ -175,6 +183,152 @@ void CountryStore::add_treasury_milli(CountryId id, EconomyAmount delta_milli) {
     add_treasury(id, static_cast<double>(delta_milli) / static_cast<double>(economy_scale));
 }
 
+EconomyAmount CountryStore::national_debt_milli(CountryId id) const {
+    const auto i = idx(id);
+    return i < national_debt_milli_.size() ? national_debt_milli_[i] : 0;
+}
+void CountryStore::set_national_debt_milli(CountryId id, EconomyAmount debt) {
+    const auto i = idx(id);
+    if (i < national_debt_milli_.size()) {
+        national_debt_milli_[i] = std::max<EconomyAmount>(0, debt);
+    }
+}
+void CountryStore::add_national_debt_milli(CountryId id, EconomyAmount delta) {
+    const auto i = idx(id);
+    if (i < national_debt_milli_.size()) {
+        national_debt_milli_[i] = std::max<EconomyAmount>(0, saturating_add(national_debt_milli_[i], delta));
+    }
+}
+CreditRating CountryStore::credit_rating(CountryId id) const {
+    const auto i = idx(id);
+    return i < credit_ratings_.size() ? credit_ratings_[i] : CreditRating::AAA;
+}
+void CountryStore::set_credit_rating(CountryId id, CreditRating rating) {
+    const auto i = idx(id);
+    if (i < credit_ratings_.size()) {
+        credit_ratings_[i] = rating;
+    }
+}
+EconomyPrice CountryStore::bond_yield_ppm(CountryId id) const {
+    const auto i = idx(id);
+    return i < bond_yields_ppm_.size() ? bond_yields_ppm_[i] : 30'000;
+}
+void CountryStore::set_bond_yield_ppm(CountryId id, EconomyPrice yield_ppm) {
+    const auto i = idx(id);
+    if (i < bond_yields_ppm_.size()) {
+        bond_yields_ppm_[i] = std::clamp<EconomyPrice>(yield_ppm, 10'000, 500'000);
+    }
+}
+std::uint16_t CountryStore::default_weeks(CountryId id) const {
+    const auto i = idx(id);
+    return i < default_weeks_.size() ? default_weeks_[i] : 0;
+}
+void CountryStore::set_default_weeks(CountryId id, std::uint16_t weeks) {
+    const auto i = idx(id);
+    if (i < default_weeks_.size()) {
+        default_weeks_[i] = weeks;
+    }
+}
+bool CountryStore::is_in_default(CountryId id) const {
+    return credit_rating(id) == CreditRating::D || default_weeks(id) > 0;
+}
+EconomyAmount CountryStore::weekly_debt_service_milli(CountryId id) const {
+    const auto i = idx(id);
+    if (i >= national_debt_milli_.size() || national_debt_milli_[i] <= 0) return 0;
+    const auto debt = national_debt_milli_[i];
+    const auto yield_ppm = i < bond_yields_ppm_.size() ? bond_yields_ppm_[i] : 30'000;
+    return mul_div_nonnegative(debt, yield_ppm, 52LL * ppm_scale);
+}
+EconomyAmount CountryStore::borrowing_capacity_milli(CountryId id) const {
+    const auto i = idx(id);
+    if (is_in_default(id)) return 0;
+    const double gdp_val = i < gdp_.size() ? gdp_[i] : 0.0;
+    const auto gdp_milli = static_cast<EconomyAmount>(gdp_val * 1000.0);
+    const auto rating = credit_rating(id);
+    std::int64_t max_mult_ppm = 2'500'000; // 2.5x GDP for AAA
+    switch (rating) {
+    case CreditRating::AAA: max_mult_ppm = 2'500'000; break;
+    case CreditRating::AA:  max_mult_ppm = 2'000'000; break;
+    case CreditRating::A:   max_mult_ppm = 1'500'000; break;
+    case CreditRating::BBB: max_mult_ppm = 1'000'000; break;
+    case CreditRating::BB:  max_mult_ppm = 600'000; break;
+    case CreditRating::B:   max_mult_ppm = 300'000; break;
+    case CreditRating::CCC: max_mult_ppm = 100'000; break;
+    case CreditRating::D:   return 0;
+    }
+    const auto ceiling = mul_div_nonnegative(std::max<EconomyAmount>(1000, gdp_milli), max_mult_ppm, ppm_scale);
+    const auto current_debt = national_debt_milli(id);
+    return saturating_sub(ceiling, current_debt);
+}
+EconomyAmount CountryStore::issue_sovereign_bonds(CountryId id, EconomyAmount requested_amount, World& world) {
+    if (requested_amount <= 0 || is_in_default(id)) return 0;
+    const auto capacity = borrowing_capacity_milli(id);
+    const auto actual_borrow = std::min(requested_amount, capacity);
+    if (actual_borrow <= 0) return 0;
+
+    // Withdraw funding from domestic investment pool if available
+    EconomyAmount from_pool = world.grand_strategy.withdraw_investment_pool_funds(id, actual_borrow);
+    (void)from_pool;
+
+    add_treasury_milli(id, actual_borrow);
+    add_national_debt_milli(id, actual_borrow);
+    evaluate_credit_rating(id);
+    return actual_borrow;
+}
+EconomyAmount CountryStore::repay_sovereign_debt(CountryId id, EconomyAmount repayment_amount) {
+    if (repayment_amount <= 0) return 0;
+    const auto current_debt = national_debt_milli(id);
+    const auto treasury_avail = std::max<EconomyAmount>(0, treasury_milli(id));
+    const auto actual_repay = std::min({repayment_amount, current_debt, treasury_avail});
+    if (actual_repay <= 0) return 0;
+
+    add_treasury_milli(id, -actual_repay);
+    add_national_debt_milli(id, -actual_repay);
+    evaluate_credit_rating(id);
+    return actual_repay;
+}
+void CountryStore::evaluate_credit_rating(CountryId id) {
+    const auto i = idx(id);
+    if (i >= credit_ratings_.size()) return;
+    if (default_weeks_[i] > 0) {
+        credit_ratings_[i] = CreditRating::D;
+        bond_yields_ppm_[i] = 300'000; // 30% default distress yield
+        return;
+    }
+    const auto debt = national_debt_milli_[i];
+    if (debt == 0) {
+        credit_ratings_[i] = CreditRating::AAA;
+        bond_yields_ppm_[i] = 25'000; // 2.5% risk-free benchmark
+        return;
+    }
+    const double gdp_val = i < gdp_.size() ? gdp_[i] : 0.0;
+    const auto gdp_milli = std::max<EconomyAmount>(1000, static_cast<EconomyAmount>(gdp_val * 1000.0));
+    const auto debt_ratio_ppm = mul_div_nonnegative(debt, ppm_scale, gdp_milli);
+
+    if (debt_ratio_ppm < 300'000) {
+        credit_ratings_[i] = CreditRating::AAA;
+        bond_yields_ppm_[i] = 30'000; // 3.0%
+    } else if (debt_ratio_ppm < 600'000) {
+        credit_ratings_[i] = CreditRating::AA;
+        bond_yields_ppm_[i] = 38'000; // 3.8%
+    } else if (debt_ratio_ppm < 1'000'000) {
+        credit_ratings_[i] = CreditRating::A;
+        bond_yields_ppm_[i] = 48'000; // 4.8%
+    } else if (debt_ratio_ppm < 1'500'000) {
+        credit_ratings_[i] = CreditRating::BBB;
+        bond_yields_ppm_[i] = 60'000; // 6.0%
+    } else if (debt_ratio_ppm < 2'000'000) {
+        credit_ratings_[i] = CreditRating::BB;
+        bond_yields_ppm_[i] = 85'000; // 8.5%
+    } else if (debt_ratio_ppm < 2'500'000) {
+        credit_ratings_[i] = CreditRating::B;
+        bond_yields_ppm_[i] = 120'000; // 12.0%
+    } else {
+        credit_ratings_[i] = CreditRating::CCC;
+        bond_yields_ppm_[i] = 180'000; // 18.0%
+    }
+}
+
 std::uint64_t CountryStore::checksum() const noexcept {
     Fnv1a64 h;
     const auto n = tags_.size();
@@ -194,6 +348,10 @@ std::uint64_t CountryStore::checksum() const noexcept {
         h.add(i < primary_currencies_.size() ? primary_currencies_[i] : default_currency_key);
         h.add(i < foreign_reserves_milli_.size() ? foreign_reserves_milli_[i] : 0);
         h.add(i < balance_of_payments_milli_.size() ? balance_of_payments_milli_[i] : 0);
+        h.add(i < national_debt_milli_.size() ? national_debt_milli_[i] : 0);
+        h.add(i < credit_ratings_.size() ? static_cast<std::uint8_t>(credit_ratings_[i]) : static_cast<std::uint8_t>(0));
+        h.add(i < bond_yields_ppm_.size() ? bond_yields_ppm_[i] : 0);
+        h.add(i < default_weeks_.size() ? default_weeks_[i] : 0);
     }
     return h.value();
 }

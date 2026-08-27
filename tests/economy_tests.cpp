@@ -433,6 +433,82 @@ static void test_gdp_real_numeraire_and_domestic_wages() {
     assert(std::abs(f.world.countries.gdp(c1) - expected_real_gdp) < 1.0);
 }
 
+static void test_gold_points_specie_arbitrage_and_drain() {
+    auto f = make_fixture(2u, 4u, 40u, 100u);
+    const CurrencyKey gbp = economy_stable_key("currency.gbp");
+    const CurrencyKey usd = economy_stable_key("currency.usd");
+
+    // GBP on Gold Standard with 1000 mg fine gold per unit
+    f.world.currencies.register_currency(gbp, "Pound Sterling", MonetaryStandard::GoldStandard, 1000, 15500, 1'000'000);
+    f.world.currencies.register_currency(usd, "US Dollar", MonetaryStandard::GoldStandard, 1000, 15500, 1'000'000);
+
+    const CountryId gbr{0u};
+    f.world.countries.set_primary_currency(gbr, gbp);
+    f.world.countries.set_foreign_reserves_milli(gbr, 50'000); // 50 units gold reserves
+    f.world.currencies.set_sovereign_leader(gbp, gbr, 100.0);
+
+    // Continuous trade deficit: demand for USD (selling GBP) pushes GBP exchange rate down
+    f.world.currencies.record_fx_flow(gbp, usd, 20'000); // 20 units deficit
+    f.world.currencies.update_exchange_rates(1'000'000, 64'516, &f.world.countries);
+
+    // 1. Specie Arbitrage triggered: rate is pegged at the Gold Export Point (980,000 ppm)
+    assert(f.world.currencies.exchange_rate_ppm(gbp) >= 980'000);
+    // Gold was physically shipped!
+    assert(f.world.currencies.specie_export_mg(gbp) > 0);
+    // Central reserves were debited
+    assert(f.world.countries.foreign_reserves_milli(gbr) < 50'000);
+    assert(!f.world.currencies.convertibility_suspended(gbp));
+
+    // 2. Heavy drain that exhausts remaining reserves
+    f.world.countries.set_foreign_reserves_milli(gbr, 0); // Out of gold!
+    f.world.currencies.record_fx_flow(gbp, usd, 100'000);
+    f.world.currencies.update_exchange_rates(1'000'000, 64'516, &f.world.countries);
+
+    // Specie drained -> Forced suspension of gold convertibility!
+    assert(f.world.currencies.convertibility_suspended(gbp));
+}
+
+static void test_sovereign_debt_issuance_credit_rating_and_default() {
+    auto f = make_fixture(2u, 4u, 40u, 100u);
+    const CountryId c0{0u};
+    f.world.countries.set_gdp(c0, 1000.0); // Real GDP = 1000
+    f.world.countries.set_treasury(c0, 100.0); // Treasury = 100
+
+    // Initial state: AAA rating, 3.0% yield, 0 debt
+    f.world.countries.evaluate_credit_rating(c0);
+    assert(f.world.countries.credit_rating(c0) == CreditRating::AAA);
+    assert(f.world.countries.bond_yield_ppm(c0) == 25'000 || f.world.countries.bond_yield_ppm(c0) == 30'000);
+
+    // 1. Issue sovereign bonds: borrow 200,000 milli (200 units)
+    const auto borrowed = f.world.countries.issue_sovereign_bonds(c0, 200'000, f.world);
+    assert(borrowed == 200'000);
+    assert(f.world.countries.national_debt_milli(c0) == 200'000);
+    // Treasury received cash
+    assert(f.world.countries.treasury_milli(c0) >= 300'000);
+
+    // 2. Over-borrowing degrades credit rating
+    f.world.countries.set_national_debt_milli(c0, 1'800'000); // 180% of GDP
+    f.world.countries.evaluate_credit_rating(c0);
+    assert(f.world.countries.credit_rating(c0) == CreditRating::BB);
+    assert(f.world.countries.bond_yield_ppm(c0) >= 80'000); // Higher risk yield
+
+    // 3. Weekly interest deduction in economy settlement
+    EconomySystem economy{f.definitions};
+    economy.rebuild_indices(f.world);
+    JobSystem jobs{0u};
+
+    const auto treasury_before = f.world.countries.treasury_milli(c0);
+    economy.run_weekly(f.world, jobs);
+    // Treasury was charged weekly debt service interest
+    assert(f.world.countries.weekly_debt_service_milli(c0) > 0);
+
+    // 4. Repay debt: use surplus treasury to reduce debt
+    const auto debt_before = f.world.countries.national_debt_milli(c0);
+    const auto repaid = f.world.countries.repay_sovereign_debt(c0, 1'000'000);
+    assert(repaid > 0);
+    assert(f.world.countries.national_debt_milli(c0) < debt_before);
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -448,6 +524,8 @@ int main() {
     test_monetary_sovereignty_and_seigniorage();
     test_bimetallism_and_greshams_law();
     test_gdp_real_numeraire_and_domestic_wages();
+    test_gold_points_specie_arbitrage_and_drain();
+    test_sovereign_debt_issuance_credit_rating_and_default();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }

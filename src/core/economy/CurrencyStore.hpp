@@ -41,6 +41,9 @@ struct CurrencyRecord {
     EconomyAmount trade_demand_milli = 0;       // Foreign currency demanded this tick
     EconomyAmount trade_supply_milli = 0;       // Foreign currency offered this tick
     EconomyAmount seigniorage_accrued_milli = 0;// Seigniorage collected for sovereign leader
+    std::uint64_t specie_export_mg = 0;         // Physical specie (gold/silver) exported this tick
+    std::uint64_t specie_import_mg = 0;         // Physical specie (gold/silver) imported this tick
+    bool convertibility_suspended = false;      // True if gold/silver redemption is suspended (specie drain)
     std::vector<EconomyPrice> history_rates_ppm;// Rolling weekly exchange rate history for UI charts
 };
 
@@ -78,6 +81,11 @@ public:
     [[nodiscard]] EconomyAmount seigniorage_accrued_milli(CurrencyKey key) const noexcept;
     void clear_seigniorage(CurrencyKey key) noexcept;
 
+    [[nodiscard]] std::uint64_t specie_export_mg(CurrencyKey key) const noexcept;
+    [[nodiscard]] std::uint64_t specie_import_mg(CurrencyKey key) const noexcept;
+    [[nodiscard]] bool convertibility_suspended(CurrencyKey key) const noexcept;
+    void set_convertibility_suspended(CurrencyKey key, bool suspended) noexcept;
+
     // Convert an amount in `from` currency to `to` currency:
     // Amount_to = (Amount_from * Rate_from) / Rate_to
     [[nodiscard]] EconomyAmount convert(EconomyAmount amount_milli,
@@ -99,9 +107,11 @@ public:
     void evaluate_monetary_sovereignty(const CountryStore& countries) noexcept;
 
     // Clear weekly FX trade flows and deterministically adjust exchange rates
-    // according to metallic standards (Gold Points, Gresham's law) and trade balance
+    // according to metallic standards (Gold Points, Gresham's law, physical specie shipments)
+    // and trade balance.
     void update_exchange_rates(EconomyPrice gold_price_ppm = 1'000'000,
-                               EconomyPrice silver_price_ppm = 64'516) noexcept;
+                               EconomyPrice silver_price_ppm = 64'516,
+                               CountryStore* countries = nullptr) noexcept;
 
     [[nodiscard]] std::size_t memory_bytes() const noexcept;
     [[nodiscard]] std::uint64_t checksum() const noexcept;

@@ -156,6 +156,29 @@ void CurrencyStore::clear_seigniorage(CurrencyKey key) noexcept {
     }
 }
 
+std::uint64_t CurrencyStore::specie_export_mg(CurrencyKey key) const noexcept {
+    const auto idx = find_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return 0;
+    return currencies_[idx].specie_export_mg;
+}
+
+std::uint64_t CurrencyStore::specie_import_mg(CurrencyKey key) const noexcept {
+    const auto idx = find_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return 0;
+    return currencies_[idx].specie_import_mg;
+}
+
+bool CurrencyStore::convertibility_suspended(CurrencyKey key) const noexcept {
+    const auto idx = find_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return false;
+    return currencies_[idx].convertibility_suspended;
+}
+
+void CurrencyStore::set_convertibility_suspended(CurrencyKey key, bool suspended) noexcept {
+    const auto idx = find_or_add_index(key);
+    currencies_[idx].convertibility_suspended = suspended;
+}
+
 EconomyAmount CurrencyStore::convert(EconomyAmount amount_milli,
                                      CurrencyKey from,
                                      CurrencyKey to) const noexcept {
@@ -228,13 +251,17 @@ void CurrencyStore::evaluate_monetary_sovereignty(const CountryStore& countries)
 }
 
 void CurrencyStore::update_exchange_rates(EconomyPrice gold_price_ppm,
-                                         EconomyPrice silver_price_ppm) noexcept {
+                                         EconomyPrice silver_price_ppm,
+                                         CountryStore* countries) noexcept {
     // Base parity: 1000 mg Gold = gold_price_ppm
     // Silver parity: 15500 mg Silver at standard 15.5:1 ratio = gold_price_ppm
     const auto safe_gold_price = std::max<EconomyPrice>(1, gold_price_ppm);
     const auto safe_silver_price = std::max<EconomyPrice>(1, silver_price_ppm);
 
     for (auto& cur : currencies_) {
+        cur.specie_export_mg = 0;
+        cur.specie_import_mg = 0;
+
         // Compute metallic mint parity target rate
         switch (cur.standard) {
         case MonetaryStandard::GoldStandard: {
@@ -289,19 +316,66 @@ void CurrencyStore::update_exchange_rates(EconomyPrice gold_price_ppm,
             }
         }
 
-        // Apply Gold Points / Metallic Arbitrage band for specie standards:
-        // Specie-flow prevents exchange rates from deviating beyond gold transport points
-        if (cur.standard == MonetaryStandard::GoldStandard ||
+        // Apply Gold/Silver Points Specie Arbitrage & Physical Specie Transport:
+        // Specie-flow prevents exchange rates from deviating beyond transport points.
+        // Once buying FX on market > Cost of redeeming gold at mint + shipping,
+        // banks automatically ship physical gold/silver to clear the balance.
+        if (!cur.convertibility_suspended && (
+            cur.standard == MonetaryStandard::GoldStandard ||
             cur.standard == MonetaryStandard::SilverStandard ||
-            cur.standard == MonetaryStandard::Bimetallism) {
+            cur.standard == MonetaryStandard::Bimetallism)) {
+
             const auto export_point = std::max<EconomyPrice>(
                 kMinExchangeRatePpm,
                 mul_div_nonnegative(cur.target_rate_ppm, ppm_scale - kGoldTransportPointPpm, ppm_scale));
             const auto import_point = mul_div_nonnegative(
                 cur.target_rate_ppm, ppm_scale + kGoldTransportPointPpm, ppm_scale);
 
-            // Arbitrage bounds: specie shipments pull rate back within gold points
-            cur.exchange_rate_ppm = std::clamp(cur.exchange_rate_ppm, export_point, import_point);
+            if (cur.exchange_rate_ppm < export_point) {
+                // Specie export arbitrage triggered
+                const auto fx_deficit = demand > supply ? demand - supply : 1000;
+                const auto active_parity_mg = (cur.standard == MonetaryStandard::SilverStandard)
+                    ? cur.silver_parity_mg
+                    : cur.gold_parity_mg;
+                const auto gold_exported_mg = mul_div_nonnegative(fx_deficit, active_parity_mg, 1000);
+
+                bool defended = true;
+                if (countries != nullptr && cur.sovereign_leader.valid()) {
+                    const auto reserves = countries->foreign_reserves_milli(cur.sovereign_leader);
+                    if (reserves >= fx_deficit) {
+                        countries->add_foreign_reserves_milli(cur.sovereign_leader, -fx_deficit);
+                        cur.specie_export_mg = static_cast<std::uint64_t>(gold_exported_mg);
+                    } else if (reserves > 0) {
+                        countries->set_foreign_reserves_milli(cur.sovereign_leader, 0);
+                        cur.specie_export_mg = static_cast<std::uint64_t>(
+                            mul_div_nonnegative(reserves, active_parity_mg, 1000));
+                        cur.convertibility_suspended = true;
+                        defended = false;
+                    } else {
+                        cur.convertibility_suspended = true;
+                        defended = false;
+                    }
+                } else {
+                    cur.specie_export_mg = static_cast<std::uint64_t>(gold_exported_mg);
+                }
+
+                if (defended) {
+                    cur.exchange_rate_ppm = export_point;
+                }
+            } else if (cur.exchange_rate_ppm > import_point) {
+                // Specie import arbitrage triggered
+                const auto fx_surplus = supply > demand ? supply - demand : 1000;
+                const auto active_parity_mg = (cur.standard == MonetaryStandard::SilverStandard)
+                    ? cur.silver_parity_mg
+                    : cur.gold_parity_mg;
+                const auto gold_imported_mg = mul_div_nonnegative(fx_surplus, active_parity_mg, 1000);
+                cur.specie_import_mg = static_cast<std::uint64_t>(gold_imported_mg);
+
+                if (countries != nullptr && cur.sovereign_leader.valid()) {
+                    countries->add_foreign_reserves_milli(cur.sovereign_leader, fx_surplus);
+                }
+                cur.exchange_rate_ppm = import_point;
+            }
         }
 
         cur.exchange_rate_ppm = std::clamp(cur.exchange_rate_ppm, kMinExchangeRatePpm, kMaxExchangeRatePpm);

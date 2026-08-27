@@ -7,8 +7,14 @@
 - Enhanced `EconomySystem::trade` with multi-currency invoice clearing and Hume's Price-Specie Flow mechanism across international markets.
 - Guaranteed rigorous domestic vs foreign exchange settlement separation: POP wages, consumption, building retention, and taxation strictly clear in domestic local currency, while cross-zone trade clears in foreign exchange.
 - Standardized country GDP calculation to the global gold parity numeraire (`default_currency_key`), eliminating currency devaluation/inflation distortions in international Great Power rankings while retaining nominal local currency GDP for domestic fiscal accounting.
-- Updated `FX01` atomic save serialization to persist monetary standards, fine metal parities, zone leadership, and country prestige scores.
-- Added comprehensive unit and regression tests in `tests/economy_tests.cpp` covering metallic standard parities, Gresham's law ratio divergence, zone leadership election/transfer, and seigniorage distribution.
+- Implemented Hume's classical **Gold & Silver Transport Points Specie Arbitrage**: When persistent trade deficits drive open-market FX costs above mint parity plus gold transport/insurance, bullion arbitrageurs automatically redeem paper for physical specie and ship gold/silver to clear the trade gap, directly debiting national central reserves. If reserves are drained to zero, convertibility is suspended and the currency is forced into fiat depreciation.
+- Added **Sovereign Debt, Bond Issuance, Credit Ratings & Bond Markets** to `CountryStore`:
+  - Countries can issue sovereign bonds to raise funds into their treasury up to credit-rating-scaled debt ceilings (`AAA` to `D`).
+  - Implemented dynamic bond yields and credit rating evaluation based on Debt-to-GDP ratio, treasury coverage, and default history.
+  - Weekly debt service interest is automatically deducted during economy settlement; insolvency triggers Sovereign Default (`CreditRating::D`), freezing bond markets and penalizing national prestige.
+- Added rolling 52-week exchange rate history buffers in `CurrencyStore` enabling native in-game timeseries charts (`UiChartKind::Line`, `UiChartKind::Candlestick`) in `ScriptedGuiRuntime`.
+- Updated `FX01` atomic save serialization to persist monetary standards, fine metal parities, zone leadership, country prestige, convertibility status, national debt, credit ratings, and bond yields.
+- Added comprehensive unit and regression tests in `tests/economy_tests.cpp` covering metallic standard parities, Gresham's law ratio divergence, zone leadership election/transfer, specie drain/convertibility suspension, and sovereign bond issuance/default.
 
 ## Core 1.0 Development — Retained UI Runtime & Pin Updates — 2026-08-27
 - Implemented `src/core/ui/ScriptedGuiRuntime.cpp` and wired it into `core_runtime`, completing the retained UI state machine.

@@ -787,6 +787,25 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
         world.countries.set_population(country, static_cast<double>(country_population_[ci]));
         world.countries.set_gdp(country, static_cast<double>(country_gdp_milli_[ci]) / static_cast<double>(economy_scale));
         world.countries.set_nominal_gdp_milli(country, country_nominal_gdp_milli_[ci]);
+
+        // Service Sovereign Debt interest:
+        const auto debt_service = world.countries.weekly_debt_service_milli(country);
+        if (debt_service > 0) {
+            const auto treasury_avail = world.countries.treasury_milli(country);
+            if (treasury_avail >= debt_service) {
+                // Solvently pay interest
+                world.countries.add_treasury_milli(country, -debt_service);
+                if (world.countries.default_weeks(country) > 0) {
+                    world.countries.set_default_weeks(country, world.countries.default_weeks(country) - 1);
+                }
+            } else {
+                // Insolvent: enter sovereign default
+                world.countries.set_default_weeks(country, world.countries.default_weeks(country) + 1);
+                world.countries.set_credit_rating(country, CreditRating::D);
+                world.countries.add_prestige(country, -5.0);
+            }
+        }
+        world.countries.evaluate_credit_rating(country);
     }
     return stats;
 }
@@ -893,7 +912,7 @@ void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile
     run_phase([&]{return update_prices(world,jobs);},profile?&profile->prices:nullptr);
     run_phase([&]{return settlement(world,jobs);},profile?&profile->settlement:nullptr);
     world.currencies.evaluate_monetary_sovereignty(world.countries);
-    world.currencies.update_exchange_rates();
+    world.currencies.update_exchange_rates(1'000'000, 64'516, &world.countries);
     for (const auto& cur : world.currencies.currencies()) {
         const auto seigniorage = cur.seigniorage_accrued_milli;
         if (seigniorage > 0 && cur.sovereign_leader.valid()) {

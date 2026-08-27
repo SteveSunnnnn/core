@@ -24,6 +24,17 @@ struct TaxPolicy {
     std::int32_t dividends_tax_ppm = 0;        // Tax on capital dividends
 };
 
+enum class CreditRating : std::uint8_t {
+    AAA = 0,
+    AA  = 1,
+    A   = 2,
+    BBB = 3,
+    BB  = 4,
+    B   = 5,
+    CCC = 6,
+    D   = 7 // Default / Distressed
+};
+
 struct CountryInit {
     std::string tag;
     double population = 0.0;
@@ -33,6 +44,7 @@ struct CountryInit {
     CurrencyKey primary_currency = default_currency_key;
     EconomyAmount foreign_reserves_milli = 0;
     double prestige = 0.0;
+    EconomyAmount national_debt_milli = 0;
 };
 
 // Maximum negative cash a building can accumulate before it stops operating.
@@ -73,6 +85,27 @@ public:
     void set_balance_of_payments_milli(CountryId id, EconomyAmount amount);
     void add_balance_of_payments_milli(CountryId id, EconomyAmount delta);
 
+    // Sovereign Debt, Credit Ratings & Bond Market
+    [[nodiscard]] EconomyAmount national_debt_milli(CountryId id) const;
+    void set_national_debt_milli(CountryId id, EconomyAmount debt);
+    void add_national_debt_milli(CountryId id, EconomyAmount delta);
+    [[nodiscard]] CreditRating credit_rating(CountryId id) const;
+    void set_credit_rating(CountryId id, CreditRating rating);
+    [[nodiscard]] EconomyPrice bond_yield_ppm(CountryId id) const;
+    void set_bond_yield_ppm(CountryId id, EconomyPrice yield_ppm);
+    [[nodiscard]] std::uint16_t default_weeks(CountryId id) const;
+    void set_default_weeks(CountryId id, std::uint16_t weeks);
+    [[nodiscard]] bool is_in_default(CountryId id) const;
+    [[nodiscard]] EconomyAmount weekly_debt_service_milli(CountryId id) const;
+    [[nodiscard]] EconomyAmount borrowing_capacity_milli(CountryId id) const;
+
+    // Issue sovereign bonds to raise funds into treasury
+    EconomyAmount issue_sovereign_bonds(CountryId id, EconomyAmount requested_amount, World& world);
+    // Repay outstanding sovereign debt from treasury
+    EconomyAmount repay_sovereign_debt(CountryId id, EconomyAmount repayment_amount);
+    // Evaluate sovereign credit rating based on Debt/GDP, reserves, and default status
+    void evaluate_credit_rating(CountryId id);
+
     [[nodiscard]] std::span<const double> populations() const noexcept { return population_; }
     [[nodiscard]] std::span<const double> gdps() const noexcept { return gdp_; }
     [[nodiscard]] std::span<const EconomyAmount> nominal_gdps() const noexcept { return nominal_gdp_milli_; }
@@ -82,6 +115,9 @@ public:
     [[nodiscard]] std::span<const CurrencyKey> primary_currencies() const noexcept { return primary_currencies_; }
     [[nodiscard]] std::span<const EconomyAmount> foreign_reserves() const noexcept { return foreign_reserves_milli_; }
     [[nodiscard]] std::span<const EconomyAmount> balance_of_payments() const noexcept { return balance_of_payments_milli_; }
+    [[nodiscard]] std::span<const EconomyAmount> national_debts() const noexcept { return national_debt_milli_; }
+    [[nodiscard]] std::span<const CreditRating> credit_ratings() const noexcept { return credit_ratings_; }
+    [[nodiscard]] std::span<const EconomyPrice> bond_yields() const noexcept { return bond_yields_ppm_; }
 
     void set_population(CountryId id, double value);
     void set_gdp(CountryId id, double value);
@@ -110,6 +146,10 @@ private:
     std::vector<CurrencyKey> primary_currencies_;
     std::vector<EconomyAmount> foreign_reserves_milli_;
     std::vector<EconomyAmount> balance_of_payments_milli_;
+    std::vector<EconomyAmount> national_debt_milli_;
+    std::vector<CreditRating> credit_ratings_;
+    std::vector<EconomyPrice> bond_yields_ppm_;
+    std::vector<std::uint16_t> default_weeks_;
 };
 
 class World {
