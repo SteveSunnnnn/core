@@ -1,12 +1,12 @@
 # Changelog
 
-## Core 1.0 Development — Foreign Exchange (FX) & Multi-Currency International Trade — 2026-08-27
-- Implemented `CurrencyStore` (`src/core/economy/CurrencyStore.cpp`) with support for registered currencies, floating/fixed/gold-standard exchange rate pegs, and overflow-safe fixed-point conversions.
-- Unlocked multi-currency international trade in `EconomySystem::trade`, evaluating cross-currency price arbitrage against transport bands, clearing trade invoices at fair midpoints, and recording bilateral FX demand.
-- Added country-level primary currency designations, foreign exchange reserves, and balance-of-payments tracking in `CountryStore`.
-- Implemented deterministic weekly floating exchange rate formation driven by net international trade surplus and deficit pressures with bounded volatility clamps.
-- Extended atomic save serialization with the `FX01` extension section in `SaveGame.cpp` while preserving backward compatibility for legacy and pre-FX saves.
-- Added comprehensive unit and regression tests in `tests/economy_tests.cpp` covering currency conversion, cross-currency trade arbitrage, FX reserve accumulation, and exchange rate appreciation.
+## Core 1.0 Development — Monetary Standards, Currency Zones & Monetary Sovereignty — 2026-08-27
+- Refactored `CurrencyStore` (`src/core/economy/CurrencyStore.cpp`) to implement authentic **Monetary Standards**: `GoldStandard` (anchored to fine gold milligrams and bounded by gold transport points), `SilverStandard`, `Bimetallism` (governed by Gresham's Law ratio dynamics), and `FiatFloating` (market credit-driven).
+- Implemented **Currency Zones (Monetary Unions)** and **Monetary Sovereignty**: The member country with highest prestige and power in a currency union dynamically holds monetary sovereignty, dictating metallic parity policy and harvesting seigniorage revenues into its national treasury.
+- Added country prestige (`prestige`, `power_score`) to `CountryStore` and integrated it into authoritative state checksums.
+- Enhanced `EconomySystem::trade` with multi-currency invoice clearing and Hume's Price-Specie Flow mechanism across international markets.
+- Updated `FX01` atomic save serialization to persist monetary standards, fine metal parities, zone leadership, and country prestige scores.
+- Added comprehensive unit and regression tests in `tests/economy_tests.cpp` covering metallic standard parities, Gresham's law ratio divergence, zone leadership election/transfer, and seigniorage distribution.
 
 ## Core 1.0 Development — Retained UI Runtime & Pin Updates — 2026-08-27
 - Implemented `src/core/ui/ScriptedGuiRuntime.cpp` and wired it into `core_runtime`, completing the retained UI state machine.

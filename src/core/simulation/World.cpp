@@ -31,6 +31,7 @@ void CountryStore::reserve(std::size_t count) {
     gdp_.reserve(count);
     treasury_.reserve(count);
     tax_rate_.reserve(count);
+    prestige_.reserve(count);
     tax_policies_.reserve(count);
     primary_currencies_.reserve(count);
     foreign_reserves_milli_.reserve(count);
@@ -44,6 +45,7 @@ CountryId CountryStore::create(CountryInit init) {
     gdp_.push_back(nonnegative_finite(init.gdp, "gdp"));
     treasury_.push_back(finite_value(init.treasury, "treasury"));
     tax_rate_.push_back(tax_finite(init.tax_rate));
+    prestige_.push_back(nonnegative_finite(init.prestige, "prestige"));
     primary_currencies_.push_back(init.primary_currency != 0u ? init.primary_currency : default_currency_key);
     foreign_reserves_milli_.push_back(init.foreign_reserves_milli);
     balance_of_payments_milli_.push_back(0);
@@ -107,6 +109,25 @@ void CountryStore::add_balance_of_payments_milli(CountryId id, EconomyAmount del
     balance_of_payments_milli_[i] = saturating_add(balance_of_payments_milli_[i], delta);
 }
 
+double CountryStore::prestige(CountryId id) const {
+    const auto i = idx(id);
+    return i < prestige_.size() ? prestige_[i] : 0.0;
+}
+void CountryStore::set_prestige(CountryId id, double value) {
+    prestige_[idx(id)] = nonnegative_finite(value, "prestige");
+}
+void CountryStore::add_prestige(CountryId id, double delta) {
+    const auto i = idx(id);
+    prestige_[i] = std::max(0.0, saturating_double_add(prestige_[i], delta));
+}
+double CountryStore::power_score(CountryId id) const {
+    const auto i = idx(id);
+    const double p = i < prestige_.size() ? prestige_[i] : 0.0;
+    const double g = i < gdp_.size() ? gdp_[i] : 0.0;
+    const double t = i < treasury_.size() ? std::max(0.0, treasury_[i]) : 0.0;
+    return p + (g * 0.001) + (t * 0.0001);
+}
+
 void CountryStore::set_population(CountryId id, double value) { population_[idx(id)] = nonnegative_finite(value, "population"); }
 void CountryStore::set_gdp(CountryId id, double value) { gdp_[idx(id)] = nonnegative_finite(value, "gdp"); }
 void CountryStore::set_treasury(CountryId id, double value) { treasury_[idx(id)] = finite_value(value, "treasury"); }
@@ -146,6 +167,7 @@ std::uint64_t CountryStore::checksum() const noexcept {
         h.add(gdp_[i]);
         h.add(treasury_[i]);
         h.add(tax_rate_[i]);
+        h.add(i < prestige_.size() ? prestige_[i] : 0.0);
         h.add(tax_policies_[i].income_tax_ppm);
         h.add(tax_policies_[i].consumption_tax_ppm);
         h.add(tax_policies_[i].land_tax_ppm);

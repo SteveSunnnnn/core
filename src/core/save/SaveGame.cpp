@@ -894,7 +894,10 @@ void encode_fx_section(Writer& w, const CurrencyStore& currencies, const Country
     for (const auto& c : currencies.currencies()) {
         w.u64(c.key);
         w.string(c.name);
-        w.u8(static_cast<std::uint8_t>(c.peg_mode));
+        w.u8(static_cast<std::uint8_t>(c.standard));
+        w.u32(c.gold_parity_mg);
+        w.u32(c.silver_parity_mg);
+        w.u32(c.sovereign_leader.value());
         w.i64(c.exchange_rate_ppm);
         w.i64(c.target_rate_ppm);
     }
@@ -904,6 +907,7 @@ void encode_fx_section(Writer& w, const CurrencyStore& currencies, const Country
         w.u64(countries.primary_currency(id));
         w.i64(countries.foreign_reserves_milli(id));
         w.i64(countries.balance_of_payments_milli(id));
+        w.f64(countries.prestige(id));
     }
 }
 
@@ -917,13 +921,21 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
     for (std::uint32_t i = 0; i < cur_count; ++i) {
         const auto key = r.u64();
         const auto name = r.string();
-        const auto peg = static_cast<CurrencyPegMode>(r.u8());
+        const auto std_val = static_cast<MonetaryStandard>(r.u8());
+        const auto gold_mg = r.u32();
+        const auto silver_mg = r.u32();
+        const auto leader_val = r.u32();
         const auto rate = r.i64();
         const auto target = r.i64();
         (void)target;
-        currencies.register_currency(key, name, peg, rate);
+        currencies.register_currency(key, name, std_val, gold_mg, silver_mg, rate);
         currencies.set_exchange_rate_ppm(key, rate);
-        currencies.set_peg_mode(key, peg);
+        currencies.set_monetary_standard(key, std_val);
+        currencies.set_gold_parity_mg(key, gold_mg);
+        currencies.set_silver_parity_mg(key, silver_mg);
+        if (leader_val != 0xFFFFFFFFu) {
+            currencies.set_sovereign_leader(key, CountryId{leader_val}, 0.0);
+        }
     }
     const auto country_count = r.count(static_cast<std::uint32_t>(countries.size()));
     if (country_count != countries.size())
@@ -936,6 +948,7 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         countries.set_primary_currency(id, primary_cur);
         countries.set_foreign_reserves_milli(id, reserves);
         countries.set_balance_of_payments_milli(id, bop);
+        countries.set_prestige(id, r.f64());
     }
     return decoded;
 }

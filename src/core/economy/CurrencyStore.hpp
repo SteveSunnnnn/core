@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/base/Hash.hpp"
+#include "core/base/StrongId.hpp"
 #include "core/economy/EconomicTypes.hpp"
 
 #include <algorithm>
@@ -14,20 +15,32 @@
 
 namespace core {
 
-enum class CurrencyPegMode : std::uint8_t {
-    Floating = 0,     // Exchange rate floats based on trade balance / market pressure
-    Fixed = 1,        // Pegged to base numeraire at fixed exchange rate
-    GoldStandard = 2  // Fixed gold parity
+class CountryStore;
+
+enum class MonetaryStandard : std::uint8_t {
+    GoldStandard = 0,    // Pure gold standard with specie-flow mechanism
+    SilverStandard = 1,  // Silver standard
+    Bimetallism = 2,     // Bimetallic standard (gold & silver with Gresham's law)
+    FiatFloating = 3     // Unbacked paper / credit currency
 };
 
 struct CurrencyRecord {
     CurrencyKey key = 0;
     std::string name;
-    CurrencyPegMode peg_mode = CurrencyPegMode::Floating;
+    MonetaryStandard standard = MonetaryStandard::GoldStandard;
+    CountryId sovereign_leader{};               // Sovereign nation with monetary hegemony
+    double leader_prestige = 0.0;               // Power score of current sovereign leader
+    
+    // Metallic parities in milligrams of fine metal per currency unit
+    // Standard baseline: 1000 mg gold = 1 standard gold unit, 15500 mg silver = 15.5:1 ratio
+    std::uint32_t gold_parity_mg = 1000;
+    std::uint32_t silver_parity_mg = 15500;
+
     EconomyPrice exchange_rate_ppm = 1'000'000; // 1'000'000 ppm = 1.0 base unit
-    EconomyPrice target_rate_ppm = 1'000'000;   // Target or peg rate
+    EconomyPrice target_rate_ppm = 1'000'000;   // Legal mint parity rate
     EconomyAmount trade_demand_milli = 0;       // Foreign currency demanded this tick
     EconomyAmount trade_supply_milli = 0;       // Foreign currency offered this tick
+    EconomyAmount seigniorage_accrued_milli = 0;// Seigniorage collected for sovereign leader
 };
 
 class CurrencyStore {
@@ -36,7 +49,9 @@ public:
 
     void clear() noexcept;
     void register_currency(CurrencyKey key, std::string_view name,
-                           CurrencyPegMode peg_mode = CurrencyPegMode::Floating,
+                           MonetaryStandard standard = MonetaryStandard::GoldStandard,
+                           std::uint32_t gold_parity_mg = 1000,
+                           std::uint32_t silver_parity_mg = 15500,
                            EconomyPrice initial_rate_ppm = 1'000'000);
 
     [[nodiscard]] std::size_t size() const noexcept { return currencies_.size(); }
@@ -46,8 +61,20 @@ public:
     [[nodiscard]] EconomyPrice exchange_rate_ppm(CurrencyKey key) const noexcept;
     void set_exchange_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm) noexcept;
 
-    [[nodiscard]] CurrencyPegMode peg_mode(CurrencyKey key) const noexcept;
-    void set_peg_mode(CurrencyKey key, CurrencyPegMode mode) noexcept;
+    [[nodiscard]] MonetaryStandard monetary_standard(CurrencyKey key) const noexcept;
+    void set_monetary_standard(CurrencyKey key, MonetaryStandard standard) noexcept;
+
+    [[nodiscard]] std::uint32_t gold_parity_mg(CurrencyKey key) const noexcept;
+    void set_gold_parity_mg(CurrencyKey key, std::uint32_t mg) noexcept;
+
+    [[nodiscard]] std::uint32_t silver_parity_mg(CurrencyKey key) const noexcept;
+    void set_silver_parity_mg(CurrencyKey key, std::uint32_t mg) noexcept;
+
+    [[nodiscard]] CountryId sovereign_leader(CurrencyKey key) const noexcept;
+    void set_sovereign_leader(CurrencyKey key, CountryId leader, double prestige) noexcept;
+
+    [[nodiscard]] EconomyAmount seigniorage_accrued_milli(CurrencyKey key) const noexcept;
+    void clear_seigniorage(CurrencyKey key) noexcept;
 
     // Convert an amount in `from` currency to `to` currency:
     // Amount_to = (Amount_from * Rate_from) / Rate_to
@@ -66,8 +93,13 @@ public:
     void record_fx_flow(CurrencyKey sold_currency, CurrencyKey bought_currency,
                         EconomyAmount volume_in_bought_milli) noexcept;
 
-    // Clear weekly FX trade flows and deterministically adjust floating exchange rates.
-    void update_exchange_rates() noexcept;
+    // Evaluate monetary sovereignty for all currency zones based on member nations' prestige & power
+    void evaluate_monetary_sovereignty(const CountryStore& countries) noexcept;
+
+    // Clear weekly FX trade flows and deterministically adjust exchange rates
+    // according to metallic standards (Gold Points, Gresham's law) and trade balance
+    void update_exchange_rates(EconomyPrice gold_price_ppm = 1'000'000,
+                               EconomyPrice silver_price_ppm = 64'516) noexcept;
 
     [[nodiscard]] std::size_t memory_bytes() const noexcept;
     [[nodiscard]] std::uint64_t checksum() const noexcept;

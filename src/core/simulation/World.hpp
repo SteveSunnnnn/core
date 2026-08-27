@@ -32,6 +32,7 @@ struct CountryInit {
     double tax_rate = 0.20;
     CurrencyKey primary_currency = default_currency_key;
     EconomyAmount foreign_reserves_milli = 0;
+    double prestige = 0.0;
 };
 
 // Maximum negative cash a building can accumulate before it stops operating.
@@ -56,6 +57,11 @@ public:
     [[nodiscard]] double tax_rate(CountryId id) const;
     [[nodiscard]] const TaxPolicy& tax_policy(CountryId id) const;
 
+    [[nodiscard]] double prestige(CountryId id) const;
+    void set_prestige(CountryId id, double value);
+    void add_prestige(CountryId id, double delta);
+    [[nodiscard]] double power_score(CountryId id) const;
+
     [[nodiscard]] CurrencyKey primary_currency(CountryId id) const;
     void set_primary_currency(CountryId id, CurrencyKey key);
     [[nodiscard]] EconomyAmount foreign_reserves_milli(CountryId id) const;
@@ -69,6 +75,7 @@ public:
     [[nodiscard]] std::span<const double> gdps() const noexcept { return gdp_; }
     [[nodiscard]] std::span<const double> treasuries() const noexcept { return treasury_; }
     [[nodiscard]] std::span<const double> tax_rates() const noexcept { return tax_rate_; }
+    [[nodiscard]] std::span<const double> prestiges() const noexcept { return prestige_; }
     [[nodiscard]] std::span<const CurrencyKey> primary_currencies() const noexcept { return primary_currencies_; }
     [[nodiscard]] std::span<const EconomyAmount> foreign_reserves() const noexcept { return foreign_reserves_milli_; }
     [[nodiscard]] std::span<const EconomyAmount> balance_of_payments() const noexcept { return balance_of_payments_milli_; }
@@ -93,6 +100,7 @@ private:
     std::vector<double> gdp_;
     std::vector<double> treasury_;
     std::vector<double> tax_rate_;
+    std::vector<double> prestige_;
     std::vector<TaxPolicy> tax_policies_;
     std::vector<CurrencyKey> primary_currencies_;
     std::vector<EconomyAmount> foreign_reserves_milli_;

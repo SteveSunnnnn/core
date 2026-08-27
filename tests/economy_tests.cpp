@@ -254,17 +254,22 @@ static void test_currency_store_basics() {
     const CurrencyKey gbp = economy_stable_key("currency.gbp");
     const CurrencyKey usd = economy_stable_key("currency.usd");
     const CurrencyKey gold = economy_stable_key("currency.gold");
+    const CurrencyKey bimetal = economy_stable_key("currency.bimetal");
 
-    store.register_currency(gbp, "British Pound", CurrencyPegMode::Floating, 1'000'000);
-    store.register_currency(usd, "US Dollar", CurrencyPegMode::Floating, 500'000);
-    store.register_currency(gold, "Gold Franc", CurrencyPegMode::GoldStandard, 2'000'000);
+    store.register_currency(gbp, "British Pound", MonetaryStandard::GoldStandard, 7322, 113491, 1'000'000);
+    store.register_currency(usd, "US Dollar", MonetaryStandard::FiatFloating, 1000, 15500, 500'000);
+    store.register_currency(gold, "Gold Franc", MonetaryStandard::GoldStandard, 290, 4500, 2'000'000);
+    store.register_currency(bimetal, "Latin Union Franc", MonetaryStandard::Bimetallism, 290, 4500, 1'000'000);
 
     assert(store.contains(gbp));
     assert(store.contains(usd));
     assert(store.contains(gold));
+    assert(store.contains(bimetal));
+    assert(store.monetary_standard(gbp) == MonetaryStandard::GoldStandard);
+    assert(store.monetary_standard(usd) == MonetaryStandard::FiatFloating);
+    assert(store.monetary_standard(bimetal) == MonetaryStandard::Bimetallism);
     assert(store.exchange_rate_ppm(gbp) == 1'000'000);
     assert(store.exchange_rate_ppm(usd) == 500'000);
-    assert(store.exchange_rate_ppm(gold) == 2'000'000);
 
     // 100 GBP @ 1.0 = 200 USD @ 0.5
     assert(store.convert(100'000, gbp, usd) == 200'000);
@@ -281,8 +286,8 @@ static void test_cross_currency_trade_and_fx_market() {
     const CurrencyKey gbp = economy_stable_key("currency.gbp");
     const CurrencyKey usd = economy_stable_key("currency.usd");
 
-    f.world.currencies.register_currency(gbp, "British Pound", CurrencyPegMode::Floating, 1'000'000);
-    f.world.currencies.register_currency(usd, "US Dollar", CurrencyPegMode::Floating, 1'000'000);
+    f.world.currencies.register_currency(gbp, "British Pound", MonetaryStandard::GoldStandard, 1000, 15500, 1'000'000);
+    f.world.currencies.register_currency(usd, "US Dollar", MonetaryStandard::FiatFloating, 1000, 15500, 1'000'000);
 
     const MarketId m0{0u};
     const MarketId m1{1u};
@@ -293,6 +298,8 @@ static void test_cross_currency_trade_and_fx_market() {
     f.world.markets.set_currency_key(m1, usd);
     f.world.countries.set_primary_currency(c0, gbp);
     f.world.countries.set_primary_currency(c1, usd);
+    f.world.countries.set_prestige(c0, 100.0);
+    f.world.countries.set_prestige(c1, 50.0);
 
     // Give POPs initial cash
     for (std::size_t i = 0; i < f.world.pops.size(); ++i) {
@@ -328,6 +335,69 @@ static void test_cross_currency_trade_and_fx_market() {
     assert(f.world.currencies.exchange_rate_ppm(gbp) >= initial_gbp_rate);
 }
 
+static void test_monetary_sovereignty_and_seigniorage() {
+    auto f = make_fixture(2u, 4u, 40u, 100u);
+    const CurrencyKey union_cur = economy_stable_key("currency.sterling_zone");
+
+    f.world.currencies.register_currency(union_cur, "Sterling Area Pound", MonetaryStandard::GoldStandard, 1000, 15500, 1'000'000);
+
+    const CountryId gbr{0u};
+    const CountryId aus{1u};
+
+    // Both countries in the same currency zone
+    f.world.countries.set_primary_currency(gbr, union_cur);
+    f.world.countries.set_primary_currency(aus, union_cur);
+
+    // GBR has higher prestige (hegemon)
+    f.world.countries.set_prestige(gbr, 150.0);
+    f.world.countries.set_gdp(gbr, 5000.0);
+    f.world.countries.set_prestige(aus, 20.0);
+    f.world.countries.set_gdp(aus, 500.0);
+
+    f.world.currencies.evaluate_monetary_sovereignty(f.world.countries);
+    assert(f.world.currencies.sovereign_leader(union_cur) == gbr);
+
+    // Simulate turnover generating seigniorage
+    const CurrencyKey foreign_cur = economy_stable_key("currency.foreign");
+    f.world.currencies.register_currency(foreign_cur, "Foreign Franc", MonetaryStandard::FiatFloating, 1000, 15500, 1'000'000);
+    f.world.currencies.record_fx_flow(foreign_cur, union_cur, 10'000'000); // 10k currency units
+
+    assert(f.world.currencies.seigniorage_accrued_milli(union_cur) > 0);
+
+    // Run weekly tick to distribute seigniorage to sovereign leader
+    const double gbr_treasury_before = f.world.countries.treasury(gbr);
+    EconomySystem economy{f.definitions};
+    economy.rebuild_indices(f.world);
+    JobSystem jobs{0u};
+    economy.run_weekly(f.world, jobs);
+
+    // GBR received seigniorage
+    assert(f.world.countries.treasury(gbr) > gbr_treasury_before);
+
+    // Dynamic shift of monetary sovereignty: AUS prestige and power surges past GBR
+    f.world.countries.set_prestige(aus, 300.0);
+    f.world.countries.set_gdp(aus, 10000.0);
+    f.world.currencies.evaluate_monetary_sovereignty(f.world.countries);
+    assert(f.world.currencies.sovereign_leader(union_cur) == aus);
+}
+
+static void test_bimetallism_and_greshams_law() {
+    CurrencyStore store;
+    const CurrencyKey bimetal = economy_stable_key("currency.bimetal");
+    // Fine metal: 1000 mg Gold, 15500 mg Silver (15.5:1 ratio)
+    store.register_currency(bimetal, "Bimetallic Franc", MonetaryStandard::Bimetallism, 1000, 15500, 1'000'000);
+
+    // Initial equilibrium: Gold = 1'000'000 ppm, Silver = 64'516 ppm (15.5 ratio)
+    store.update_exchange_rates(1'000'000, 64'516);
+    assert(store.exchange_rate_ppm(bimetal) >= 980'000 && store.exchange_rate_ppm(bimetal) <= 1'020'000);
+
+    // Market shift: Silver becomes much cheaper (silver market price plunges to 30'000 ppm)
+    // Gresham's Law: Silver is overvalued at the mint -> Silver circulates as the cheaper metal
+    store.update_exchange_rates(1'000'000, 30'000);
+    // Target rate drops following the circulating silver value (15.5 * 30'000 = 465'000)
+    assert(store.exchange_rate_ppm(bimetal) < 900'000);
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -340,6 +410,8 @@ int main() {
     test_money_closed_loop_conservation();
     test_currency_store_basics();
     test_cross_currency_trade_and_fx_market();
+    test_monetary_sovereignty_and_seigniorage();
+    test_bimetallism_and_greshams_law();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }

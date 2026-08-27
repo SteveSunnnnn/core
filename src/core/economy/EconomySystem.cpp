@@ -882,7 +882,15 @@ void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile
     run_phase([&]{return trade(world);},nullptr);
     run_phase([&]{return update_prices(world,jobs);},profile?&profile->prices:nullptr);
     run_phase([&]{return settlement(world,jobs);},profile?&profile->settlement:nullptr);
+    world.currencies.evaluate_monetary_sovereignty(world.countries);
     world.currencies.update_exchange_rates();
+    for (const auto& cur : world.currencies.currencies()) {
+        const auto seigniorage = cur.seigniorage_accrued_milli;
+        if (seigniorage > 0 && cur.sovereign_leader.valid()) {
+            world.countries.add_treasury_milli(cur.sovereign_leader, seigniorage);
+            world.currencies.clear_seigniorage(cur.key);
+        }
+    }
     run_phase([&]{return construction(world);},nullptr);
     run_phase([&]{return scatter_pop_hot(world,jobs);},nullptr);
     if(profile){
