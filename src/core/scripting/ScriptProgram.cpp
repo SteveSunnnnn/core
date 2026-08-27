@@ -2208,6 +2208,7 @@ double ScriptVm::evaluate_value_internal(const ScriptedValueProgram& program, co
         case ValueSource::StatePopulation:
             for (std::size_t i = 0; i < world.pops.size(); ++i) {
                 if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
+                if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
                 const auto p = PopId{static_cast<std::uint32_t>(i)};
                 const auto pr = world.pops.province(p);
                 if (pr.valid() && world.geography.province_state(pr) == StateId{scope.raw_id}) {
@@ -2218,6 +2219,7 @@ double ScriptVm::evaluate_value_internal(const ScriptedValueProgram& program, co
         case ValueSource::ProvincePopulation:
             for (std::size_t i = 0; i < world.pops.size(); ++i) {
                 if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
+                if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
                 const auto p = PopId{static_cast<std::uint32_t>(i)};
                 if (world.pops.province(p) == ProvinceId{scope.raw_id}) value += static_cast<double>(world.pops.population(p));
             }
@@ -2261,4 +2263,3 @@ std::string ScriptProfiler::dump_flamegraph_json() const {
 }
 
 } // namespace core
-

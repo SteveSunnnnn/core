@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 using namespace core;
@@ -272,11 +273,20 @@ static void test_currency_store_basics() {
     assert(store.monetary_standard(bimetal) == MonetaryStandard::Bimetallism);
     assert(store.exchange_rate_ppm(gbp) == 1'000'000);
     assert(store.exchange_rate_ppm(usd) == 500'000);
+    assert(store.validate(0u));
+    store.set_monetary_standard(usd, static_cast<MonetaryStandard>(255u));
+    assert(!store.validate(0u));
+    store.set_monetary_standard(usd, MonetaryStandard::FiatFloating);
+    assert(store.validate(0u));
 
     // 100 GBP @ 1.0 = 200 USD @ 0.5
     assert(store.convert(100'000, gbp, usd) == 200'000);
     // 200 USD @ 0.5 = 100 GBP @ 1.0
     assert(store.convert(200'000, usd, gbp) == 100'000);
+    // Saturating conversion must also handle the most negative signed amount
+    // without negating INT64_MIN in the signed domain.
+    assert(store.convert(std::numeric_limits<EconomyAmount>::min(), gbp, usd) ==
+           std::numeric_limits<EconomyAmount>::min());
 
     // Price conversions
     assert(store.convert_price(1000, gbp, usd) == 2000);
@@ -383,6 +393,18 @@ static void test_monetary_sovereignty_and_seigniorage() {
     f.world.countries.set_gdp(aus, 10000.0);
     f.world.currencies.evaluate_monetary_sovereignty(f.world.countries);
     assert(f.world.currencies.sovereign_leader(union_cur) == aus);
+
+    // Leadership is derived and must be cleared when the last member leaves
+    // a currency zone; zero is reserved as an invalid stable key.
+    f.world.countries.set_primary_currency(gbr, default_currency_key);
+    f.world.countries.set_primary_currency(aus, default_currency_key);
+    f.world.currencies.evaluate_monetary_sovereignty(f.world.countries);
+    assert(!f.world.currencies.sovereign_leader(union_cur).valid());
+    const auto currency_count = f.world.currencies.size();
+    f.world.currencies.set_exchange_rate_ppm(0u, 123'000);
+    f.world.currencies.set_target_rate_ppm(0u, 123'000);
+    f.world.currencies.set_convertibility_suspended(0u, true);
+    assert(f.world.currencies.size() == currency_count);
 }
 
 static void test_bimetallism_and_greshams_law() {
@@ -549,6 +571,25 @@ static void test_bank_balance_sheet_credit_service_and_default() {
     assert(f.world.banks.balance_sheet_balanced(bank));
     assert(f.world.banks.validate(f.world.countries.size(), f.world.buildings.size()));
 
+    // Closing a contract must not make a stable bank/building key unusable
+    // forever.  The next draw reuses the same authoritative loan row.
+    const auto recycled = f.world.banks.fund_building(bank, second, 10'000, 52'000, 52);
+    assert(recycled == 10'000);
+    assert(f.world.banks.loan_count() == 2u);
+    assert(f.world.banks.loan(BankLoanId{1u}).status == BankLoanStatus::Performing);
+    assert(f.world.banks.loan(BankLoanId{1u}).principal_milli == 10'000);
+    assert(f.world.banks.validate(f.world.countries.size(), f.world.buildings.size()));
+
+    bool rejected_closed_loan = false;
+    try {
+        (void)f.world.banks.restore_loan({bank_stable_key("invalid.closed.loan"), bank,
+                                          BankBorrowerKind::Building, building.value(), 1,
+                                          50'000, 52, 0, BankLoanStatus::Repaid});
+    } catch (const std::invalid_argument&) {
+        rejected_closed_loan = true;
+    }
+    assert(rejected_closed_loan);
+
     auto scripts = ScriptRegistry::make_builtin();
     const auto scope = ScopeRef::country(country);
     assert(scripts.evaluate_trigger("bank_reserves_above", f.world, scope, 100.0));
@@ -633,6 +674,33 @@ static void test_construction_queue_and_pm_gradual_transition() {
     assert(f.world.construction.pm_transition_progress_ppm(building) == 1'000'000);
     // Monument provided national prestige
     assert(f.world.countries.prestige(country) >= 25.0);
+
+    // Saturated building levels are a valid long-game boundary: completing an
+    // expansion must not wrap the uint16 level back to zero.
+    auto saturated = make_fixture(1u, 1u, 1u, 100u);
+    saturated.world.buildings.set_level(
+        BuildingId{0u}, std::numeric_limits<std::uint16_t>::max());
+    saturated.world.countries.set_treasury(CountryId{0u}, 100.0);
+    saturated.world.construction.enqueue_expansion(CountryId{0u}, BuildingId{0u}, 1u, 1);
+    EconomySystem saturated_economy{saturated.definitions};
+    saturated_economy.rebuild_indices(saturated.world);
+    saturated_economy.run_weekly(saturated.world, jobs);
+    assert(saturated.world.buildings.level(BuildingId{0u}) ==
+           std::numeric_limits<std::uint16_t>::max());
+
+    // A zero total cost is the documented default-cost sentinel. After a
+    // partially funded week it must remain a valid queue record even though
+    // paid_cost_milli is now non-zero.
+    auto default_cost = make_fixture(1u, 1u, 1u, 100u);
+    default_cost.world.countries.set_treasury(CountryId{0u}, 100.0);
+    const auto default_project = default_cost.world.construction.enqueue_expansion(
+        CountryId{0u}, BuildingId{0u}, 100u, 0);
+    EconomySystem default_cost_economy{default_cost.definitions};
+    default_cost_economy.rebuild_indices(default_cost.world);
+    default_cost_economy.run_weekly(default_cost.world, jobs);
+    const auto* default_record = default_cost.world.construction.find(default_project);
+    assert(default_record != nullptr && default_record->paid_cost_milli > 0);
+    assert(default_cost.world.construction.validate(default_cost.world));
 }
 
 void test_realistic_gradual_transitions_and_governance() {

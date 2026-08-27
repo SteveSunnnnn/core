@@ -2,12 +2,18 @@
 #include "core/simulation/World.hpp"
 
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
+#include <unordered_set>
 
 namespace core {
 
 ConstructionProjectId ConstructionStore::enqueue(ConstructionProjectInit init) {
+    if (next_id_ == ConstructionProjectId::invalid_value)
+        throw std::overflow_error("construction project id sequence exhausted");
     ConstructionProjectRecord rec;
-    rec.id = ConstructionProjectId{next_id_++};
+    rec.id = ConstructionProjectId{next_id_};
+    ++next_id_;
     rec.country = init.country;
     rec.province = init.province;
     rec.target_building = init.target_building;
@@ -25,7 +31,9 @@ ConstructionProjectId ConstructionStore::enqueue(ConstructionProjectInit init) {
     std::uint32_t max_pri = 0;
     for (const auto& p : projects_) {
         if (p.country == init.country) {
-            max_pri = std::max(max_pri, p.priority + 1);
+            if (p.priority == std::numeric_limits<std::uint32_t>::max())
+                throw std::overflow_error("construction priority sequence exhausted");
+            max_pri = std::max(max_pri, static_cast<std::uint32_t>(p.priority + 1u));
         }
     }
     rec.priority = max_pri;
@@ -236,15 +244,22 @@ JobDispatchStats ConstructionStore::tick_weekly(World& world) {
                 switch (p.kind) {
                 case ConstructionKind::ExpandBuilding: {
                     if (p.target_building.valid() &&
-                        static_cast<std::size_t>(p.target_building.value()) < world.buildings.size()) {
+                        static_cast<std::size_t>(p.target_building.value()) < world.buildings.size() &&
+                        world.buildings.slot_pool().is_index_alive(p.target_building.value())) {
                         const auto cur_lvl = world.buildings.level(p.target_building);
-                        world.buildings.set_level(p.target_building, static_cast<std::uint16_t>(cur_lvl + 1));
+                        // A completed expansion must never wrap a saturated
+                        // level back to zero. Treat max-level buildings as a
+                        // no-op while still consuming the queued project.
+                        if (cur_lvl < std::numeric_limits<std::uint16_t>::max())
+                            world.buildings.set_level(
+                                p.target_building, static_cast<std::uint16_t>(cur_lvl + 1u));
                     }
                     break;
                 }
                 case ConstructionKind::UpgradeProductionMethod: {
                     if (p.target_building.valid() &&
                         static_cast<std::size_t>(p.target_building.value()) < world.buildings.size() &&
+                        world.buildings.slot_pool().is_index_alive(p.target_building.value()) &&
                         p.target_pm.valid()) {
                         world.buildings.set_production_method(p.target_building, p.target_pm);
                     }
@@ -285,12 +300,59 @@ std::uint64_t ConstructionStore::checksum() const noexcept {
         h.add(p.monument_key_hash);
         h.add(p.progress_points);
         h.add(p.total_points_required);
+        h.add(p.weekly_progress_ppm);
         h.add(p.total_cost_milli);
         h.add(p.paid_cost_milli);
         h.add(p.paused ? 1u : 0u);
         h.add(p.priority);
     }
     return h.value();
+}
+
+bool ConstructionStore::validate(const World& world) const {
+    constexpr std::size_t max_projects = 100'000u;
+    if (projects_.size() > max_projects) return false;
+
+    std::unordered_set<std::uint32_t> ids;
+    ids.reserve(projects_.size());
+    for (const auto& p : projects_) {
+        if (!p.id.valid() || !ids.insert(p.id.value()).second) return false;
+        if (next_id_ != ConstructionProjectId::invalid_value && p.id.value() >= next_id_)
+            return false;
+        if (!p.country.valid() || p.country.value() >= world.countries.size()) return false;
+        if (p.province.valid() && p.province.value() >= world.geography.province_count()) return false;
+        // A zero total cost is the public API's sentinel for the default
+        // per-point construction price (500 milli-units/point), so paid cost
+        // can legitimately be non-zero even when the serialized total is 0.
+        if (p.total_points_required == 0u || p.progress_points > p.total_points_required ||
+            p.weekly_progress_ppm > 1'000'000u || p.total_cost_milli < 0 ||
+            p.paid_cost_milli < 0 ||
+            (p.total_cost_milli > 0 && p.paid_cost_milli > p.total_cost_milli))
+            return false;
+
+        switch (p.kind) {
+        case ConstructionKind::ExpandBuilding:
+            if (!p.target_building.valid() || p.target_building.value() >= world.buildings.size() ||
+                !world.buildings.slot_pool().is_index_alive(p.target_building.value()) ||
+                p.target_pm.valid() || p.monument_key_hash != 0u)
+                return false;
+            break;
+        case ConstructionKind::UpgradeProductionMethod:
+            if (!p.target_building.valid() || p.target_building.value() >= world.buildings.size() ||
+                !world.buildings.slot_pool().is_index_alive(p.target_building.value()) ||
+                !p.target_pm.valid() || p.monument_key_hash != 0u)
+                return false;
+            break;
+        case ConstructionKind::ConstructMonument:
+            if (!p.province.valid() || p.province.value() >= world.geography.province_count() ||
+                p.monument_key_hash == 0u || p.target_building.valid() || p.target_pm.valid())
+                return false;
+            break;
+        default:
+            return false;
+        }
+    }
+    return true;
 }
 
 std::size_t ConstructionStore::memory_bytes() const noexcept {
@@ -303,8 +365,15 @@ void ConstructionStore::clear() noexcept {
 }
 
 void ConstructionStore::restore_project(const ConstructionProjectRecord& rec) {
+    if (!rec.id.valid()) throw std::invalid_argument("invalid construction project id");
+    if (std::find_if(projects_.begin(), projects_.end(), [&](const auto& p) {
+            return p.id == rec.id;
+        }) != projects_.end())
+        throw std::invalid_argument("duplicate construction project id");
     projects_.push_back(rec);
-    if (rec.id.valid() && rec.id.value() >= next_id_) {
+    if (rec.id.value() == ConstructionProjectId::invalid_value - 1u) {
+        next_id_ = ConstructionProjectId::invalid_value;
+    } else if (rec.id.value() >= next_id_) {
         next_id_ = rec.id.value() + 1;
     }
 }

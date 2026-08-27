@@ -87,6 +87,7 @@ public:
 
     [[nodiscard]] std::uint64_t checksum() const noexcept;
     [[nodiscard]] std::size_t memory_bytes() const noexcept;
+    [[nodiscard]] bool validate(const World& world) const;
     void clear() noexcept;
 
     // Restore for save deserialization

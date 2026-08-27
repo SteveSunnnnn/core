@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace core {
@@ -88,13 +89,20 @@ void build_hud_ui(UiDrawList& ui, const CoreEngine& engine, int speed, bool paus
 
     const auto& world = engine.world();
     const CountryId player_country{0};
-    const double treasury = world.countries.treasury(player_country);
 
     TopBarData tb;
-    tb.country_name = "British Empire";
-    tb.ranking_title = "Great Power (#1)";
-    tb.gold_reserves = static_cast<std::int64_t>(treasury);
-    tb.weekly_balance = 14200;
+    if (world.countries.size() > 0u) {
+        tb.country_name = std::string{world.countries.tag(player_country)};
+        const auto player_power = world.countries.power_score(player_country);
+        std::size_t rank = 1u;
+        for (std::size_t i = 0; i < world.countries.size(); ++i) {
+            const CountryId country{static_cast<CountryId::rep_type>(i)};
+            if (world.countries.power_score(country) > player_power) ++rank;
+        }
+        tb.ranking_title = "Power Rank #" + std::to_string(rank);
+        tb.gold_reserves = world.countries.treasury_milli(player_country) / economy_scale;
+        tb.weekly_balance = world.countries.balance_of_payments_milli(player_country) / economy_scale;
+    }
     tb.date_str = date_str;
     tb.current_speed = static_cast<std::uint8_t>(speed);
     tb.is_paused = paused;
@@ -106,6 +114,42 @@ void build_hud_ui(UiDrawList& ui, const CoreEngine& engine, int speed, bool paus
     if (sel_prov) {
         ProvinceInspectorData pi;
         pi.province = *sel_prov;
+        if (sel_prov->valid() && static_cast<std::size_t>(sel_prov->value()) < world.geography.province_count()) {
+            const auto province = *sel_prov;
+            pi.name = std::string{world.geography.province_key(province)};
+            const auto state = world.geography.province_state(province);
+            if (state.valid() && static_cast<std::size_t>(state.value()) < world.geography.state_count()) {
+                pi.state_name = std::string{world.geography.state_key(state)};
+            }
+            const auto owner = world.geography.province_owner(province);
+            if (owner.valid() && static_cast<std::size_t>(owner.value()) < world.countries.size()) {
+                pi.country_name = std::string{world.countries.tag(owner)};
+            }
+
+            std::uint64_t population = 0u;
+            std::int64_t wage_sum = 0;
+            std::size_t wage_count = 0u;
+            for (std::size_t i = 0; i < world.pops.size(); ++i) {
+                if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i)) ||
+                    world.pops.provinces()[i] != province) continue;
+                population = std::min<std::uint64_t>(
+                    std::numeric_limits<std::int64_t>::max(),
+                    population + world.pops.populations()[i]);
+            }
+            for (std::size_t i = 0; i < world.buildings.size(); ++i) {
+                if (!world.buildings.slot_pool().is_index_alive(static_cast<std::uint32_t>(i)) ||
+                    world.buildings.provinces()[i] != province) continue;
+                wage_sum += world.buildings.wage_offers()[i];
+                ++wage_count;
+                const auto type = world.buildings.types()[i];
+                if (type.valid() && static_cast<std::size_t>(type.value()) < engine.definitions().building_type_count()) {
+                    pi.factories.emplace_back(engine.definitions().building_type(type).key,
+                                              static_cast<std::int32_t>(world.buildings.levels()[i]));
+                }
+            }
+            pi.total_pop = static_cast<std::int64_t>(population);
+            pi.average_wage = wage_count == 0u ? 0.0f : static_cast<float>(wage_sum) / static_cast<float>(wage_count);
+        }
         VictorianHudSystem::render_province_inspector(ui, pi, screen);
     }
 }
@@ -246,4 +290,3 @@ int DesktopApp::run() {
     return result;
 }
 } // namespace core
-

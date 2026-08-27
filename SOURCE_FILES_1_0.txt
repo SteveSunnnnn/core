@@ -306,6 +306,7 @@ src/core/world/WorldBootstrap.cpp
 src/core/world/WorldBootstrap.hpp
 src/core/worldpack/WorldPack.cpp
 src/core/worldpack/WorldPack.hpp
+tests/TestTempPath.hpp
 tests/asset_ui_tests.cpp
 tests/core_tests.cpp
 tests/corescript_runtime_tests.cpp

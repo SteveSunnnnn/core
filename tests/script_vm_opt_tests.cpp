@@ -91,6 +91,19 @@ static void test_bytecode_compiler_and_vm() {
     const bool fail_res = BytecodeVm::evaluate(fail_bytecode, registry, world, fail_ctx);
     assert(fail_res == false);
 
+    // Queued bytecode can outlive its entity.  A destroyed POP scope must
+    // short-circuit the trigger rather than calling a checked SoA accessor.
+    const auto dead_pop = world.pops.create({});
+    CompiledScopedCondition pop_cond;
+    pop_cond.kind = ScopedConditionKind::Trigger;
+    pop_cond.primitive = registry.find_trigger("pop_size_above");
+    pop_cond.argument.source = ScriptArgumentSourceKind::Literal;
+    pop_cond.argument.literal = ScriptArgument::numeric(1.0);
+    const auto pop_bytecode = BytecodeCompiler::compile(std::span{&pop_cond, 1u});
+    world.pops.destroy(dead_pop);
+    auto dead_ctx = ScriptExecutionContext::rooted(ScopeRef::pop(dead_pop));
+    assert(!BytecodeVm::evaluate(pop_bytecode, registry, world, dead_ctx));
+
     std::cout << "[PASS] Bytecode compiler and BytecodeVm execution\n";
 }
 

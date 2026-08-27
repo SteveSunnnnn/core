@@ -1,4 +1,5 @@
 #include "core/render/GpuDrivenPipeline.hpp"
+#include <array>
 
 #include <algorithm>
 #include <cmath>

@@ -1,6 +1,7 @@
 #include "core/ui/StrategyUi.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace core {
 
@@ -34,7 +35,10 @@ void UiDrawList::quad(UiRect rect, std::uint32_t rgba, UiRect scissor,
 void UiDrawList::quad_uv(UiRect rect, float u0, float v0, float u1, float v1,
                          std::uint32_t rgba, UiRect scissor, std::uint64_t texture,
                          UiBatchKind kind) {
-    if (rect.w <= 0.0f || rect.h <= 0.0f) return;
+    if (!std::isfinite(rect.x) || !std::isfinite(rect.y) || !std::isfinite(rect.w) ||
+        !std::isfinite(rect.h) || !std::isfinite(u0) || !std::isfinite(v0) ||
+        !std::isfinite(u1) || !std::isfinite(v1) || rect.w <= 0.0f || rect.h <= 0.0f ||
+        !std::isfinite(rect.x + rect.w) || !std::isfinite(rect.y + rect.h)) return;
     const auto base = static_cast<std::uint32_t>(vertices_.size());
     const auto first_idx = static_cast<std::uint32_t>(indices_.size());
 
@@ -61,10 +65,12 @@ void UiDrawList::polyline(std::span<const float> xy, std::uint32_t rgba, UiRect 
     for (std::size_t i = 0; i + 3 < xy.size(); i += 2) {
         const float x0 = xy[i],     y0 = xy[i + 1];
         const float x1 = xy[i + 2], y1 = xy[i + 3];
+        if (!std::isfinite(x0) || !std::isfinite(y0) ||
+            !std::isfinite(x1) || !std::isfinite(y1)) continue;
         const float dx = x1 - x0;
         const float dy = y1 - y0;
         const float len = std::sqrt(dx * dx + dy * dy);
-        if (len < 1e-4f) continue;
+        if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(len) || len < 1e-4f) continue;
         const float nx = -dy / len * half_w;
         const float ny =  dx / len * half_w;
 
@@ -253,7 +259,7 @@ void UiDrawList::wax_seal(float cx, float cy, float radius, UiRect scissor) {
 
 void UiDrawList::progress_bar(UiRect rect, float frac, std::uint32_t fill_color, std::uint32_t bg_color, UiRect scissor) {
     if (rect.w <= 0.0f || rect.h <= 0.0f) return;
-    const float f = std::clamp(frac, 0.0f, 1.0f);
+    const float f = std::isfinite(frac) ? std::clamp(frac, 0.0f, 1.0f) : 0.0f;
 
     // Outer Dark Bevel Frame
     quad(rect, 0xff160b06u, scissor);
@@ -274,20 +280,32 @@ void UiDrawList::progress_bar(UiRect rect, float frac, std::uint32_t fill_color,
 void UiDrawList::parliament_arc(float cx, float cy, float inner_radius, float outer_radius,
                                 std::span<const std::pair<std::uint32_t, int>> seat_groups,
                                 UiRect scissor) {
-    int total_seats = 0;
-    for (const auto& g : seat_groups) total_seats += g.second;
+    if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(inner_radius) ||
+        !std::isfinite(outer_radius) || outer_radius < inner_radius) return;
+    std::size_t total_seats = 0u;
+    for (const auto& g : seat_groups) {
+        if (g.second <= 0) continue;
+        const auto count = static_cast<std::size_t>(g.second);
+        if (count > std::numeric_limits<std::size_t>::max() - total_seats) {
+            total_seats = std::numeric_limits<std::size_t>::max();
+            break;
+        }
+        total_seats += count;
+    }
     if (total_seats == 0) return;
 
     constexpr float kPi = 3.1415926535f;
     constexpr int rows = 5;
-    int seat_idx = 0;
+    std::size_t seat_idx = 0u;
 
     for (const auto& [color, count] : seat_groups) {
         for (int i = 0; i < count; ++i) {
-            const int r = seat_idx % rows;
-            const float frac = static_cast<float>(seat_idx / rows) / static_cast<float>(total_seats / rows + 1);
+            const auto r = seat_idx % static_cast<std::size_t>(rows);
+            const float frac = static_cast<float>(seat_idx / static_cast<std::size_t>(rows)) /
+                static_cast<float>(total_seats / static_cast<std::size_t>(rows) + 1u);
             const float angle = kPi - frac * kPi;
-            const float radius = inner_radius + static_cast<float>(r) / static_cast<float>(rows - 1) * (outer_radius - inner_radius);
+            const float radius = inner_radius + static_cast<float>(r) /
+                static_cast<float>(rows - 1) * (outer_radius - inner_radius);
 
             const float sx = cx + radius * std::cos(angle);
             const float sy = cy - radius * std::sin(angle);
@@ -300,8 +318,13 @@ void UiDrawList::parliament_arc(float cx, float cy, float inner_radius, float ou
 
 void UiDrawList::gauge_balance(UiRect rect, float buy_orders, float sell_orders, UiRect scissor) {
     if (rect.w <= 0.0f || rect.h <= 0.0f) return;
-    const float total = buy_orders + sell_orders;
-    const float ratio = total > 1e-4f ? buy_orders / total : 0.5f;
+    // Scripted values can be absent, negative or NaN while a definition is
+    // loading.  Keep the draw list finite and clamp the ratio before geometry
+    // is emitted so malformed content cannot poison a whole frame.
+    const float buy = std::isfinite(buy_orders) ? std::max(0.0f, buy_orders) : 0.0f;
+    const float sell = std::isfinite(sell_orders) ? std::max(0.0f, sell_orders) : 0.0f;
+    const float total = buy + sell;
+    const float ratio = total > 1e-4f ? std::clamp(buy / total, 0.0f, 1.0f) : 0.5f;
 
     // Leather base
     leather_panel(rect, 0xff2b1014u, scissor);
@@ -328,11 +351,12 @@ void UiDrawList::ink_chart(UiRect rect, std::span<const float> values,
 
     parchment_panel(rect, scissor);
 
-    float min_v = values[0];
-    float max_v = values[0];
+    float min_v = std::isfinite(values[0]) ? values[0] : 0.0f;
+    float max_v = min_v;
     for (float v : values) {
-        min_v = std::min(min_v, v);
-        max_v = std::max(max_v, v);
+        const float safe = std::isfinite(v) ? v : 0.0f;
+        min_v = std::min(min_v, safe);
+        max_v = std::max(max_v, safe);
     }
     const float range = std::max(1e-4f, max_v - min_v);
 
@@ -345,7 +369,8 @@ void UiDrawList::ink_chart(UiRect rect, std::span<const float> values,
 
     for (std::size_t i = 0; i < values.size(); ++i) {
         const float x = rect.x + pad + static_cast<float>(i) / static_cast<float>(values.size() - 1) * plot_w;
-        const float norm_y = (values[i] - min_v) / range;
+        const float value = std::isfinite(values[i]) ? values[i] : 0.0f;
+        const float norm_y = std::clamp((value - min_v) / range, 0.0f, 1.0f);
         const float y = rect.y + rect.h - pad - norm_y * plot_h;
         pts.push_back(x);
         pts.push_back(y);
@@ -445,15 +470,19 @@ void UiDrawList::tariff_slider_input_row(UiRect rect, const std::string& label, 
 }
 
 void UiDrawList::text(std::string utf8, float x, float y, float size, std::uint32_t rgba, UiRect scissor) {
-    if (utf8.empty()) return;
+    if (utf8.empty() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(size) || size <= 0.0f) return;
     text_.push_back(UiTextRun{std::move(utf8), x, y, size, rgba, scissor});
 }
 
 void UiDrawList::hit(std::uint64_t id, UiRect rect) {
+    if (!std::isfinite(rect.x) || !std::isfinite(rect.y) || !std::isfinite(rect.w) ||
+        !std::isfinite(rect.h) || rect.w <= 0.0f || rect.h <= 0.0f ||
+        !std::isfinite(rect.x + rect.w) || !std::isfinite(rect.y + rect.h)) return;
     hits_.push_back(UiHitRegion{id, rect});
 }
 
 std::optional<std::uint64_t> UiDrawList::hit_test(float x, float y) const noexcept {
+    if (!std::isfinite(x) || !std::isfinite(y)) return std::nullopt;
     for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
         if (x >= it->rect.x && x <= it->rect.x + it->rect.w &&
             y >= it->rect.y && y <= it->rect.y + it->rect.h) {
@@ -469,13 +498,26 @@ UiVirtualWindow virtualize_rows(std::size_t total,
                                 float viewport_height,
                                 std::size_t overscan) {
     UiVirtualWindow w;
-    if (total == 0 || row_height <= 0.0f || viewport_height <= 0.0f) return w;
+    if (total == 0 || !std::isfinite(row_height) || row_height <= 0.0f ||
+        !std::isfinite(viewport_height) || viewport_height <= 0.0f) return w;
 
-    const auto first_raw = static_cast<std::size_t>(std::max(0.0f, scroll_y / row_height));
-    const auto vis_count = static_cast<std::size_t>(std::ceil(viewport_height / row_height));
+    const float safe_scroll = std::isfinite(scroll_y) ? std::max(0.0f, scroll_y) : 0.0f;
+    const double first_exact = static_cast<double>(safe_scroll) /
+        static_cast<double>(row_height);
+    const auto first_raw = first_exact >= static_cast<double>(total)
+        ? total : static_cast<std::size_t>(first_exact);
+    const double visible_exact = std::ceil(static_cast<double>(viewport_height) /
+                                           static_cast<double>(row_height));
+    const auto vis_count = visible_exact >= static_cast<double>(total)
+        ? total : static_cast<std::size_t>(visible_exact);
 
     const auto first = first_raw > overscan ? first_raw - overscan : 0u;
-    const auto last = std::min(total, first_raw + vis_count + 1 + overscan);
+    const auto visible_plus_one = vis_count == std::numeric_limits<std::size_t>::max()
+        ? std::numeric_limits<std::size_t>::max() : vis_count + 1u;
+    const auto extra = visible_plus_one > std::numeric_limits<std::size_t>::max() - overscan
+        ? std::numeric_limits<std::size_t>::max() : visible_plus_one + overscan;
+    const auto last = first_raw > total - std::min(total, extra)
+        ? total : first_raw + std::min(total - first_raw, extra);
 
     w.first = first;
     w.count = last >= first ? (last - first) : 0u;

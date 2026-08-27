@@ -85,6 +85,7 @@ public:
     [[nodiscard]] std::span<const PopulationCount> employees_all() const noexcept { return hot_.employees; }
     [[nodiscard]] std::span<const EconomyPrice> wage_offers() const noexcept { return hot_.wage_offer_milli; }
     [[nodiscard]] std::span<const EconomyAmount> cash_all() const noexcept { return hot_.cash_milli; }
+    [[nodiscard]] std::span<const EconomyAmount> last_profits() const noexcept { return hot_.last_profit_milli; }
 
     [[nodiscard]] const BuildingHotData& hot_data() const noexcept { return hot_; }
     [[nodiscard]] const BuildingColdData& cold_data() const noexcept { return cold_; }

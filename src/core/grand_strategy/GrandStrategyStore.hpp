@@ -354,7 +354,8 @@ public:
 
     void run_military_weekly(World& world);
     void run_weekly_reference_tick();
-    void run_weekly_reference_tick(World& world);
+    void run_weekly_reference_tick(World& world,
+                                   bool include_legacy_technology_spread = true);
     [[nodiscard]] bool validate(std::size_t countries, std::size_t markets, std::size_t provinces,
                                 std::size_t states, std::size_t buildings, std::size_t goods) const noexcept;
     [[nodiscard]] std::uint64_t checksum() const noexcept;
@@ -409,5 +410,4 @@ private:
 };
 
 } // namespace core
-
 

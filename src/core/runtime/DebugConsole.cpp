@@ -76,6 +76,7 @@ DebugCommandResult DebugConsole::execute(World& world, std::string_view command_
         }
         if (type == "pop") {
             if (id >= world.pops.size()) return {false, "Pop ID out of range"};
+            if (!world.pops.slot_pool().is_index_alive(id)) return {false, "Pop ID refers to a dead slot"};
             ss << "Pop ID: " << id << ", Count: " << world.pops.populations()[id]
                << ", Employed: " << (world.pops.employed(PopId{id}) ? "yes" : "no");
             return {true, ss.str()};

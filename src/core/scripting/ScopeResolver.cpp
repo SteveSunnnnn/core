@@ -8,7 +8,9 @@ bool ScopeResolver::valid(const World& w, ScopeRef s) noexcept {
         case ScopeType::Country: return static_cast<std::size_t>(s.raw_id) < w.countries.size();
         case ScopeType::State: return static_cast<std::size_t>(s.raw_id) < w.geography.state_count();
         case ScopeType::Province: return static_cast<std::size_t>(s.raw_id) < w.geography.province_count();
-        case ScopeType::Pop: return static_cast<std::size_t>(s.raw_id) < w.pops.size();
+        case ScopeType::Pop:
+            return static_cast<std::size_t>(s.raw_id) < w.pops.size() &&
+                w.pops.slot_pool().is_index_alive(s.raw_id);
         case ScopeType::Market: return static_cast<std::size_t>(s.raw_id) < w.markets.size();
         default: return false;
     }
@@ -77,7 +79,11 @@ std::vector<ScopeRef> ScopeResolver::all(const World& w, ScopeType t) {
     }
     std::vector<ScopeRef> out;
     out.reserve(n);
-    for (std::size_t i = 0; i < n; ++i) out.push_back({t, static_cast<std::uint32_t>(i)});
+    for (std::size_t i = 0; i < n; ++i) {
+        if (t == ScopeType::Pop &&
+            !w.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
+        out.push_back({t, static_cast<std::uint32_t>(i)});
+    }
     return out;
 }
 
@@ -119,6 +125,7 @@ std::vector<ScopeRef> ScopeResolver::children(const World& w, ScopeRef s, ScopeT
 
     if (target == ScopeType::Pop) {
         for (std::size_t i = 0; i < w.pops.size(); ++i) {
+            if (!w.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
             const auto p = PopId{static_cast<std::uint32_t>(i)};
             bool match = false;
             if (s.type == ScopeType::Province) {

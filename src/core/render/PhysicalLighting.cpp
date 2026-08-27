@@ -1,4 +1,5 @@
 #include "core/render/PhysicalLighting.hpp"
+#include <array>
 #include <algorithm>
 #include <cmath>
 

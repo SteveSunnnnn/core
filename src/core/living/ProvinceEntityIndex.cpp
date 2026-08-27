@@ -16,13 +16,17 @@ void ProvinceEntityIndex::rebuild(std::size_t province_count, const PopStore& po
     building_offsets_.assign(province_count + 1u, 0u);
     const auto pop_provinces = pops.provinces();
     const auto building_provinces = buildings.provinces();
-    for (const auto province : pop_provinces) {
+    for (std::size_t i = 0; i < pop_provinces.size(); ++i) {
+        if (!pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
+        const auto province = pop_provinces[i];
         if (!province.valid()) continue;
         const auto p = static_cast<std::size_t>(province.value());
         if (p >= province_count) throw std::out_of_range("PopStore contains province outside Living Map definition range");
         ++pop_offsets_[p + 1u];
     }
-    for (const auto province : building_provinces) {
+    for (std::size_t i = 0; i < building_provinces.size(); ++i) {
+        if (!buildings.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
+        const auto province = building_provinces[i];
         if (!province.valid()) continue;
         const auto p = static_cast<std::size_t>(province.value());
         if (p >= province_count) throw std::out_of_range("BuildingStore contains province outside Living Map definition range");
@@ -35,12 +39,14 @@ void ProvinceEntityIndex::rebuild(std::size_t province_count, const PopStore& po
     auto pop_cursor = pop_offsets_;
     auto building_cursor = building_offsets_;
     for (std::size_t i = 0; i < pop_provinces.size(); ++i) {
+        if (!pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         const auto province = pop_provinces[i];
         if (!province.valid()) continue;
         const auto p = static_cast<std::size_t>(province.value());
         pop_ids_[pop_cursor[p]++] = PopId{static_cast<PopId::rep_type>(i)};
     }
     for (std::size_t i = 0; i < building_provinces.size(); ++i) {
+        if (!buildings.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         const auto province = building_provinces[i];
         if (!province.valid()) continue;
         const auto p = static_cast<std::size_t>(province.value());

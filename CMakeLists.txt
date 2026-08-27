@@ -5,6 +5,13 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    # Keep every target (including tests and tools) on the same UTF-8 source
+    # encoding.  Applying this globally avoids headers being reparsed under
+    # the host code page when they are included by an executable target.
+    add_compile_options(/utf-8)
+endif()
+
 option(CORE_BUILD_TESTS "Build Core tests" ON)
 option(CORE_BUILD_DESKTOP "Build SDL3/Vulkan desktop shell" OFF)
 option(CORE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
@@ -144,7 +151,10 @@ endif()
 
 function(core_apply_warnings target_name)
     if(MSVC)
-        target_compile_options(${target_name} PRIVATE /W4 /permissive-)
+        # Repository sources are UTF-8 (including localized content keys and
+        # documentation comments).  Make the source/execution charset
+        # explicit so `/WX` does not depend on the host Windows code page.
+        target_compile_options(${target_name} PRIVATE /W4 /permissive- /utf-8)
         if(CORE_WARNINGS_AS_ERRORS)
             target_compile_options(${target_name} PRIVATE /WX)
         endif()
@@ -237,6 +247,8 @@ if(CORE_BUILD_TESTS)
     # NDEBUG, which would otherwise erase both checks and any fixture calls inside
     # them, so explicitly keep test assertions enabled in every configuration.
     if(MSVC)
+        # /UNDEBUG intentionally overrides the Release /DNDEBUG flag. MSVC
+        # reports that deliberate override as D9025, which is harmless here.
         add_compile_options(/UNDEBUG)
     else()
         add_compile_options(-UNDEBUG)

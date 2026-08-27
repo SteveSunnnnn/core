@@ -1,5 +1,27 @@
 # Changelog
 
+## Core 1.0 Development — Deterministic Runtime Hardening & Global Script Persistence — 2026-08-28
+
+- Added the tagged `GLB1` save extension for world-level CoreScript state:
+  stable-key variables/parameters, event targets, typed collections, scope
+  bindings and deterministic random-draw counters now survive save/load.
+- Extended persistent-context validation to support an untyped global root while
+  retaining world reference checks and atomic decode/commit behavior.
+- Hardened stale entity handles across scripted traversal, bytecode evaluation,
+  economy settlement, research, migration, warfare and construction queues by
+  filtering destroyed SoA slots consistently.
+- Wired data-driven weekly research diffusion to the persisted GameClock (with
+  a legacy fallback only when no finalized research catalogue is present) and
+  resolved due migration flows during the normal world-aware weekly tick.
+- Added construction-queue invariants and overflow guards: project IDs remain
+  monotonic, malformed targets are rejected before save/tick, completed
+  expansions cannot wrap a building level, and weekly progress now participates
+  in deterministic checksums with legacy CQ01 checksum migration retained.
+- Added malformed UI geometry/tooltip overflow guards and data-backed desktop HUD
+  values with explicit empty states instead of demo placeholders.
+- Verified MSVC `/WX`, MinGW/GCC `-Werror`, Debug and Release headless builds;
+  all 26 regression suites pass in each configuration.
+
 ## Core 1.0 Development — Realistic Governance, State Resistance & Natural Integration, Autonomous Trade & Treasury Funding — 2026-08-27
 
 - **Treasury-Funded Institutions & Fiscal Budgeting** (`src/core/grand_strategy/GrandStrategyStore.cpp` / `hpp`):

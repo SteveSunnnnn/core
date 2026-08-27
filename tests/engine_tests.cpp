@@ -22,6 +22,7 @@ void seed(core::CoreEngine& e) {
     const auto worker=d.add_need_profile("workers",needs);
     auto& w=e.world();
     const auto c=w.countries.create({"GBR",10000,0,100000,0.2});
+    const auto treaty_partner=w.countries.create({"PARTNER",1000,0,1000,0.2});
     w.markets.resize(1,d); w.markets.set_owner(core::MarketId{0},c);
     const auto state=w.geography.create_state({"england",c,core::MarketId{0},{}});
     const auto prov=w.geography.create_province({"london",state,c,core::MarketId{0},0.0,0.0,1000});
@@ -32,7 +33,7 @@ void seed(core::CoreEngine& e) {
     w.grand_strategy.add_technology({c,22,500000,false});
     w.grand_strategy.add_company({c,33,1000,1'000'000,true});
     w.grand_strategy.add_trade_route({core::MarketId{0},core::MarketId{0},grain,100,1,true});
-    w.grand_strategy.add_treaty({c,c,core::TreatyKind::TradeAgreement,44,true});
+    w.grand_strategy.add_treaty({c,treaty_partner,core::TreatyKind::TradeAgreement,44,true});
     w.grand_strategy.add_army({c,state,5000,900000});
     w.grand_strategy.add_investment_pool({c,10000,100});
     w.markets.inventory_row(core::MarketId{0})[tools.value()] = 100'000;
@@ -124,4 +125,3 @@ int main(){
     std::cout<<"Core engine integration tests passed\n";
     return 0;
 }
-

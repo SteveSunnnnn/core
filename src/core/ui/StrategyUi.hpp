@@ -99,7 +99,15 @@ struct UiVirtualWindow { std::size_t first=0, count=0; float top_padding=0, bott
                                                               float viewport_height,
                                                               std::size_t overscan = 2) {
     UiVirtualWindow w;
-    if (row_offsets.size() < 2 || viewport_height <= 0.0f) return w;
+    if (row_offsets.size() < 2 || !std::isfinite(scroll_y) ||
+        !std::isfinite(viewport_height) || viewport_height <= 0.0f) return w;
+    for (std::size_t i = 0; i < row_offsets.size(); ++i) {
+        if (!std::isfinite(row_offsets[i]) ||
+            (i > 0 && row_offsets[i] < row_offsets[i - 1])) return w;
+    }
+    scroll_y = std::max(0.0f, scroll_y);
+    const float viewport_end = scroll_y + viewport_height;
+    if (!std::isfinite(viewport_end)) return w;
     const std::size_t total = row_offsets.size() - 1;
     // Binary search for first visible: lower_bound on row_offsets
     std::size_t first_vis = total;
@@ -112,13 +120,13 @@ struct UiVirtualWindow { std::size_t first=0, count=0; float top_padding=0, bott
     }
     std::size_t last_vis = 0;
     {
-        auto it = std::lower_bound(row_offsets.begin(), row_offsets.begin() + static_cast<std::ptrdiff_t>(total + 1), scroll_y + viewport_height);
+        auto it = std::lower_bound(row_offsets.begin(), row_offsets.begin() + static_cast<std::ptrdiff_t>(total + 1), viewport_end);
         if (it == row_offsets.begin() + static_cast<std::ptrdiff_t>(total + 1)) last_vis = total - 1;
         else {
             const auto idx = static_cast<std::size_t>(it - row_offsets.begin());
             last_vis = idx > 0 ? idx - 1 : 0;
             // Extend while row still intersects viewport (variable height)
-            while (last_vis + 1 < total && row_offsets[last_vis + 1] < scroll_y + viewport_height) ++last_vis;
+            while (last_vis + 1 < total && row_offsets[last_vis + 1] < viewport_end) ++last_vis;
         }
     }
     if (first_vis == total) {
@@ -130,7 +138,9 @@ struct UiVirtualWindow { std::size_t first=0, count=0; float top_padding=0, bott
         return w;
     }
     const auto first = first_vis > overscan ? first_vis - overscan : 0u;
-    const auto last = std::min(total, last_vis + 1 + overscan);
+    const auto remaining = total - last_vis;
+    const auto extension = overscan >= remaining - 1u ? remaining - 1u : overscan;
+    const auto last = last_vis + 1u + extension;
     w.first = first;
     w.count = last > first ? last - first : 0u;
     w.top_padding = row_offsets[first];
@@ -140,13 +150,24 @@ struct UiVirtualWindow { std::size_t first=0, count=0; float top_padding=0, bott
 
 [[nodiscard]] inline std::pair<float, float> chart_range(std::span<const float> series, bool robust_clamp = true) {
     if (series.empty()) return {0.0f, 1.0f};
-    float min_v = series[0], max_v = series[0];
+    float min_v = 0.0f, max_v = 0.0f;
+    bool found_finite = false;
     for (float v : series) {
+        if (!std::isfinite(v)) continue;
+        if (!found_finite) {
+            min_v = max_v = v;
+            found_finite = true;
+            continue;
+        }
         min_v = std::min(min_v, v);
         max_v = std::max(max_v, v);
     }
+    if (!found_finite) return {0.0f, 1.0f};
     if (robust_clamp && series.size() > 20) {
         std::vector<float> sorted(series.begin(), series.end());
+        sorted.erase(std::remove_if(sorted.begin(), sorted.end(),
+                                     [](float v) { return !std::isfinite(v); }), sorted.end());
+        if (sorted.empty()) return {0.0f, 1.0f};
         std::sort(sorted.begin(), sorted.end());
         const std::size_t p95_idx = std::min(sorted.size() - 1, static_cast<std::size_t>(static_cast<float>(sorted.size()) * 0.95f));
         const std::size_t p05_idx = static_cast<std::size_t>(static_cast<float>(sorted.size()) * 0.05f);
@@ -160,7 +181,9 @@ struct UiVirtualWindow { std::size_t first=0, count=0; float top_padding=0, bott
 inline void build_chart_polyline(std::span<const float> series, UiRect rect, std::size_t max_points,
                                   std::vector<float>& polyline, std::pair<float, float> range) {
     polyline.clear();
-    if (series.size() < 2 || rect.w <= 0.0f || rect.h <= 0.0f) return;
+    if (series.size() < 2 || !std::isfinite(rect.x) || !std::isfinite(rect.y) ||
+        !std::isfinite(rect.w) || !std::isfinite(rect.h) || rect.w <= 0.0f ||
+        rect.h <= 0.0f || !std::isfinite(range.first) || !std::isfinite(range.second)) return;
     const std::size_t n = std::min(series.size(), max_points > 0 ? max_points : series.size());
     if (n < 2) return;
     const float step_idx = static_cast<float>(series.size() - 1) / static_cast<float>(n - 1);
@@ -168,11 +191,15 @@ inline void build_chart_polyline(std::span<const float> series, UiRect rect, std
     const float range_span = std::max(1e-4f, range.second - range.first);
 
     for (std::size_t i = 0; i < n; ++i) {
-        const auto start_idx = static_cast<std::size_t>(static_cast<float>(i) * step_idx);
-        const auto end_idx = static_cast<std::size_t>(static_cast<float>(i + 1) * step_idx);
-        float val = series[start_idx];
+        const auto start_idx = std::min(
+            series.size() - 1u,
+            static_cast<std::size_t>(static_cast<float>(i) * step_idx));
+        const auto end_idx = std::min(
+            series.size() - 1u,
+            static_cast<std::size_t>(static_cast<float>(i + 1u) * step_idx));
+        float val = std::isfinite(series[start_idx]) ? series[start_idx] : range.first;
         for (std::size_t k = start_idx; k <= end_idx && k < series.size(); ++k) {
-            if (series[k] > val) val = series[k];
+            if (std::isfinite(series[k]) && series[k] > val) val = series[k];
         }
         const float px = rect.x + static_cast<float>(i) * dx;
         const float norm_y = std::clamp((val - range.first) / range_span, 0.0f, 1.0f);
@@ -183,6 +210,17 @@ inline void build_chart_polyline(std::span<const float> series, UiRect rect, std
 }
 
 [[nodiscard]] inline UiRect place_tooltip(UiRect target_rect, float tw, float th, UiRect screen, float padding = 5.0f) {
+    if (!std::isfinite(target_rect.x) || !std::isfinite(target_rect.y) ||
+        !std::isfinite(target_rect.w) || !std::isfinite(target_rect.h) ||
+        !std::isfinite(tw) || !std::isfinite(th) || !std::isfinite(screen.x) ||
+        !std::isfinite(screen.y) || !std::isfinite(screen.w) ||
+        !std::isfinite(screen.h) || !std::isfinite(padding) || tw <= 0.0f ||
+        th <= 0.0f || target_rect.w < 0.0f || target_rect.h < 0.0f ||
+        screen.w <= 0.0f || screen.h <= 0.0f || padding < 0.0f ||
+        !std::isfinite(target_rect.x + target_rect.w) ||
+        !std::isfinite(target_rect.y + target_rect.h) ||
+        !std::isfinite(screen.x + screen.w) || !std::isfinite(screen.y + screen.h))
+        return {};
     float x = target_rect.x + target_rect.w + padding;
     float y = target_rect.y;
     if (x + tw > screen.x + screen.w - padding) {

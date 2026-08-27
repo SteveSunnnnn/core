@@ -4,6 +4,7 @@
 #include "core/content/VirtualFileSystem.hpp"
 #include "core/scripting/ScriptRegistry.hpp"
 #include "core/scripting/SymbolTable.hpp"
+#include "TestTempPath.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -229,7 +230,7 @@ void test_conflict_diagnostic() {
 }
 
 void test_load_plan_mounts_vfs_in_resolved_overlay_order() {
-    const auto root = std::filesystem::temp_directory_path() / "core_mod_pipeline_tests";
+    const auto root = core_test::unique_temp_path("core_mod_pipeline_tests");
     const auto base = root / "base";
     const auto feature = root / "feature";
     std::filesystem::remove_all(root);
@@ -277,7 +278,7 @@ void test_load_plan_mounts_vfs_in_resolved_overlay_order() {
 }
 
 void test_package_hash_reaches_effective_content_hash() {
-    const auto root = std::filesystem::temp_directory_path() / "core_mod_hash_pipeline_tests";
+    const auto root = core_test::unique_temp_path("core_mod_hash_pipeline_tests");
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "common");
     {

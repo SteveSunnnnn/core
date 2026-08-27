@@ -10,7 +10,10 @@
 #include "core/content/ResearchContent.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -69,7 +72,7 @@ public:
         std::string category; // stable key e.g. "building", "law_group", "goods"
         DefinitionMergePolicy default_policy = DefinitionMergePolicy::Replace;
         // Validator receives parsed object; returns false + diagnostic on error.
-        std::function<bool(const class ScriptParseResult& parsed,
+        std::function<bool(const struct ScriptParseResult& parsed,
                            std::vector<ScriptCompileDiagnostic>& diagnostics)> ingest;
         std::function<std::size_t()> immutable_bytes;
     };

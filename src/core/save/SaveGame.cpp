@@ -6,6 +6,7 @@
 #include "core/ai/UtilityAi.hpp"
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -35,6 +36,8 @@ constexpr std::uint32_t on_action_section_tag = 0x31414e4fu; // "ONA1" in little
 constexpr std::uint32_t market_monetary_section_tag = 0x314e4f4du; // "MON1" in little endian.
 constexpr std::uint32_t fx_section_tag = 0x31305846u; // "FX01" in little endian.
 constexpr std::uint32_t financial_section_tag = 0x314e4946u; // "FIN1" in little endian.
+constexpr std::uint32_t slot_section_tag = 0x31544c53u; // "SLT1" in little endian.
+constexpr std::uint32_t global_script_section_tag = 0x31424c47u; // "GLB1" in little endian.
 constexpr std::uint32_t max_banks = 65'536u;
 constexpr std::uint32_t max_bank_loans = 5'000'000u;
 constexpr std::uint32_t max_context_bindings = 65'536u;
@@ -264,6 +267,30 @@ std::uint64_t legacy_geography_checksum_pre_resistance(const GeographyStore& g) 
     return h.value();
 }
 
+// CQ01 originally omitted weekly_progress_ppm from the construction checksum.
+// Keep that historical layout available for authentic pre-hardening saves while
+// the current checksum covers every serialized project field.
+std::uint64_t legacy_construction_checksum_pre_weekly(const ConstructionStore& construction) noexcept {
+    Fnv1a64 h;
+    h.add(construction.size());
+    for (const auto& p : construction.projects()) {
+        h.add(p.id.value());
+        h.add(p.country.value());
+        h.add(p.province.value());
+        h.add(p.target_building.value());
+        h.add(static_cast<std::uint8_t>(p.kind));
+        h.add(p.target_pm.value());
+        h.add(p.monument_key_hash);
+        h.add(p.progress_points);
+        h.add(p.total_points_required);
+        h.add(p.total_cost_milli);
+        h.add(p.paid_cost_milli);
+        h.add(p.paused ? 1u : 0u);
+        h.add(p.priority);
+    }
+    return h.value();
+}
+
 std::uint64_t legacy_world_checksum_v4_pre_fx(const World& world) noexcept {
     Fnv1a64 h;
     h.add(legacy_country_checksum_pre_fx(world.countries));
@@ -315,7 +342,7 @@ std::uint64_t legacy_world_checksum_pre_resistance(const World& world) noexcept 
     h.add(world.grand_strategy.checksum());
     h.add(world.currencies.checksum()); h.add(world.banks.checksum());
     h.add(world.trade_policies.checksum());
-    h.add(world.construction.checksum());
+    h.add(legacy_construction_checksum_pre_weekly(world.construction));
     return h.value();
 }
 
@@ -682,6 +709,29 @@ void decode_gameplay_context_section(Reader& r, DecodedGameplayState& gameplay) 
     }
 }
 
+void encode_global_script_section(Writer& w, const GlobalScriptStore& global_scripts,
+                                  const World& world) {
+    if (global_scripts.empty()) return;
+    if (!global_scripts.validate(world))
+        throw std::runtime_error("global script store contains invalid persistent state");
+    w.u32(global_script_section_tag);
+    encode_script_context(w, global_scripts.context());
+}
+
+struct DecodedGlobalScriptState {
+    bool present = false;
+};
+
+void decode_global_script_section(Reader& r, World& world,
+                                  DecodedGlobalScriptState& decoded) {
+    if (r.u32() != global_script_section_tag)
+        throw std::runtime_error("invalid global script extension tag");
+    if (decoded.present)
+        throw std::runtime_error("duplicate global script extension");
+    decoded.present = true;
+    world.global_scripts.context() = decode_script_context(r);
+}
+
 void encode_gameplay(Writer& w, const ScriptedGameplayRuntime& gameplay) {
     const auto definitions = gameplay.definitions();
     w.u32(static_cast<std::uint32_t>(gameplay.instances().size()));
@@ -989,6 +1039,8 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         throw std::runtime_error("invalid fx extension tag");
     const auto cur_count = r.count(1024u);
     currencies.clear();
+    std::unordered_set<CurrencyKey> currency_keys;
+    currency_keys.reserve(cur_count);
     for (std::uint32_t i = 0; i < cur_count; ++i) {
         const auto key = r.u64();
         const auto name = r.string();
@@ -999,6 +1051,13 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         const auto rate = r.i64();
         const auto target = r.i64();
         const auto suspended = r.boolean();
+        if (key == 0u || !currency_keys.insert(key).second ||
+            static_cast<std::uint8_t>(std_val) >
+                static_cast<std::uint8_t>(MonetaryStandard::FiatFloating) ||
+            gold_mg == 0u || silver_mg == 0u || rate < 10'000 || rate > 100'000'000 ||
+            target < 10'000 || target > 100'000'000 ||
+            (leader_val != 0xFFFFFFFFu && leader_val >= countries.size()))
+            throw std::runtime_error("invalid currency record in save");
         currencies.register_currency(key, name, std_val, gold_mg, silver_mg, rate);
         currencies.set_exchange_rate_ppm(key, rate);
         currencies.set_target_rate_ppm(key, target);
@@ -1023,6 +1082,10 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         const auto rating_val = r.u8();
         const auto bond_yield = r.i64();
         const auto def_weeks = r.u16();
+        if (primary_cur == 0u || !currencies.contains(primary_cur) || reserves < 0 ||
+            !std::isfinite(prestige) || debt < 0 || rating_val > 7u ||
+            bond_yield < 10'000 || bond_yield > 500'000)
+            throw std::runtime_error("invalid country monetary record in save");
         countries.set_primary_currency(id, primary_cur);
         countries.set_foreign_reserves_milli(id, reserves);
         countries.set_balance_of_payments_milli(id, bop);
@@ -1107,7 +1170,10 @@ constexpr std::uint32_t construction_section_tag = 0x31305143u; // 'CQ01'
 
 struct DecodedConstructionState { bool present = false; };
 
-void encode_construction_section(Writer& w, const ConstructionStore& construction) {
+void encode_construction_section(Writer& w, const ConstructionStore& construction,
+                                 const World& world) {
+    if (!construction.validate(world))
+        throw std::runtime_error("construction queue contains invalid project state");
     w.u32(construction_section_tag);
     w.u32(static_cast<std::uint32_t>(construction.size()));
     for (const auto& p : construction.projects()) {
@@ -1179,6 +1245,58 @@ DecodedResistanceState decode_resistance_section(Reader& r, GeographyStore& geog
         geography.set_state_resistance_ppm(id, r.u32());
     }
     return decoded;
+}
+
+struct DecodedSlotState {
+    bool present = false;
+};
+
+void encode_slot_pool(Writer& w, const SlotPool& pool, std::size_t max_entities) {
+    const auto generations = pool.generations();
+    const auto bitmap = pool.bitmap();
+    const auto free_list = pool.free_list();
+    if (generations.size() > max_entities || free_list.size() > max_entities ||
+        bitmap.size() > (max_entities + 63u) / 64u)
+        throw std::runtime_error("slot pool state exceeds save safety cap");
+    w.u32(static_cast<std::uint32_t>(generations.size()));
+    for (const auto generation : generations) w.u32(generation);
+    w.u32(static_cast<std::uint32_t>(bitmap.size()));
+    for (const auto word : bitmap) w.u64(word);
+    w.u32(static_cast<std::uint32_t>(free_list.size()));
+    for (const auto index : free_list) w.u32(index);
+}
+
+void decode_slot_pool(Reader& r, SlotPool& pool, std::size_t expected_entities,
+                      std::uint32_t max_entities) {
+    const auto entity_count = r.count(max_entities);
+    if (entity_count != expected_entities)
+        throw std::runtime_error("slot pool entity count mismatch");
+    std::vector<std::uint32_t> generations(entity_count);
+    for (auto& generation : generations) generation = r.u32();
+    const auto bitmap_count = r.count((max_entities + 63u) / 64u);
+    const auto expected_bitmap_count = (expected_entities + 63u) / 64u;
+    if (bitmap_count != expected_bitmap_count)
+        throw std::runtime_error("slot pool bitmap count mismatch");
+    std::vector<std::uint64_t> bitmap(bitmap_count);
+    for (auto& word : bitmap) word = r.u64();
+    const auto free_count = r.count(max_entities);
+    std::vector<std::uint32_t> free_list(free_count);
+    for (auto& index : free_list) index = r.u32();
+    pool.restore_state(generations, bitmap, free_list);
+}
+
+void encode_slot_section(Writer& w, const World& world) {
+    w.u32(slot_section_tag);
+    encode_slot_pool(w, world.buildings.slot_pool(), max_buildings);
+    encode_slot_pool(w, world.pops.slot_pool(), max_pops);
+}
+
+DecodedSlotState decode_slot_section(Reader& r, World& world) {
+    if (r.u32() != slot_section_tag)
+        throw std::runtime_error("invalid slot-pool extension tag");
+    decode_slot_pool(r, world.buildings.slot_pool(), world.buildings.size(), max_buildings);
+    decode_slot_pool(r, world.pops.slot_pool(), world.pops.size(), max_pops);
+    return {true};
 }
 
 void encode_on_action_section(Writer& w, const OnActionRuntime& on_actions) {
@@ -1299,6 +1417,8 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
                                    const OnActionRuntime& on_actions,
                                    std::uint64_t content_hash, std::uint64_t world_pack_hash) {
     if (!clock.validate_state()) throw std::invalid_argument("invalid game clock state");
+    if (!world.currencies.validate(world.countries.size()))
+        throw std::invalid_argument("invalid currency state");
     notifications.validate_state(notifications.instances(), notifications.next_instance_id(),
                                  world, clock.tick_index());
     on_actions.validate_state(on_actions.queue(), on_actions.next_invocation_id(), world);
@@ -1325,28 +1445,67 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     for(std::size_t i=0;i<world.geography.state_count();++i){const StateId id{static_cast<StateId::rep_type>(i)};p.string(world.geography.state_key(id));wid(p,world.geography.state_owner(id));wid(p,world.geography.state_market(id));wid(p,world.geography.state_capital(id));}
     p.u32(static_cast<std::uint32_t>(world.geography.province_count()));
     for(std::size_t i=0;i<world.geography.province_count();++i){const ProvinceId id{static_cast<ProvinceId::rep_type>(i)};p.string(world.geography.province_key(id));wid(p,world.geography.province_state(id));wid(p,world.geography.province_owner(id));wid(p,world.geography.province_market(id));p.f64(world.geography.province_center_x(id));p.f64(world.geography.province_center_y(id));p.u32(world.geography.province_areas_km2()[i]);}
+    // Store dense rows even for tombstoned slots.  The liveness/allocator
+    // section below restores which rows are addressable; reading raw SoA
+    // columns here avoids calling accessors that intentionally reject dead
+    // IDs during ordinary gameplay.
     p.u32(static_cast<std::uint32_t>(world.buildings.size()));
-    for(std::size_t i=0;i<world.buildings.size();++i){const BuildingId id{static_cast<BuildingId::rep_type>(i)};wid(p,world.buildings.market(id));wid(p,world.buildings.type(id));p.u16(world.buildings.level(id));p.i64(world.buildings.wage_offer(id));p.i64(world.buildings.cash(id));wid(p,world.buildings.province(id));wid(p,world.buildings.production_method(id));p.u32(world.buildings.employees(id));p.i64(world.buildings.last_profit(id));}
+    const auto building_markets = world.buildings.markets();
+    const auto building_types = world.buildings.types();
+    const auto building_levels = world.buildings.levels();
+    const auto building_wages = world.buildings.wage_offers();
+    const auto building_cash = world.buildings.cash_all();
+    const auto building_provinces = world.buildings.provinces();
+    const auto building_methods = world.buildings.production_methods();
+    const auto building_employees = world.buildings.employees_all();
+    const auto building_profits = world.buildings.last_profits();
+    for (std::size_t i = 0; i < world.buildings.size(); ++i) {
+        wid(p, building_markets[i]);
+        wid(p, building_types[i]);
+        p.u16(building_levels[i]);
+        p.i64(building_wages[i]);
+        p.i64(building_cash[i]);
+        wid(p, building_provinces[i]);
+        wid(p, building_methods[i]);
+        p.u32(building_employees[i]);
+        p.i64(building_profits[i]);
+    }
     p.u32(static_cast<std::uint32_t>(world.pops.size()));
-    for(std::size_t i=0;i<world.pops.size();++i){
-        const PopId id{static_cast<PopId::rep_type>(i)};
-        wid(p,world.pops.market(id));
-        p.u32(world.pops.population(id));
-        wid(p,world.pops.employer(id));
-        wid(p,world.pops.need_profile(id));
-        wid(p,world.pops.province(id));
-        wid(p,world.pops.culture(id));
-        wid(p,world.pops.religion(id));
-        wid(p,world.pops.profession(id));
-        wid(p,world.pops.interest_group(id));
-        p.u16(world.pops.literacy_permyriad(id));
-        p.u16(world.pops.qualification_permyriad(id));
-        p.i32(world.pops.wealth_milli(id));
-        p.u32(world.pops.political_strength_milli(id));
-        p.u32(world.pops.employed(id));
-        p.i64(world.pops.income(id));
-        p.i64(world.pops.cash(id));
-        p.i32(world.pops.standard_of_living_milli(id));
+    const auto pop_markets = world.pops.markets();
+    const auto pop_population = world.pops.populations();
+    const auto pop_employers = world.pops.employers();
+    const auto pop_need_profiles = world.pops.need_profiles();
+    const auto pop_provinces = world.pops.provinces();
+    const auto pop_cultures = world.pops.cultures();
+    const auto pop_religions = world.pops.religions();
+    const auto pop_professions = world.pops.professions();
+    const auto pop_interest_groups = world.pops.interest_groups();
+    const auto pop_literacy = world.pops.literacy_all();
+    const auto pop_qualification = world.pops.qualifications_all();
+    const auto pop_wealth = world.pops.wealth_all();
+    const auto pop_political_strength = world.pops.political_strength_all();
+    const auto pop_employed = world.pops.employed_all();
+    const auto pop_income = world.pops.incomes();
+    const auto pop_cash = world.pops.cash_all();
+    const auto pop_sol = world.pops.sol_all();
+    for (std::size_t i = 0; i < world.pops.size(); ++i) {
+        wid(p, pop_markets[i]);
+        p.u32(pop_population[i]);
+        wid(p, pop_employers[i]);
+        wid(p, pop_need_profiles[i]);
+        wid(p, pop_provinces[i]);
+        wid(p, pop_cultures[i]);
+        wid(p, pop_religions[i]);
+        wid(p, pop_professions[i]);
+        wid(p, pop_interest_groups[i]);
+        p.u16(pop_literacy[i]);
+        p.u16(pop_qualification[i]);
+        p.i32(pop_wealth[i]);
+        p.u32(pop_political_strength[i]);
+        p.u32(pop_employed[i]);
+        p.i64(pop_income[i]);
+        p.i64(pop_cash[i]);
+        p.i32(pop_sol[i]);
     }
     encode_grand(p,world.grand_strategy);
     encode_gameplay(p, gameplay);
@@ -1355,6 +1514,7 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     const bool has_gameplay_context_section = !gameplay.instances().empty() ||
         gameplay.next_instance_id() != 1u;
     if (has_gameplay_context_section) encode_gameplay_context_section(p, gameplay, world);
+    encode_global_script_section(p, world.global_scripts, world);
 
     // Preserve byte-for-byte compatibility for v4 saves that predate the extension.
     // Once notification content or state exists, a tagged stable-key section is emitted.
@@ -1372,8 +1532,11 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     encode_market_monetary_section(p, world.markets);
     encode_fx_section(p, world.currencies, world.countries);
     encode_financial_section(p, world);
-    encode_construction_section(p, world.construction);
+    encode_construction_section(p, world.construction, world);
     encode_resistance_section(p, world.geography);
+    // Dense entity rows retain stable indices; SLT1 carries the allocator
+    // bitmap, generations and free-list order needed for deterministic reuse.
+    encode_slot_section(p, world);
 
     const auto checksum=world.checksum();
     const auto runtime_state_checksum = has_on_action_section
@@ -1462,6 +1625,8 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     DecodedFinancialState decoded_financial;
     DecodedConstructionState decoded_construction;
     DecodedResistanceState decoded_resistance;
+    DecodedSlotState decoded_slots;
+    DecodedGlobalScriptState decoded_global_scripts;
     if (ver == legacy_version) {
         decode_grand_v1(p, decoded.grand_strategy);
     } else {
@@ -1473,6 +1638,8 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
                 const auto tag = p.peek_u32();
                 if (tag == gameplay_context_section_tag) {
                     decode_gameplay_context_section(p, decoded_gameplay);
+                } else if (tag == global_script_section_tag) {
+                    decode_global_script_section(p, decoded, decoded_global_scripts);
                 } else if (tag == notification_section_tag) {
                     if (decoded_notifications.present)
                         throw std::runtime_error("duplicate notification extension");
@@ -1503,6 +1670,10 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
                     if (decoded_resistance.present)
                         throw std::runtime_error("duplicate resistance extension");
                     decoded_resistance = decode_resistance_section(p, decoded.geography);
+                } else if (tag == slot_section_tag) {
+                    if (decoded_slots.present)
+                        throw std::runtime_error("duplicate slot-pool extension");
+                    decoded_slots = decode_slot_section(p, decoded);
                 } else {
                     throw std::runtime_error("unknown extension section in Core save");
                 }
@@ -1520,8 +1691,49 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
         throw std::runtime_error("invalid banking references or balance sheet in save");
     if (!decoded.trade_policies.validate(decoded.countries.size()))
         throw std::runtime_error("invalid trade policy state in save");
-    for(std::size_t i=0;i<decoded.buildings.size();++i){const BuildingId id{static_cast<BuildingId::rep_type>(i)};if(decoded.buildings.market(id).valid()&&decoded.buildings.market(id).value()>=decoded.markets.size())throw std::runtime_error("building market reference invalid");if(decoded.buildings.type(id).value()>=definitions.building_type_count())throw std::runtime_error("building type reference invalid");const auto pm=decoded.buildings.production_method(id);if(pm.valid()){if(pm.value()>=definitions.production_method_count())throw std::runtime_error("production method reference invalid");if(definitions.production_method(pm).building_type!=decoded.buildings.type(id))throw std::runtime_error("production method building-type mismatch");}if(decoded.buildings.province(id).valid()&&decoded.buildings.province(id).value()>=decoded.geography.province_count())throw std::runtime_error("building province reference invalid");}
-    for(std::size_t i=0;i<decoded.pops.size();++i){const PopId id{static_cast<PopId::rep_type>(i)};if(decoded.pops.market(id).valid()&&decoded.pops.market(id).value()>=decoded.markets.size())throw std::runtime_error("pop market reference invalid");if(decoded.pops.need_profile(id).value()>=definitions.need_profile_count())throw std::runtime_error("pop need-profile reference invalid");if(decoded.pops.employer(id).valid()&&decoded.pops.employer(id).value()>=decoded.buildings.size())throw std::runtime_error("pop employer reference invalid");if(decoded.pops.province(id).valid()&&decoded.pops.province(id).value()>=decoded.geography.province_count())throw std::runtime_error("pop province reference invalid");}
+    if (!decoded.currencies.validate(decoded.countries.size()))
+        throw std::runtime_error("invalid currency state in save");
+    if (!decoded.construction.validate(decoded))
+        throw std::runtime_error("invalid construction queue state in save");
+    if (!decoded.global_scripts.validate(decoded))
+        throw std::runtime_error("invalid global script state in save");
+    for (std::size_t i = 0; i < decoded.buildings.size(); ++i) {
+        if (!decoded.buildings.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
+        const BuildingId id{static_cast<BuildingId::rep_type>(i)};
+        if (decoded.buildings.market(id).valid() &&
+            decoded.buildings.market(id).value() >= decoded.markets.size())
+            throw std::runtime_error("building market reference invalid");
+        if (decoded.buildings.type(id).value() >= definitions.building_type_count())
+            throw std::runtime_error("building type reference invalid");
+        const auto pm = decoded.buildings.production_method(id);
+        if (pm.valid()) {
+            if (pm.value() >= definitions.production_method_count())
+                throw std::runtime_error("production method reference invalid");
+            if (definitions.production_method(pm).building_type != decoded.buildings.type(id))
+                throw std::runtime_error("production method building-type mismatch");
+        }
+        if (decoded.buildings.province(id).valid() &&
+            decoded.buildings.province(id).value() >= decoded.geography.province_count())
+            throw std::runtime_error("building province reference invalid");
+    }
+    for (std::size_t i = 0; i < decoded.pops.size(); ++i) {
+        if (!decoded.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
+        const PopId id{static_cast<PopId::rep_type>(i)};
+        if (decoded.pops.market(id).valid() &&
+            decoded.pops.market(id).value() >= decoded.markets.size())
+            throw std::runtime_error("pop market reference invalid");
+        if (decoded.pops.need_profile(id).value() >= definitions.need_profile_count())
+            throw std::runtime_error("pop need-profile reference invalid");
+        if (decoded.pops.employer(id).valid() &&
+            decoded.pops.employer(id).value() >= decoded.buildings.size())
+            throw std::runtime_error("pop employer reference invalid");
+        if (decoded.pops.province(id).valid() &&
+            decoded.pops.province(id).value() >= decoded.geography.province_count())
+            throw std::runtime_error("pop province reference invalid");
+        if (decoded.pops.employer(id).valid() &&
+            !decoded.buildings.slot_pool().is_index_alive(decoded.pops.employer(id).value()))
+            throw std::runtime_error("pop employer references dead building");
+    }
     gameplay.validate_state(decoded_gameplay.instances, decoded_gameplay.log, decoded,
                             decoded_clock.tick_index(), decoded_gameplay.next_instance_id);
     ai.validate_state(decoded_ai.actions, decoded, decoded_clock.tick_index());
@@ -1534,8 +1746,19 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     bool world_checksum_matches = false;
     if (ver == legacy_version) {
         world_checksum_matches = legacy_world_checksum_v1(decoded) == expected_checksum;
-    } else if (decoded_resistance.present) {
+    } else if (decoded_slots.present) {
+        // SLT1 makes allocator generations and free-list order authoritative;
+        // never accept an older component-only digest for a save that carries
+        // this state, otherwise allocator corruption could be hidden by a
+        // legacy checksum collision.
         world_checksum_matches = decoded.checksum() == expected_checksum;
+    } else if (decoded_resistance.present) {
+        // v4 saves written before SLT1 have the resistance extension but do
+        // not include allocator generations/free-list state in the world
+        // checksum. Accept their historical digest only when the slot section
+        // is absent.
+        world_checksum_matches = decoded.checksum() == expected_checksum ||
+                                 legacy_world_checksum_pre_resistance(decoded) == expected_checksum;
     } else if (decoded_construction.present) {
         world_checksum_matches = decoded.checksum() == expected_checksum ||
                                  legacy_world_checksum_pre_resistance(decoded) == expected_checksum;

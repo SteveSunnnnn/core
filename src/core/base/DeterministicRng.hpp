@@ -1,4 +1,5 @@
 #pragma once
+#include <bit>
 #include <cstdint>
 #include <limits>
 
@@ -36,15 +37,19 @@ public:
                                                    std::uint64_t counter = 0u) noexcept {
         if (min_val >= max_val) return min_val;
         const auto range = max_val - min_val + 1u;
-        // Lemire unbiased rejection sampling to avoid modulo bias
-        const __uint128_t threshold = (__uint128_t(1) << 64) % range;
-        for (std::uint64_t attempt = 0; attempt < 4; ++attempt) {
-            const std::uint64_t v = keyed_u64(base_seed, stream_key, counter + attempt * 0x9E3779B97F4A7C15ull);
-            const __uint128_t m = __uint128_t(v) * __uint128_t(range);
-            const std::uint64_t lo = std::uint64_t(m);
-            if (lo >= threshold) return min_val + std::uint64_t(m >> 64);
+        // Portable rejection sampling.  The old implementation used
+        // __uint128_t/Lemire multiplication, which made this public header
+        // unavailable to MSVC and also overflowed for the full uint64 range.
+        // `-range % range` is the number of low values that would create a
+        // modulo bias; unsigned wraparound is intentional and well-defined.
+        const auto threshold = range == 0u ? 0u : ((std::uint64_t{0} - range) % range);
+        for (std::uint64_t attempt = 0u;; ++attempt) {
+            const auto v = keyed_u64(base_seed, stream_key,
+                                     counter + attempt * 0x9E3779B97F4A7C15ull);
+            if (range == 0u || v >= threshold) {
+                return min_val + (range == 0u ? v : v % range);
+            }
         }
-        return min_val + (keyed_u64(base_seed, stream_key, counter) % range);
     }
 
     [[nodiscard]] static double keyed_range_double(std::uint64_t base_seed,
@@ -68,27 +73,30 @@ public:
     [[nodiscard]] std::uint64_t next_u64(std::uint64_t min_val, std::uint64_t max_val) noexcept {
         if (min_val >= max_val) return min_val;
         const auto range = max_val - min_val + 1u;
-        const __uint128_t threshold = (__uint128_t(1) << 64) % range;
-        for (int attempt = 0; attempt < 4; ++attempt) {
+        const auto threshold = range == 0u ? 0u : ((std::uint64_t{0} - range) % range);
+        for (;;) {
             const std::uint64_t v = next_u64();
-            const __uint128_t m = __uint128_t(v) * __uint128_t(range);
-            const std::uint64_t lo = std::uint64_t(m);
-            if (lo >= threshold) return min_val + std::uint64_t(m >> 64);
+            if (range == 0u || v >= threshold)
+                return min_val + (range == 0u ? v : v % range);
         }
-        return min_val + (next_u64() % range);
     }
 
     [[nodiscard]] std::int64_t next_i64(std::int64_t min_val, std::int64_t max_val) noexcept {
         if (min_val >= max_val) return min_val;
-        const auto range = static_cast<std::uint64_t>(max_val - min_val) + 1u;
-        const __uint128_t threshold = (__uint128_t(1) << 64) % range;
-        for (int attempt = 0; attempt < 4; ++attempt) {
+        // Subtract in the unsigned domain so INT64_MIN..INT64_MAX is valid.
+        const auto range = static_cast<std::uint64_t>(max_val) -
+                           static_cast<std::uint64_t>(min_val) + 1u;
+        const auto threshold = range == 0u ? 0u : ((std::uint64_t{0} - range) % range);
+        for (;;) {
             const std::uint64_t v = next_u64();
-            const __uint128_t m = __uint128_t(v) * __uint128_t(range);
-            const std::uint64_t lo = std::uint64_t(m);
-            if (lo >= threshold) return min_val + static_cast<std::int64_t>(std::uint64_t(m >> 64));
+            if (range == 0u || v >= threshold) {
+                const auto offset = range == 0u ? v : v % range;
+                // Addition and conversion are performed on the unsigned bit
+                // pattern, avoiding signed overflow at INT64_MIN/MAX.
+                return std::bit_cast<std::int64_t>(
+                    static_cast<std::uint64_t>(min_val) + offset);
+            }
         }
-        return min_val + static_cast<std::int64_t>(next_u64() % range);
     }
 
     [[nodiscard]] double unit() noexcept {

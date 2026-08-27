@@ -237,7 +237,12 @@ bool BytecodeVm::evaluate(const ScriptBytecode& bytecode,
                 break;
             case BytecodeOpcode::CallTrigger: {
                 const TriggerPrimitiveId prim{inst.primitive};
-                reg = registry.evaluate_trigger(prim, world, context.current, inst.argument_num);
+                // A bytecode context can outlive an entity (for example an
+                // event queued before a POP is merged/destroyed).  Treat the
+                // stale scope as a false trigger instead of dispatching into
+                // a callback that would throw from an SoA accessor.
+                reg = ScopeResolver::valid(world, context.current) &&
+                    registry.evaluate_trigger(prim, world, context.current, inst.argument_num);
                 ++pc;
                 break;
             }

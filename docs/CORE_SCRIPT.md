@@ -196,7 +196,8 @@ Clausewitz/Jomini content runtime. Important missing work includes:
 - ordered/filtered/count/weighted iterator IR with scripted sort and weight values;
 - full arithmetic/conditional/aggregate value bytecode and modifier integration;
 - Date, Duration, Collection and other signature/result types;
-- global and domain-owned persistent variables/lists outside gameplay instances;
+- domain-owned persistent variables/lists outside gameplay instances (the
+  world-level global store is persisted by the `GLB1` save extension);
 - a typed on-action bus and saved delayed-effect/event scheduler;
 - compact parameter slots and allocation-free high-frequency call frames;
 - structured profiling, source provenance, compiled-content cache and editor-safe

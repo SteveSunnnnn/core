@@ -41,13 +41,16 @@
 #include "core/simulation/ModifierGraph.hpp"
 #include "core/simulation/TickScheduler.hpp"
 #include "core/simulation/World.hpp"
+#include "TestTempPath.hpp"
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <atomic>
+#include <limits>
 #include <vector>
 #include <thread>
 #include <filesystem>
@@ -138,6 +141,42 @@ static void test_stable_partition_and_keyed_rng_are_hardware_independent() {
     fill(serial, serial_values);
     fill(parallel, parallel_values);
     assert(serial_values == parallel_values);
+}
+
+static void test_rng_ranges_and_hash_canonicalize_extremes() {
+    for (std::uint64_t counter = 0; counter < 256u; ++counter) {
+        const auto value = DeterministicRng::keyed_range(
+            0x12345678u, 0x9abcdef0u, 10u, 17u, counter);
+        assert(value >= 10u && value <= 17u);
+    }
+    assert(DeterministicRng::keyed_range(1u, 2u, 42u, 42u) == 42u);
+    // The full unsigned domain used to turn the range into zero and then
+    // divide by zero in the fallback path.
+    assert(DeterministicRng::keyed_range(3u, 4u, 0u,
+                                         std::numeric_limits<std::uint64_t>::max(), 5u) ==
+           DeterministicRng::keyed_u64(3u, 4u, 5u));
+
+    DeterministicRng first{0xfeedbeefu};
+    DeterministicRng second{0xfeedbeefu};
+    for (int i = 0; i < 64; ++i) {
+        const auto a = first.next_i64(std::numeric_limits<std::int64_t>::min(),
+                                      std::numeric_limits<std::int64_t>::max());
+        const auto b = second.next_i64(std::numeric_limits<std::int64_t>::min(),
+                                       std::numeric_limits<std::int64_t>::max());
+        assert(a == b);
+    }
+
+    Fnv1a64 canonical_a;
+    Fnv1a64 canonical_b;
+    const auto payload_nan = std::bit_cast<double>(0x7ff8000000000001ull);
+    canonical_a.add(std::numeric_limits<double>::quiet_NaN());
+    canonical_b.add(payload_nan);
+    assert(canonical_a.value() == canonical_b.value());
+    Fnv1a64 positive_zero;
+    Fnv1a64 negative_zero;
+    positive_zero.add(0.0);
+    negative_zero.add(-0.0);
+    assert(positive_zero.value() == negative_zero.value());
 }
 
 static void test_job_system_parallel_for_and_scratch() {
@@ -770,7 +809,7 @@ static void test_cpu_province_picking_avoids_gpu_readback() {
 
 
 static void test_world_pack_random_access_and_reused_decode_scratch() {
-    const auto path = std::filesystem::temp_directory_path() / "core_worldpack_test.coreworld";
+    const auto path = core_test::unique_temp_path("core_worldpack_test.coreworld");
     std::array<std::byte, 64u * 1024u> compressible{};
     for (std::size_t i = 0; i < compressible.size(); ++i) {
         compressible[i] = static_cast<std::byte>((i / 4096u) & 0x0fu);
@@ -826,10 +865,10 @@ static void write_bytes_at(const std::filesystem::path& path, std::uint64_t offs
 }
 
 static void test_world_pack_rejects_corrupt_metadata() {
-    const auto base = std::filesystem::temp_directory_path() / "core_worldpack_corrupt_base.coreworld";
-    const auto bad_hash = std::filesystem::temp_directory_path() / "core_worldpack_corrupt_hash.coreworld";
-    const auto bad_codec = std::filesystem::temp_directory_path() / "core_worldpack_corrupt_codec.coreworld";
-    const auto bad_offset = std::filesystem::temp_directory_path() / "core_worldpack_corrupt_offset.coreworld";
+    const auto base = core_test::unique_temp_path("core_worldpack_corrupt_base.coreworld");
+    const auto bad_hash = core_test::unique_temp_path("core_worldpack_corrupt_hash.coreworld");
+    const auto bad_codec = core_test::unique_temp_path("core_worldpack_corrupt_codec.coreworld");
+    const auto bad_offset = core_test::unique_temp_path("core_worldpack_corrupt_offset.coreworld");
     std::array<std::byte, 64> payload{};
     for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<std::byte>(i);
 
@@ -925,8 +964,8 @@ static void test_political_page_bundle_decodes_without_format_translation() {
 
 
 static void test_world_pack_build_hash_is_order_independent() {
-    const auto a_path = std::filesystem::temp_directory_path() / "core_worldpack_hash_a.coreworld";
-    const auto b_path = std::filesystem::temp_directory_path() / "core_worldpack_hash_b.coreworld";
+    const auto a_path = core_test::unique_temp_path("core_worldpack_hash_a.coreworld");
+    const auto b_path = core_test::unique_temp_path("core_worldpack_hash_b.coreworld");
     std::array<std::byte, 512> a{};
     std::array<std::byte, 512> b{};
     for (std::size_t i = 0; i < a.size(); ++i) {
@@ -1063,7 +1102,7 @@ static void test_definition_database_history_and_immutable_runtime_split() {
 }
 
 static void test_mod_vfs_highest_priority_wins_deterministically() {
-    const auto root = std::filesystem::temp_directory_path() / "core_vfs_test";
+    const auto root = core_test::unique_temp_path("core_vfs_test");
     const auto base = root / "base";
     const auto mod = root / "mod";
     std::filesystem::create_directories(base / "common/countries");
@@ -1095,7 +1134,7 @@ static void test_mod_vfs_highest_priority_wins_deterministically() {
 
 
 static void test_content_loader_compiles_effective_mod_set_and_hashes_it() {
-    const auto root = std::filesystem::temp_directory_path() / "core_content_loader_test";
+    const auto root = core_test::unique_temp_path("core_content_loader_test");
     const auto base = root / "base";
     const auto mod = root / "mod";
     std::filesystem::create_directories(base / "common");
@@ -1199,6 +1238,7 @@ static void test_localization_is_symbol_keyed_and_supports_fallback() {
 
 int main() {
     test_stable_partition_and_keyed_rng_are_hardware_independent();
+    test_rng_ranges_and_hash_canonicalize_extremes();
     test_job_system_parallel_for_and_scratch();
     test_deterministic_reduction_across_worker_counts();
     test_job_system_exception_and_nested_dispatch();

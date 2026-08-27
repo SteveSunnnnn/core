@@ -146,6 +146,7 @@ void GrandStrategyStore::adjust_relation(CountryId first, CountryId second, std:
 }
 
 bool GrandStrategyStore::has_active_treaty(CountryId first, CountryId second, TreatyKind kind) const noexcept {
+    if (!first.valid() || !second.valid() || first == second) return false;
     const auto [a, b] = canonical_pair(first, second);
     for (const auto& treaty : treatys_) {
         if (!treaty.active) continue;
@@ -570,6 +571,7 @@ ProvinceAttraction GrandStrategyStore::calculate_province_attraction(const World
     const auto wage_offers = world.buildings.wage_offers();
 
     for (std::size_t bi = 0; bi < world.buildings.size(); ++bi) {
+        if (!world.buildings.slot_pool().is_index_alive(static_cast<std::uint32_t>(bi))) continue;
         if (bi < building_provinces.size() && building_provinces[bi] == province) {
             const auto cap = static_cast<std::uint64_t>(building_levels[bi]) * 1000u;
             const auto emp = static_cast<std::uint64_t>(building_employees[bi]);
@@ -591,6 +593,7 @@ ProvinceAttraction GrandStrategyStore::calculate_province_attraction(const World
     const auto pop_employed = world.pops.employed_all();
 
     for (std::size_t pi = 0; pi < world.pops.size(); ++pi) {
+        if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(pi))) continue;
         if (pi < pop_provinces.size() && pop_provinces[pi] == province) {
             const auto p = pop_populations[pi];
             const auto e = pop_employed[pi];
@@ -637,6 +640,7 @@ void GrandStrategyStore::update_migration_flows(World& world) {
             PopId src_pop{};
             PopId dst_pop{};
             for (std::size_t pi = 0; pi < world.pops.size(); ++pi) {
+                if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(pi))) continue;
                 if (pi < pop_provinces.size()) {
                     if (pop_provinces[pi] == flow.source && !src_pop.valid()) src_pop = PopId{static_cast<PopId::rep_type>(pi)};
                     if (pop_provinces[pi] == flow.destination && !dst_pop.valid()) dst_pop = PopId{static_cast<PopId::rep_type>(pi)};
@@ -963,6 +967,7 @@ void GrandStrategyStore::run_warfare_weekly(World* world) {
                 const auto pop_sols = world->pops.sol_all();
 
                 for (std::size_t pi = 0; pi < world->pops.size(); ++pi) {
+                    if (!world->pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(pi))) continue;
                     if (pi < pop_provinces.size() && pop_provinces[pi].valid()) {
                         const auto prov_id = pop_provinces[pi].value();
                         if (prov_id < province_states.size() && province_states[prov_id] == front.state) {
@@ -1030,6 +1035,7 @@ void GrandStrategyStore::run_military_weekly(World& world) {
 
             PopulationCount recruits_gathered = 0;
             for (std::size_t pi = 0; pi < world.pops.size() && recruits_gathered < max_recruits; ++pi) {
+                if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(pi))) continue;
                 if (pi < pop_provinces.size() && pop_provinces[pi].valid()) {
                     const auto prov_id = pop_provinces[pi].value();
                     if (prov_id < province_owners.size() && province_owners[prov_id] == army.country) {
@@ -1139,6 +1145,7 @@ void GrandStrategyStore::run_state_resistance_weekly(World& world) {
     std::vector<std::uint32_t> pop_count(state_count, 0u);
 
     for (std::size_t pi = 0; pi < pop_size; ++pi) {
+        if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(pi))) continue;
         if (pi < pop_provinces.size() && pop_provinces[pi].valid()) {
             const auto prov_id = pop_provinces[pi].value();
             if (prov_id < province_states.size()) {
@@ -1179,12 +1186,16 @@ void GrandStrategyStore::run_weekly_reference_tick() {
     run_naval_weekly();
 }
 
-void GrandStrategyStore::run_weekly_reference_tick(World& world) {
-    for (auto& record : migration_flows_) if (record.weeks_remaining > 0u) --record.weeks_remaining;
+void GrandStrategyStore::run_weekly_reference_tick(World& world,
+                                                   bool include_legacy_technology_spread) {
+    // Resolve due flows in the world-aware tick. The previous implementation
+    // only decremented the timer, so the normal CoreEngine path never moved
+    // population when a migration completed.
+    update_migration_flows(world);
     for (auto& record : colonys_) record.progress_ppm = std::min<std::uint32_t>(1'000'000u, record.progress_ppm + 500u);
     run_politics_weekly();
     run_institutions_weekly(world);
-    run_tech_spread_weekly(world);
+    if (include_legacy_technology_spread) run_tech_spread_weekly(world);
     run_state_resistance_weekly(world);
     run_military_weekly(world);
     run_diplomacy_weekly();
@@ -1202,9 +1213,14 @@ bool GrandStrategyStore::validate(std::size_t countries, std::size_t markets, st
     for (const auto& r : ownership_stakes_) if (!ref_ok(r.owner_country, countries) || !ref_ok(r.owner_company, companys_.size()) || !ref_ok(r.building, buildings) || r.share_ppm > 1'000'000u) return false;
     for (std::size_t ti = 0; ti < treatys_.size(); ++ti) {
         const auto& r = treatys_[ti];
-        if (!ref_ok(r.first, countries) || !ref_ok(r.second, countries)) return false;
+        if (!ref_ok(r.first, countries) || !ref_ok(r.second, countries) ||
+            !r.first.valid() || !r.second.valid() || r.first == r.second ||
+            static_cast<std::uint8_t>(r.kind) > static_cast<std::uint8_t>(TreatyKind::PeaceTreaty))
+            return false;
         if (r.expiry_tick!=0 && r.expiry_tick <= r.start_tick) return false;
-        if (r.is_multilateral && treaty_participants(TreatyId{static_cast<TreatyId::rep_type>(ti)}).empty()) { /* placeholder */ }
+        if (r.is_multilateral && treaty_participants(
+                TreatyId{static_cast<TreatyId::rep_type>(ti)}).size() < 2u)
+            return false;
     }
     for (const auto& r : treaty_articles_) if (!ref_ok(r.treaty, treatys_.size())) return false;
     for (const auto& r : treaty_participants_) if (!ref_ok(r.treaty, treatys_.size()) || !ref_ok(r.country, countries)) return false;

@@ -33,15 +33,16 @@ struct TopBarData {
     std::string ranking_title_script_key = "hud_ranking_title"; // optional scripted_value name
     std::string country_name_script_key = "hud_country_name";
     std::string date_script_key = "hud_format_date"; // external script builds date string from GameClock
-    std::int64_t gold_reserves = 850000;
-    std::int64_t weekly_balance = 14200;
-    std::vector<float> balance_history{8200.0f, 9500.0f, 11100.0f, 10800.0f, 12800.0f, 14200.0f};
-    std::int32_t bureaucracy_capacity = 850;
-    std::int32_t bureaucracy_usage = 680;
-    std::int32_t diplomacy_capacity = 400;
-    std::int32_t diplomacy_usage = 280;
-    std::int32_t authority_capacity = 500;
-    std::int32_t authority_usage = 390;
+    std::int64_t gold_reserves = 0;
+    std::int64_t weekly_balance = 0;
+    std::vector<float> balance_history{};
+    std::int32_t bureaucracy_capacity = 0;
+    std::int32_t bureaucracy_usage = 0;
+    std::int32_t diplomacy_capacity = 0;
+    std::int32_t diplomacy_usage = 0;
+    std::int32_t authority_capacity = 0;
+    std::int32_t authority_usage = 0;
+    std::string currency_symbol = "";             // optional content-provided prefix/symbol
     std::string date_str = "";                     // resolved display string (from script/localization)
     std::string date_loc_key = "DATE_FORMAT";
     std::uint8_t current_speed = 1;
@@ -65,18 +66,14 @@ struct ProvinceInspectorData {
     std::string terrain_type = "";                 // resolved
     std::string terrain_type_loc_key = "TERRAIN_PLAINS";
     std::string terrain_type_script_key = "hud_terrain_name";
-    std::int64_t total_pop = 1850000;
-    std::int32_t arable_land = 45;
-    float average_wage = 9.8f;
-    float migration_attraction = 32.5f;
-    std::int32_t infrastructure_usage = 78;
-    std::int32_t infrastructure_capacity = 120;
-    std::vector<std::pair<std::string, std::int32_t>> factories{
-        {"Textile Mills", 24},
-        {"Steel Works", 12},
-        {"Motor Industries", 8},
-        {"Chemical Plants", 6}
-    };
+    std::int64_t total_pop = 0;
+    std::int32_t arable_land = 0;
+    float average_wage = 0.0f;
+    float migration_attraction = 0.0f;
+    std::int32_t infrastructure_usage = 0;
+    std::int32_t infrastructure_capacity = 0;
+    std::string currency_symbol = "";             // optional content-provided prefix/symbol
+    std::vector<std::pair<std::string, std::int32_t>> factories{};
 };
 
 struct EventChoice {

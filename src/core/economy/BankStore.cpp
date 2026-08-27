@@ -53,6 +53,11 @@ BankId BankStore::restore_bank(const BankSnapshot& s) {
     const auto assets = saturating_add(s.reserves_milli, saturating_add(s.loan_assets_milli, s.sovereign_bonds_milli));
     const auto claims = saturating_add(s.deposits_milli, s.equity_milli);
     if (assets != claims) throw std::invalid_argument("restored bank balance sheet does not balance");
+    const auto expected_status = s.equity_milli < 0
+        ? BankStatus::Insolvent
+        : s.nonperforming_milli > s.equity_milli ? BankStatus::Restricted : BankStatus::Active;
+    if (s.status != expected_status)
+        throw std::invalid_argument("restored bank status does not match balance sheet");
     const BankId id{static_cast<BankId::rep_type>(keys_.size())};
     keys_.push_back(s.key); countries_.push_back(s.country); currencies_.push_back(s.currency);
     reserves_milli_.push_back(s.reserves_milli); deposits_milli_.push_back(s.deposits_milli);
@@ -74,7 +79,9 @@ BankId BankStore::restore_bank(const BankSnapshot& s) {
 BankLoanId BankStore::restore_loan(const BankLoanSnapshot& s) {
     if (s.key == 0u || !s.bank.valid() || static_cast<std::size_t>(s.bank.value()) >= size() ||
         s.principal_milli < 0 || s.annual_rate_ppm < 0 || s.annual_rate_ppm > 2'000'000 ||
-        static_cast<std::uint8_t>(s.borrower_kind) > 0u || static_cast<std::uint8_t>(s.status) > 3u)
+        static_cast<std::uint8_t>(s.borrower_kind) > 0u || static_cast<std::uint8_t>(s.status) > 3u ||
+        ((s.status == BankLoanStatus::Defaulted || s.status == BankLoanStatus::Repaid) &&
+         s.principal_milli != 0))
         throw std::invalid_argument("invalid restored bank loan");
     if (std::find(loan_keys_.begin(), loan_keys_.end(), s.key) != loan_keys_.end())
         throw std::invalid_argument("bank loan key must be unique");
@@ -163,10 +170,32 @@ EconomyAmount BankStore::fund_building(BankId id, BuildingId borrower, EconomyAm
             loan_statuses_[i] != BankLoanStatus::Repaid) { loan_i = i; break; }
     }
     if (loan_i == loan_count()) {
-        restore_loan({key, id, BankBorrowerKind::Building, borrower.value(), 0,
-                      rate > 0 ? rate : loan_rate_ppm_[bi], std::max<std::uint16_t>(1, term), 0,
-                      BankLoanStatus::Performing});
-        loan_i = loan_count() - 1u;
+        // A stable key identifies the bank/building contract, not each draw.
+        // Reuse a closed row when a previous contract was repaid/defaulted;
+        // appending a second row with the same key would make the next draw
+        // fail validation and break long-running construction cycles.
+        for (std::size_t i = 0; i < loan_count(); ++i) {
+            if (loan_keys_[i] == key &&
+                (loan_statuses_[i] == BankLoanStatus::Defaulted ||
+                 loan_statuses_[i] == BankLoanStatus::Repaid)) {
+                loan_i = i;
+                loan_banks_[i] = id;
+                borrower_kinds_[i] = BankBorrowerKind::Building;
+                borrower_ids_[i] = borrower.value();
+                principal_milli_[i] = 0;
+                annual_rate_ppm_[i] = rate > 0 ? rate : loan_rate_ppm_[bi];
+                remaining_weeks_[i] = std::max<std::uint16_t>(1, term);
+                arrears_weeks_[i] = 0;
+                loan_statuses_[i] = BankLoanStatus::Performing;
+                break;
+            }
+        }
+        if (loan_i == loan_count()) {
+            restore_loan({key, id, BankBorrowerKind::Building, borrower.value(), 0,
+                          rate > 0 ? rate : loan_rate_ppm_[bi], std::max<std::uint16_t>(1, term), 0,
+                          BankLoanStatus::Performing});
+            loan_i = loan_count() - 1u;
+        }
     }
     principal_milli_[loan_i] = saturating_add(principal_milli_[loan_i], funded);
     remaining_weeks_[loan_i] = std::max(remaining_weeks_[loan_i], std::max<std::uint16_t>(1, term));
@@ -227,8 +256,14 @@ EconomyAmount BankStore::redeem_sovereign_bonds(CountryId borrower, EconomyAmoun
 }
 
 void BankStore::charge_off(std::size_t li) noexcept {
+    if (li >= loan_count()) return;
     const auto bi = static_cast<std::size_t>(loan_banks_[li].value());
     const auto loss = principal_milli_[li];
+    if (bi >= size()) {
+        principal_milli_[li] = 0;
+        loan_statuses_[li] = BankLoanStatus::Defaulted;
+        return;
+    }
     loan_assets_milli_[bi] = saturating_sub(loan_assets_milli_[bi], loss);
     nonperforming_milli_[bi] = saturating_sub(nonperforming_milli_[bi], std::min(nonperforming_milli_[bi], loss));
     equity_milli_[bi] = saturating_sub(equity_milli_[bi], loss);
@@ -248,7 +283,9 @@ void BankStore::run_weekly(World& world) {
         if (loan_statuses_[li] == BankLoanStatus::Defaulted || loan_statuses_[li] == BankLoanStatus::Repaid ||
             principal_milli_[li] <= 0) continue;
         const auto bi = static_cast<std::size_t>(loan_banks_[li].value());
-        if (borrower_kinds_[li] != BankBorrowerKind::Building || borrower_ids_[li] >= world.buildings.size()) {
+        if (bi >= size() || borrower_kinds_[li] != BankBorrowerKind::Building ||
+            borrower_ids_[li] >= world.buildings.size() ||
+            !world.buildings.slot_pool().is_index_alive(borrower_ids_[li])) {
             charge_off(li); continue;
         }
         const BuildingId building{borrower_ids_[li]};
@@ -310,9 +347,18 @@ bool BankStore::validate(std::size_t countries, std::size_t buildings) const noe
         nonperforming_milli_.size()!=n || retained_earnings_milli_.size()!=n || reserve_requirement_ppm_.size()!=n ||
         capital_requirement_ppm_.size()!=n || deposit_rate_ppm_.size()!=n || loan_rate_ppm_.size()!=n || statuses_.size()!=n) return false;
     for (std::size_t i=0;i<n;++i) {
-        if (keys_[i]==0u || countries_[i].value()>=countries || currencies_[i]==0u || reserves_milli_[i]<0 ||
+        if (keys_[i]==0u || countries_[i].value()>=countries || currencies_[i]==0u ||
+            static_cast<std::uint8_t>(statuses_[i]) > 2u ||
+            reserve_requirement_ppm_[i] < 0 || reserve_requirement_ppm_[i] > 1'000'000 ||
+            capital_requirement_ppm_[i] <= 0 || capital_requirement_ppm_[i] > 1'000'000 ||
+            deposit_rate_ppm_[i] < 0 || deposit_rate_ppm_[i] > 1'000'000 ||
+            loan_rate_ppm_[i] < 0 || loan_rate_ppm_[i] > 2'000'000 || reserves_milli_[i]<0 ||
             deposits_milli_[i]<0 || loan_assets_milli_[i]<0 || sovereign_bonds_milli_[i]<0 ||
             nonperforming_milli_[i]<0 || nonperforming_milli_[i]>loan_assets_milli_[i] || !balance_sheet_balanced(BankId{static_cast<BankId::rep_type>(i)})) return false;
+        const auto expected_status = equity_milli_[i] < 0
+            ? BankStatus::Insolvent
+            : nonperforming_milli_[i] > equity_milli_[i] ? BankStatus::Restricted : BankStatus::Active;
+        if (statuses_[i] != expected_status) return false;
         for (std::size_t j=0;j<i;++j) if (keys_[i]==keys_[j]) return false;
     }
     const auto l=loan_count();
@@ -320,7 +366,13 @@ bool BankStore::validate(std::size_t countries, std::size_t buildings) const noe
         annual_rate_ppm_.size()!=l || remaining_weeks_.size()!=l || arrears_weeks_.size()!=l || loan_statuses_.size()!=l) return false;
     std::vector<EconomyAmount> loan_sums(n,0), npl_sums(n,0);
     for(std::size_t i=0;i<l;++i){
-        if(loan_keys_[i]==0u||loan_banks_[i].value()>=n||borrower_ids_[i]>=buildings||principal_milli_[i]<0)return false;
+        if(loan_keys_[i]==0u||loan_banks_[i].value()>=n||
+           static_cast<std::uint8_t>(borrower_kinds_[i]) > 0u ||
+           static_cast<std::uint8_t>(loan_statuses_[i]) > 3u ||
+           annual_rate_ppm_[i] < 0 || annual_rate_ppm_[i] > 2'000'000 ||
+           borrower_ids_[i]>=buildings||principal_milli_[i]<0 ||
+           ((loan_statuses_[i] == BankLoanStatus::Defaulted ||
+             loan_statuses_[i] == BankLoanStatus::Repaid) && principal_milli_[i] != 0))return false;
         for(std::size_t j=0;j<i;++j)if(loan_keys_[i]==loan_keys_[j])return false;
         const auto bi=loan_banks_[i].value(); loan_sums[bi]=saturating_add(loan_sums[bi],principal_milli_[i]);
         if(loan_statuses_[i]==BankLoanStatus::NonPerforming)npl_sums[bi]=saturating_add(npl_sums[bi],principal_milli_[i]);

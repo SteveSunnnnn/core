@@ -314,9 +314,9 @@ ScriptRegistry ScriptRegistry::make_builtin() {
         }, true, true, false, false);
 
     registry.register_trigger("state_population_above", ScopeType::State,
-        [](const World& world, ScopeRef scope, double threshold) { double total=0.0; for(std::size_t i=0;i<world.pops.size();++i){const auto p=PopId{static_cast<std::uint32_t>(i)};const auto pr=world.pops.province(p);if(pr.valid()&&world.geography.province_state(pr)==StateId{scope.raw_id})total+=static_cast<double>(world.pops.population(p));} return total>threshold; });
+        [](const World& world, ScopeRef scope, double threshold) { double total=0.0; for(std::size_t i=0;i<world.pops.size();++i){if(!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i)))continue;const auto p=PopId{static_cast<std::uint32_t>(i)};const auto pr=world.pops.province(p);if(pr.valid()&&world.geography.province_state(pr)==StateId{scope.raw_id})total+=static_cast<double>(world.pops.population(p));} return total>threshold; });
     registry.register_trigger("province_population_above", ScopeType::Province,
-        [](const World& world, ScopeRef scope, double threshold) { double total=0.0; for(std::size_t i=0;i<world.pops.size();++i){const auto p=PopId{static_cast<std::uint32_t>(i)};if(world.pops.province(p)==ProvinceId{scope.raw_id})total+=static_cast<double>(world.pops.population(p));} return total>threshold; });
+        [](const World& world, ScopeRef scope, double threshold) { double total=0.0; for(std::size_t i=0;i<world.pops.size();++i){if(!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i)))continue;const auto p=PopId{static_cast<std::uint32_t>(i)};if(world.pops.province(p)==ProvinceId{scope.raw_id})total+=static_cast<double>(world.pops.population(p));} return total>threshold; });
     registry.register_trigger("pop_size_above", ScopeType::Pop, [](const World& world, ScopeRef s,double x){return static_cast<double>(world.pops.population(PopId{s.raw_id}))>x;});
     registry.register_trigger("pop_sol_above", ScopeType::Pop, [](const World& world, ScopeRef s,double x){return static_cast<double>(world.pops.standard_of_living_milli(PopId{s.raw_id}))>x*1000.0;});
     registry.register_trigger("pop_literacy_above", ScopeType::Pop, [](const World& world, ScopeRef s,double x){return static_cast<double>(world.pops.literacy_permyriad(PopId{s.raw_id}))>x*10000.0;});

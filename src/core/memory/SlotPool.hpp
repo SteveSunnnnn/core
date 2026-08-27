@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <span>
 #include <vector>
 
@@ -102,6 +103,49 @@ public:
 
     [[nodiscard]] std::span<const std::uint32_t> generations() const noexcept { return generations_; }
     [[nodiscard]] std::span<const std::uint64_t> bitmap() const noexcept { return bitmap_; }
+    [[nodiscard]] std::span<const std::uint32_t> free_list() const noexcept { return free_list_; }
+
+    /// Restore the complete allocator state from an authoritative snapshot.
+    /// Entity IDs in Core are dense indices, so preserving generations and the
+    /// free-list order is required for deterministic recycling after a save.
+    void restore_state(std::span<const std::uint32_t> generations,
+                       std::span<const std::uint64_t> bitmap,
+                       std::span<const std::uint32_t> free_list) {
+        const auto expected_words = (generations.size() + 63u) / 64u;
+        if (bitmap.size() != expected_words)
+            throw std::invalid_argument("slot pool bitmap size mismatch");
+        if (!bitmap.empty() && (generations.size() % 64u) != 0u) {
+            const auto tail_bits = static_cast<unsigned>(generations.size() % 64u);
+            const auto valid_mask = (std::uint64_t{1} << tail_bits) - 1u;
+            if ((bitmap.back() & ~valid_mask) != 0u)
+                throw std::invalid_argument("slot pool bitmap has invalid tail bits");
+        }
+        for (const auto generation : generations) {
+            // Zero and the two sentinel values are deliberately never emitted
+            // by allocate/release and would invalidate stale-handle checks.
+            if (generation == 0u || generation == 0xFFFFFFFEu || generation == 0xFFFFFFFFu)
+                throw std::invalid_argument("slot pool generation is invalid");
+        }
+
+        std::size_t alive = 0u;
+        for (const auto word : bitmap) alive += static_cast<std::size_t>(std::popcount(word));
+        if (free_list.size() != generations.size() - alive)
+            throw std::invalid_argument("slot pool free-list count mismatch");
+        std::vector<bool> listed(generations.size(), false);
+        for (const auto index : free_list) {
+            if (index >= generations.size() || is_index_alive_from(bitmap, index) || listed[index])
+                throw std::invalid_argument("slot pool free-list is invalid");
+            listed[index] = true;
+        }
+        for (std::size_t index = 0; index < generations.size(); ++index) {
+            if (!is_index_alive_from(bitmap, static_cast<std::uint32_t>(index)) && !listed[index])
+                throw std::invalid_argument("slot pool free-list is incomplete");
+        }
+        generations_.assign(generations.begin(), generations.end());
+        bitmap_.assign(bitmap.begin(), bitmap.end());
+        free_list_.assign(free_list.begin(), free_list.end());
+        alive_count_ = alive;
+    }
 
     /// Should we compact? Heuristic: free > 25 % of alive AND free > 1024.
     [[nodiscard]] bool should_compact() const noexcept {
@@ -137,6 +181,13 @@ public:
     }
 
 private:
+    [[nodiscard]] static bool is_index_alive_from(
+        std::span<const std::uint64_t> bitmap, std::uint32_t idx) noexcept {
+        const auto word_idx = static_cast<std::size_t>(idx / 64u);
+        return word_idx < bitmap.size() &&
+            (bitmap[word_idx] & (std::uint64_t{1} << (idx % 64u))) != 0u;
+    }
+
     void ensure_bitmap_capacity(std::size_t slot_count) {
         const std::size_t needed_words = (slot_count + 63u) / 64u;
         if (needed_words > bitmap_.size()) {

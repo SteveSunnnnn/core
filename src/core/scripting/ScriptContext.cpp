@@ -329,8 +329,10 @@ bool ScriptExecutionContext::validate_persistent(const World& world,
     constexpr std::size_t max_bindings = 65'536u;
     constexpr std::size_t max_collections = 4'096u;
     constexpr std::size_t max_collection_values = 1'000'000u;
+    const bool untyped_global_root = expected_root.type == ScopeType::None;
     if (root != expected_root || current != expected_root ||
-        !ScopeResolver::valid(world, root) || !optional_scope_valid(world, from) ||
+        (!untyped_global_root && !ScopeResolver::valid(world, root)) ||
+        !optional_scope_valid(world, from) ||
         !previous.empty() || calls.size() != 1u ||
         event_targets.size() > max_bindings || collections.size() > max_collections ||
         random_draws.size() > max_bindings) return false;

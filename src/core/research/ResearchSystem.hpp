@@ -4,6 +4,7 @@
 #include "core/scripting/Scope.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -61,6 +62,8 @@ struct ResearchTickStats {
 // record format.
 class ResearchSystem {
 public:
+    static constexpr std::uint64_t automatic_weekly_tick =
+        std::numeric_limits<std::uint64_t>::max();
     explicit ResearchSystem(const ScriptRegistry& registry,
                             const ScriptProgramDatabase* programs = nullptr);
 
@@ -87,8 +90,14 @@ public:
     [[nodiscard]] bool queued(const World& world, CountryId country, std::uint64_t key_hash) const noexcept;
     [[nodiscard]] bool is_era_unlocked(const World& world, CountryId country, std::uint16_t era) const noexcept;
 
-    ResearchTickStats run_weekly(World& world);
-    void run_tech_spread_weekly(World& world);
+    // The optional deterministic week is supplied by CoreEngine from the
+    // persisted GameClock. Standalone callers may omit it and use the local
+    // counter; the explicit form keeps Eureka/spread rolls save-stable.
+    ResearchTickStats run_weekly(World& world,
+                                 std::uint64_t weekly_tick = automatic_weekly_tick);
+    void run_tech_spread_weekly(World& world,
+                                std::uint64_t weekly_tick = automatic_weekly_tick);
+    [[nodiscard]] bool has_finalized_content() const noexcept { return finalized_; }
     [[nodiscard]] std::span<const std::uint32_t> innovation_milli() const noexcept { return innovation_milli_; }
     [[nodiscard]] bool validate_state(const World& world) const noexcept;
     [[nodiscard]] std::size_t immutable_bytes() const noexcept;

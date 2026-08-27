@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 using namespace core;
@@ -130,6 +131,27 @@ int main() {
 
         assert(ui.text_runs().size() > 0);
         assert(ui.batches().size() > 0);
+
+        // A malformed scripted value must be dropped at the draw-list
+        // boundary instead of emitting NaN/Inf vertices or hit regions.
+        UiDrawList malformed;
+        const auto nan = std::numeric_limits<float>::quiet_NaN();
+        const float bad_line[] = {0.0f, 0.0f, nan, 1.0f};
+        malformed.quad({nan, 0.0f, 10.0f, 10.0f}, 0xffffffffu);
+        malformed.polyline(bad_line, 0xffffffffu);
+        malformed.text("ignored", nan, 0.0f, 12.0f, 0xffffffffu);
+        malformed.hit(1u, {0.0f, 0.0f, nan, 10.0f});
+        assert(malformed.vertices().empty());
+        assert(malformed.text_runs().empty());
+        assert(malformed.hits().empty());
+
+        const auto bad_tooltip = place_tooltip({nan, 0.0f, 10.0f, 10.0f}, 120.0f, 40.0f,
+                                               {0.0f, 0.0f, 800.0f, 600.0f});
+        assert(bad_tooltip.w == 0.0f && bad_tooltip.h == 0.0f);
+        const float overflowing_offsets[] = {0.0f, std::numeric_limits<float>::max(),
+                                             std::numeric_limits<float>::max()};
+        assert(virtualize_variable_rows(overflowing_offsets, std::numeric_limits<float>::max(),
+                                        std::numeric_limits<float>::max()).count == 0u);
 
         std::cout << "  [PASS] Victorian Wood Panel, Parchment, Brass Button, and Ink Chart\n";
     }

@@ -2,6 +2,7 @@
 #include "core/assets/Material.hpp"
 #include "core/render/BindlessMaterialSystem.hpp"
 #include "core/render/GpuDrivenPipeline.hpp"
+#include <array>
 #include "core/render/PhysicalLighting.hpp"
 
 
@@ -197,4 +198,3 @@ int main() {
     std::cout << "All GPU-Driven & Bindless Optimization tests passed successfully!\n";
     return 0;
 }
-

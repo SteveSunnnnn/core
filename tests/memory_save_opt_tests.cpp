@@ -5,6 +5,7 @@
 #include "core/jobs/JobSystem.hpp"
 #include "core/save/AsyncSavePipeline.hpp"
 #include "core/save/SaveGame.hpp"
+#include <array>
 #include "core/simulation/GameClock.hpp"
 #include "core/simulation/World.hpp"
 #include "core/scripting/ScriptRegistry.hpp"

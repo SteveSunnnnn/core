@@ -34,6 +34,7 @@ std::size_t CurrencyStore::find_index(CurrencyKey key) const noexcept {
 }
 
 std::size_t CurrencyStore::find_or_add_index(CurrencyKey key) noexcept {
+    if (key == 0u) return static_cast<std::size_t>(-1);
     const auto idx = find_index(key);
     if (idx != static_cast<std::size_t>(-1)) return idx;
     const auto new_idx = currencies_.size();
@@ -90,11 +91,13 @@ EconomyPrice CurrencyStore::exchange_rate_ppm(CurrencyKey key) const noexcept {
 
 void CurrencyStore::set_exchange_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm) noexcept {
     const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
     currencies_[idx].exchange_rate_ppm = std::clamp(rate_ppm, kMinExchangeRatePpm, kMaxExchangeRatePpm);
 }
 
 void CurrencyStore::set_target_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm) noexcept {
     const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
     currencies_[idx].target_rate_ppm = std::clamp(rate_ppm, kMinExchangeRatePpm, kMaxExchangeRatePpm);
 }
 
@@ -112,6 +115,7 @@ MonetaryStandard CurrencyStore::monetary_standard(CurrencyKey key) const noexcep
 
 void CurrencyStore::set_monetary_standard(CurrencyKey key, MonetaryStandard standard) noexcept {
     const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
     currencies_[idx].standard = standard;
 }
 
@@ -123,6 +127,7 @@ std::uint32_t CurrencyStore::gold_parity_mg(CurrencyKey key) const noexcept {
 
 void CurrencyStore::set_gold_parity_mg(CurrencyKey key, std::uint32_t mg) noexcept {
     const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
     currencies_[idx].gold_parity_mg = std::max(1u, mg);
 }
 
@@ -134,6 +139,7 @@ std::uint32_t CurrencyStore::silver_parity_mg(CurrencyKey key) const noexcept {
 
 void CurrencyStore::set_silver_parity_mg(CurrencyKey key, std::uint32_t mg) noexcept {
     const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
     currencies_[idx].silver_parity_mg = std::max(1u, mg);
 }
 
@@ -145,8 +151,9 @@ CountryId CurrencyStore::sovereign_leader(CurrencyKey key) const noexcept {
 
 void CurrencyStore::set_sovereign_leader(CurrencyKey key, CountryId leader, double prestige) noexcept {
     const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
     currencies_[idx].sovereign_leader = leader;
-    currencies_[idx].leader_prestige = prestige;
+    currencies_[idx].leader_prestige = std::isfinite(prestige) ? std::max(0.0, prestige) : 0.0;
 }
 
 EconomyAmount CurrencyStore::seigniorage_accrued_milli(CurrencyKey key) const noexcept {
@@ -182,6 +189,7 @@ bool CurrencyStore::convertibility_suspended(CurrencyKey key) const noexcept {
 
 void CurrencyStore::set_convertibility_suspended(CurrencyKey key, bool suspended) noexcept {
     const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
     currencies_[idx].convertibility_suspended = suspended;
 }
 
@@ -197,7 +205,17 @@ EconomyAmount CurrencyStore::convert(EconomyAmount amount_milli,
     if (amount_milli > 0) {
         return mul_div_nonnegative(amount_milli, rate_from, rate_to);
     }
-    return -mul_div_nonnegative(-amount_milli, rate_from, rate_to);
+    // Work in an unsigned magnitude domain so INT64_MIN remains a valid
+    // input.  A negative conversion may legitimately saturate at INT64_MIN;
+    // negating that value in signed arithmetic would be undefined behaviour.
+    constexpr auto negative_magnitude_limit = std::uint64_t{1} << 63u;
+    const auto magnitude = detail::mul_div_u64_saturating(
+        detail::abs_u64(amount_milli),
+        rate_from > 0 ? static_cast<std::uint64_t>(rate_from) : 0u,
+        static_cast<std::uint64_t>(rate_to), negative_magnitude_limit);
+    if (magnitude >= negative_magnitude_limit)
+        return std::numeric_limits<EconomyAmount>::min();
+    return -static_cast<EconomyAmount>(magnitude);
 }
 
 EconomyPrice CurrencyStore::convert_price(EconomyPrice price_milli,
@@ -214,7 +232,8 @@ EconomyPrice CurrencyStore::convert_price(EconomyPrice price_milli,
 
 void CurrencyStore::record_fx_flow(CurrencyKey sold_currency, CurrencyKey bought_currency,
                                   EconomyAmount volume_in_bought_milli) noexcept {
-    if (sold_currency == bought_currency || volume_in_bought_milli <= 0) return;
+    if (sold_currency == 0u || bought_currency == 0u || sold_currency == bought_currency ||
+        volume_in_bought_milli <= 0) return;
     const auto bought_idx = find_or_add_index(bought_currency);
     const auto sold_idx = find_or_add_index(sold_currency);
 
@@ -237,6 +256,12 @@ void CurrencyStore::evaluate_monetary_sovereignty(const CountryStore& countries)
     for (auto& cur : currencies_) {
         CountryId best_leader{};
         double best_power = -1.0;
+
+        // Leadership is derived state.  Clear it before scanning so a country
+        // that changes its primary currency cannot keep controlling the old
+        // currency zone (and draining its reserves on the next FX update).
+        cur.sovereign_leader = CountryId{};
+        cur.leader_prestige = 0.0;
 
         for (std::size_t ci = 0; ci < countries.size(); ++ci) {
             const CountryId id{static_cast<CountryId::rep_type>(ci)};
@@ -273,14 +298,16 @@ void CurrencyStore::update_exchange_rates(EconomyPrice gold_price_ppm,
         case MonetaryStandard::GoldStandard: {
             // Target mint parity proportional to gold content:
             // Rate = (gold_parity_mg / 1000.0) * gold_price_ppm
-            cur.target_rate_ppm = std::max<EconomyPrice>(
-                1, mul_div_nonnegative(safe_gold_price, cur.gold_parity_mg, 1000));
+            cur.target_rate_ppm = std::clamp<EconomyPrice>(
+                mul_div_nonnegative(safe_gold_price, cur.gold_parity_mg, 1000),
+                kMinExchangeRatePpm, kMaxExchangeRatePpm);
             break;
         }
         case MonetaryStandard::SilverStandard: {
             // Target mint parity proportional to silver content:
-            cur.target_rate_ppm = std::max<EconomyPrice>(
-                1, mul_div_nonnegative(safe_silver_price, cur.silver_parity_mg, 1000));
+            cur.target_rate_ppm = std::clamp<EconomyPrice>(
+                mul_div_nonnegative(safe_silver_price, cur.silver_parity_mg, 1000),
+                kMinExchangeRatePpm, kMaxExchangeRatePpm);
             break;
         }
         case MonetaryStandard::Bimetallism: {
@@ -292,7 +319,9 @@ void CurrencyStore::update_exchange_rates(EconomyPrice gold_price_ppm,
             const auto gold_mint_val = mul_div_nonnegative(safe_gold_price, cur.gold_parity_mg, 1000);
             const auto silver_mint_val = mul_div_nonnegative(safe_silver_price, cur.silver_parity_mg, 1000);
             // Market tracks the cheaper/circulating metal
-            cur.target_rate_ppm = std::max<EconomyPrice>(1, std::min(gold_mint_val, silver_mint_val));
+            cur.target_rate_ppm = std::clamp<EconomyPrice>(
+                std::min(gold_mint_val, silver_mint_val),
+                kMinExchangeRatePpm, kMaxExchangeRatePpm);
             break;
         }
         case MonetaryStandard::FiatFloating: {
@@ -397,6 +426,36 @@ void CurrencyStore::update_exchange_rates(EconomyPrice gold_price_ppm,
             cur.history_rates_ppm.erase(cur.history_rates_ppm.begin());
         }
     }
+}
+
+bool CurrencyStore::validate(std::size_t country_count) const noexcept {
+    constexpr std::size_t max_currencies = 1'024u;
+    if (currencies_.empty() || currencies_.size() > max_currencies ||
+        index_.size() != currencies_.size()) return false;
+
+    for (std::size_t i = 0; i < currencies_.size(); ++i) {
+        const auto& c = currencies_[i];
+        if (c.key == 0u || c.gold_parity_mg == 0u || c.silver_parity_mg == 0u ||
+            static_cast<std::uint8_t>(c.standard) >
+                static_cast<std::uint8_t>(MonetaryStandard::FiatFloating) ||
+            c.exchange_rate_ppm < kMinExchangeRatePpm ||
+            c.exchange_rate_ppm > kMaxExchangeRatePpm ||
+            c.target_rate_ppm < kMinExchangeRatePpm ||
+            c.target_rate_ppm > kMaxExchangeRatePpm || c.trade_demand_milli < 0 ||
+            c.trade_supply_milli < 0 || c.seigniorage_accrued_milli < 0 ||
+            !std::isfinite(c.leader_prestige) || c.leader_prestige < 0.0 ||
+            (c.sovereign_leader.valid() && c.sovereign_leader.value() >= country_count) ||
+            c.history_rates_ppm.size() > 52u)
+            return false;
+        const auto indexed = index_.find(c.key);
+        if (indexed == index_.end() || indexed->second != i) return false;
+        for (std::size_t j = 0; j < i; ++j)
+            if (currencies_[j].key == c.key) return false;
+        for (const auto history_rate : c.history_rates_ppm)
+            if (history_rate < kMinExchangeRatePpm || history_rate > kMaxExchangeRatePpm)
+                return false;
+    }
+    return true;
 }
 
 std::size_t CurrencyStore::memory_bytes() const noexcept {

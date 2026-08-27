@@ -834,7 +834,11 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
                             ? mul_div_nonnegative(revenue, 1, static_cast<EconomyAmount>(workers))
                             : 0;
                         const EconomyPrice target = std::max<EconomyPrice>(100, static_cast<EconomyPrice>(rev_per_worker));
-                        EconomyPrice delta = static_cast<EconomyPrice>((target - current_wage) / 4);
+                        // The content boundary allows int64 fixed-point wages;
+                        // subtract through the saturating helper so extreme
+                        // authored values cannot invoke signed overflow.
+                        EconomyPrice delta = static_cast<EconomyPrice>(
+                            saturating_sub(target, current_wage) / 4);
                         const EconomyPrice step = std::clamp<EconomyPrice>(std::max<EconomyPrice>(current_wage / 20, 5), 5, 200);
                         delta = std::clamp<EconomyPrice>(delta, -step, step);
                         if (delta == 0 && target != current_wage) delta = target > current_wage ? 1 : -1;
@@ -1057,6 +1061,7 @@ JobDispatchStats EconomySystem::construction(World& world) {
     std::vector<std::size_t> best(countries, std::numeric_limits<std::size_t>::max());
     std::vector<EconomyAmount> best_score(countries, std::numeric_limits<EconomyAmount>::min());
     for (std::size_t bi = 0; bi < world.buildings.size(); ++bi) {
+        if (!world.buildings.slot_pool().is_index_alive(static_cast<std::uint32_t>(bi))) continue;
         if (building_levels[bi] >= level_cap) continue;
         const auto market = building_markets[bi];
         if (!market.valid()) continue;

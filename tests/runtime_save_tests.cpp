@@ -15,6 +15,8 @@ using namespace core;
 
 namespace {
 
+std::size_t find_u32_le(const std::vector<std::byte>& bytes, std::uint32_t value);
+
 struct BoundContextEventContent {
     SymbolTable symbols;
     DefinitionDatabase definitions;
@@ -234,6 +236,77 @@ void test_event_context_survives_choice_and_save_restore() {
     assert(restored.world().countries.treasury(donor) == 48.0);
     assert(restored.world().countries.tax_rate(recipient) == 0.15);
     assert(!restored.gameplay().find_instance(instance_id)->context.has_value());
+}
+
+void test_global_script_state_survives_save_restore() {
+    constexpr std::uint32_t global_script_tag = 0x31424c47u;
+    CoreEngine source{{0u, 0x10203040u, 0x50607080u}};
+    const auto country = seed_world(source, "GLB");
+    auto& context = source.world().global_scripts.context();
+    context.set_variable(script_stable_key("global_counter"), ScriptArgument::numeric(42.0));
+    context.set_parameter(script_stable_key("global_mode"), ScriptArgument::symbol(0xabcdu));
+    context.save_event_target(script_stable_key("capital"), ScopeRef::country(country));
+    assert(context.add_to_collection(script_stable_key("owned_countries"),
+                                     ScriptArgument::scope(ScopeRef::country(country))));
+    assert(context.consume_random_draw(0x1234u) == 0u);
+    assert(context.consume_random_draw(0x1234u) == 1u);
+    assert(source.world().global_scripts.validate(source.world()));
+
+    const auto before = source.engine_checksum();
+    const auto save = source.make_save();
+    const auto global_offset = find_u32_le(save.bytes, global_script_tag);
+    assert(global_offset != save.bytes.size() && global_offset >= 60u);
+
+    CoreEngine restored{{0u, 0x10203040u, 0x50607080u}};
+    seed_world(restored, "TEMP");
+    restored.restore(save.bytes);
+
+    assert(restored.engine_checksum() == before);
+    auto& restored_context = restored.world().global_scripts.context();
+    assert(restored_context.variable(script_stable_key("global_counter")) ==
+           ScriptArgument::numeric(42.0));
+    assert(restored_context.parameter(script_stable_key("global_mode")) ==
+           ScriptArgument::symbol(0xabcdu));
+    assert(restored_context.event_target(script_stable_key("capital")) ==
+           ScopeRef::country(CountryId{0u}));
+    assert(restored_context.collection(script_stable_key("owned_countries")).size() == 1u);
+    assert(restored_context.collection(script_stable_key("owned_countries"))[0] ==
+           ScriptArgument::scope(ScopeRef::country(CountryId{0u})));
+    assert(restored_context.consume_random_draw(0x1234u) == 2u);
+}
+
+void test_construction_queue_survives_save_restore_and_rejects_bad_targets() {
+    CoreEngine source{{0u, 0x22334455u, 0x66778899u}};
+    const auto country = seed_world(source, "CQ");
+    const auto state = source.world().geography.create_state(
+        {"cq_state", country, MarketId{}, ProvinceId{}});
+    const auto province = source.world().geography.create_province(
+        {"cq_province", state, country, MarketId{}, 12.0, 34.0, 100u});
+    source.world().geography.set_state_capital(state, province);
+    const auto project = source.world().construction.enqueue_monument(
+        country, province, "monument.test", 100u, 10'000);
+    assert(project.valid());
+    assert(source.validate_world());
+
+    const auto before = source.engine_checksum();
+    const auto save = source.make_save();
+    CoreEngine restored{{0u, 0x22334455u, 0x66778899u}};
+    restored.restore(save.bytes);
+    assert(restored.engine_checksum() == before);
+    assert(restored.world().construction.size() == 1u);
+    assert(restored.world().construction.projects().front().id == project);
+
+    CoreEngine malformed{{0u, 0x22334455u, 0x66778899u}};
+    const auto malformed_country = seed_world(malformed, "BAD");
+    malformed.world().construction.enqueue_expansion(malformed_country, BuildingId{0u});
+    assert(!malformed.validate_world());
+    bool rejected = false;
+    try {
+        (void)malformed.make_save();
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    assert(rejected);
 }
 
 void test_failed_runtime_validation_is_atomic() {
@@ -507,6 +580,79 @@ void test_financial_section_roundtrip_and_atomic_validation() {
     assert(restored.engine_checksum() == before);
 }
 
+void test_destroyed_entity_slots_roundtrip_and_recycle_order() {
+    CoreEngine source{{0u, 0x77889900u, 0x00112233u}};
+    const auto good = source.definitions().add_good({"slot_test_good", 1'000});
+    const NeedFlow needs[]{{good, 10}};
+    const auto need_profile = source.definitions().add_need_profile("slot_test_needs", needs);
+    const RecipeFlow output[]{{good, 1'000}};
+    const auto building_type = source.definitions().add_building_type(
+        "slot_test_building", 100, {}, output);
+    const auto country = source.world().countries.create({"SLOT", 1'000.0, 100.0, 50.0, 0.2});
+    source.world().markets.resize(1, source.definitions());
+    source.world().markets.set_owner(MarketId{0u}, country);
+
+    const auto b0 = source.world().buildings.create({MarketId{0u}, building_type});
+    const auto b1 = source.world().buildings.create({MarketId{0u}, building_type});
+    const auto b2 = source.world().buildings.create({MarketId{0u}, building_type});
+    source.world().buildings.destroy(b0);
+    source.world().buildings.destroy(b2);
+    const auto p0 = source.world().pops.create(
+        {MarketId{0u}, 100u, BuildingId{}, need_profile});
+    const auto p1 = source.world().pops.create(
+        {MarketId{0u}, 200u, BuildingId{}, need_profile});
+    source.world().pops.destroy(p0);
+    const auto expected_building_recycle =
+        source.world().buildings.slot_pool().free_list().back();
+    const auto expected_pop_recycle = source.world().pops.slot_pool().free_list().back();
+    const auto checksum = source.world().checksum();
+    const auto save = source.make_save();
+
+    CoreEngine restored{{0u, 0x77889900u, 0x00112233u}};
+    const auto restored_good = restored.definitions().add_good({"slot_test_good", 1'000});
+    const NeedFlow restored_needs[]{{restored_good, 10}};
+    const auto restored_profile = restored.definitions().add_need_profile(
+        "slot_test_needs", restored_needs);
+    const RecipeFlow restored_output[]{{restored_good, 1'000}};
+    const auto restored_type = restored.definitions().add_building_type(
+        "slot_test_building", 100, {}, restored_output);
+    restored.restore(save.bytes);
+    assert(restored.world().checksum() == checksum);
+    assert(restored.world().buildings.slot_pool().free_list().size() == 2u);
+    assert(restored.world().pops.slot_pool().free_list().size() == 1u);
+    assert(restored.world().buildings.slot_pool().free_list().back() == expected_building_recycle);
+    assert(restored.world().pops.slot_pool().free_list().back() == expected_pop_recycle);
+    assert(!restored.world().buildings.slot_pool().is_index_alive(b0.value()));
+    assert(restored.world().buildings.slot_pool().is_index_alive(b1.value()));
+    assert(!restored.world().buildings.slot_pool().is_index_alive(b2.value()));
+    assert(!restored.world().pops.slot_pool().is_index_alive(p0.value()));
+    assert(restored.world().pops.slot_pool().is_index_alive(p1.value()));
+
+    const auto recycled_building = restored.world().buildings.create(
+        {MarketId{0u}, restored_type});
+    const auto recycled_pop = restored.world().pops.create(
+        {MarketId{0u}, 300u, BuildingId{}, restored_profile});
+    assert(recycled_building.value() == expected_building_recycle);
+    assert(recycled_pop.value() == expected_pop_recycle);
+}
+
+void test_allocator_generation_enters_world_checksum() {
+    World first;
+    World recycled;
+    const BuildingInit init{MarketId{0u}, BuildingTypeId{0u}};
+    (void)first.buildings.create(init);
+    const auto old = recycled.buildings.create(init);
+    recycled.buildings.destroy(old);
+    (void)recycled.buildings.create(init);
+
+    // Both worlds expose one identical live SoA row.  The recycled slot has a
+    // different generation, so a checksum that ignores allocator state would
+    // incorrectly treat their future handle streams as equivalent.
+    assert(first.buildings.size() == recycled.buildings.size());
+    assert(first.buildings.checksum() == recycled.buildings.checksum());
+    assert(first.checksum() != recycled.checksum());
+}
+
 void test_pre_mon1_v4_migrates_with_legacy_world_checksum() {
     constexpr std::uint32_t mon1_tag = 0x314e4f4du;
     CoreEngine source{{0u, 0x11112222u, 0x33334444u}};
@@ -684,6 +830,10 @@ int main() {
     test_stable_key_restore_across_registration_order();
     std::cout << "[RUNNING test_event_context_survives_choice_and_save_restore]\n" << std::flush;
     test_event_context_survives_choice_and_save_restore();
+    std::cout << "[RUNNING test_global_script_state_survives_save_restore]\n" << std::flush;
+    test_global_script_state_survives_save_restore();
+    std::cout << "[RUNNING test_construction_queue_survives_save_restore_and_rejects_bad_targets]\n" << std::flush;
+    test_construction_queue_survives_save_restore_and_rejects_bad_targets();
     std::cout << "[RUNNING test_failed_runtime_validation_is_atomic]\n" << std::flush;
     test_failed_runtime_validation_is_atomic();
     std::cout << "[RUNNING test_missing_runtime_definition_is_atomic]\n" << std::flush;
@@ -696,6 +846,10 @@ int main() {
     test_market_monetary_roundtrip_and_stable_accounts();
     std::cout << "[RUNNING test_financial_section_roundtrip_and_atomic_validation]\n" << std::flush;
     test_financial_section_roundtrip_and_atomic_validation();
+    std::cout << "[RUNNING test_destroyed_entity_slots_roundtrip_and_recycle_order]\n" << std::flush;
+    test_destroyed_entity_slots_roundtrip_and_recycle_order();
+    std::cout << "[RUNNING test_allocator_generation_enters_world_checksum]\n" << std::flush;
+    test_allocator_generation_enters_world_checksum();
     std::cout << "[RUNNING test_pre_mon1_v4_migrates_with_legacy_world_checksum]\n" << std::flush;
     test_pre_mon1_v4_migrates_with_legacy_world_checksum();
     std::cout << "[RUNNING test_corrupt_or_duplicate_mon1_is_atomic]\n" << std::flush;

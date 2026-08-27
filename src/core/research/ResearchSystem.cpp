@@ -52,6 +52,13 @@ void ResearchSystem::set_rules(ResearchRules rules) {
     rules.base_innovation_milli = std::min(rules.base_innovation_milli, rules.max_innovation_milli);
     rules.innovation_per_million_literate_population_milli =
         std::min(rules.innovation_per_million_literate_population_milli, rules.max_innovation_milli);
+    // Probabilities and rates are authored in ppm. Clamp them before the
+    // weekly additions below so malformed content cannot wrap uint32_t and
+    // accidentally create an always/never spreading technology.
+    rules.tech_spread_rate_ppm = std::min<std::uint32_t>(
+        rules.tech_spread_rate_ppm, 1'000'000u);
+    rules.tech_spread_base_chance_ppm = std::min<std::uint32_t>(
+        rules.tech_spread_base_chance_ppm, 1'000'000u);
     rules_ = rules;
 }
 
@@ -227,6 +234,7 @@ void ResearchSystem::rebuild_innovation(const World& world) {
     const auto province_owners = world.geography.province_owners();
 
     for (std::size_t i = 0; i < pop_sizes.size(); ++i) {
+        if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         CountryId country{};
         const auto province = pop_provinces[i];
         if (province.valid() && static_cast<std::size_t>(province.value()) < province_owners.size()) {
@@ -266,8 +274,12 @@ void ResearchSystem::rebuild_innovation(const World& world) {
     }
 }
 
-ResearchTickStats ResearchSystem::run_weekly(World& world) {
+ResearchTickStats ResearchSystem::run_weekly(World& world, std::uint64_t weekly_tick) {
     ResearchTickStats stats;
+    // Preserve the legacy standalone cadence (the spread phase advances the
+    // implicit counter) while allowing CoreEngine to pin both phases to the
+    // persisted GameClock week.
+    if (weekly_tick != automatic_weekly_tick) weekly_ticks_ = weekly_tick;
     rebuild_innovation(world);
     if (!finalized_) return stats;
 
@@ -325,9 +337,13 @@ ResearchTickStats ResearchSystem::run_weekly(World& world) {
     return stats;
 }
 
-void ResearchSystem::run_tech_spread_weekly(World& world) {
+void ResearchSystem::run_tech_spread_weekly(World& world, std::uint64_t weekly_tick) {
     if (!finalized_) return;
-    ++weekly_ticks_;
+    if (weekly_tick == automatic_weekly_tick) {
+        if (weekly_ticks_ != automatic_weekly_tick) ++weekly_ticks_;
+    } else {
+        weekly_ticks_ = weekly_tick;
+    }
     const auto country_count = world.countries.size();
 
     // Ensure caches are up to date

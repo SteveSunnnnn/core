@@ -1,4 +1,5 @@
 #include "core/world/WorldBootstrap.hpp"
+#include "TestTempPath.hpp"
 #include <cassert>
 #include <filesystem>
 #include <iostream>
@@ -12,7 +13,7 @@ int main(){
     const std::uint32_t offsets[]{0,0};
     const core::PlacementCandidateLocal placement[]{{core::ProvinceId{0},1234u,2345u,12,core::PlacementClass::Urban,core::PlacementBuildable,100u}};
     const core::SettlementAnchorLocal anchors[]{{core::ProvinceId{0},3456u,4567u,14,500u,0x1234u}};
-    const auto dir=std::filesystem::temp_directory_path();const auto path=dir/"core_bootstrap_test.coreworld";
+    const auto path=core_test::unique_temp_path("core_bootstrap_test.coreworld");
     core::WorldPackWriter w;w.open(path);w.append({core::WorldChunkType::CountryDefinitions,0,0,0,0},core::WorldBootstrapWire::countries(countries));w.append({core::WorldChunkType::MarketDefinitions,0,0,0,0},core::WorldBootstrapWire::markets(markets));w.append({core::WorldChunkType::StateDefinitions,0,0,0,0},core::WorldBootstrapWire::states(states));w.append({core::WorldChunkType::ProvinceDefinitions,0,0,0,0},core::WorldBootstrapWire::provinces(provinces));w.append({core::WorldChunkType::AdjacencyOffsets,0,0,0,0},core::WorldBootstrapWire::adjacency_offsets(offsets));w.append({core::WorldChunkType::AdjacencyNeighbors,0,0,0,0},core::WorldBootstrapWire::adjacency_neighbors({}));
     w.append({core::WorldChunkType::PlacementCandidates,0,2,3,0},core::SpatialPlacementWire::placement_candidates(placement));
     w.append({core::WorldChunkType::SettlementAnchors,0,4,5,0},core::SpatialPlacementWire::settlement_anchors(anchors));

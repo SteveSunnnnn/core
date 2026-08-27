@@ -2,7 +2,9 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -25,11 +27,28 @@ public:
         // bytes that may be uninitialized due to alignment. This avoids
         // cross-compiler / optimization non-determinism.
         if constexpr (std::is_floating_point_v<T>) {
-            // Normalize -0.0 and NaN payloads for determinism
-            T normalized = value;
-            if (normalized == T{0}) normalized = T{0}; // -0.0 -> 0.0
-            auto bytes = std::as_bytes(std::span{&normalized, std::size_t{1}});
-            add_bytes(bytes);
+            // Normalize signed zero and NaN payloads.  NaNs are not values in
+            // the simulation, but can enter a debug/UI path or a malformed
+            // mod; hashing their hardware payload would make checksums differ
+            // across FPUs and serialization boundaries.
+            if (std::isnan(value)) {
+                if constexpr (sizeof(T) == sizeof(float)) {
+                    constexpr std::uint32_t canonical_nan = 0x7fc00000u;
+                    add(canonical_nan);
+                } else if constexpr (sizeof(T) == sizeof(double)) {
+                    constexpr std::uint64_t canonical_nan = 0x7ff8000000000000ull;
+                    add(canonical_nan);
+                } else {
+                    const T canonical_nan = std::numeric_limits<T>::quiet_NaN();
+                    auto bytes = std::as_bytes(std::span{&canonical_nan, std::size_t{1}});
+                    add_bytes(bytes);
+                }
+            } else {
+                T normalized = value;
+                if (normalized == T{0}) normalized = T{0}; // -0.0 -> 0.0
+                auto bytes = std::as_bytes(std::span{&normalized, std::size_t{1}});
+                add_bytes(bytes);
+            }
         } else {
             // For structs with padding, hash members via memcpy into zeroed buffer
             // Fallback: hash bytes but caller should prefer explicit member hashing
@@ -38,7 +57,9 @@ public:
             add_bytes(bytes);
         }
     }
-    // Explicit member-wise hashing for structs to avoid padding issues
+    // Byte-wise helper for trivially copyable values.  Callers hashing a
+    // struct with padding should still prefer explicit member hashing; the
+    // source representation of padding cannot be inferred generically.
     template <typename T>
     void add_padded(const T& value) noexcept {
         alignas(T) std::byte zeroed[sizeof(T)]{};

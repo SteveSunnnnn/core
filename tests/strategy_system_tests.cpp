@@ -22,6 +22,8 @@ void test_treaties_relations_and_backdown() {
     assert(strategy.relation_milli(a, b) == 5'000);
     assert(strategy.break_treaty(treaty));
     assert(!strategy.has_active_treaty(a, b, TreatyKind::Alliance));
+    assert(!strategy.has_active_treaty(CountryId{}, b, TreatyKind::Alliance));
+    assert(!strategy.has_active_treaty(a, a, TreatyKind::Alliance));
     assert(strategy.relation_milli(a, b) == 0);
 
     const auto play = strategy.start_diplomatic_play(a, b, 0xC0DEu);
@@ -257,6 +259,13 @@ void test_province_migration_attraction_and_flow() {
     const auto acc_flow = world.grand_strategy.start_migration_flow(provB1, provA1, 1'000u, 1u);
     world.grand_strategy.update_migration_flows(world);
     assert(world.pops.population(popA1) == 4'000u); // Allowed and transferred
+
+    // The normal world-aware weekly tick must resolve due flows as well; a
+    // timer decrement without the transfer would silently strand population.
+    (void)world.grand_strategy.start_migration_flow(provA2, provA1, 500u, 1u);
+    world.grand_strategy.run_weekly_reference_tick(world);
+    assert(world.pops.population(popA2) == 7'500u);
+    assert(world.pops.population(popA1) == 4'500u);
 }
 
 
@@ -478,6 +487,4 @@ int main() {
     std::cout << "Core 1.0 strategy system tests: PASS\n";
     return 0;
 }
-
-
 

@@ -1,15 +1,21 @@
 # Core 1.0 final engine audit
 
-Audit date: 2026-08-27. Product version remains **1.0.0**.
+Audit date: 2026-08-28. Product version remains **1.0.0**.
 
 ## Verified in this workspace
 
 - Debug headless: 26/26 tests pass.
 - Release headless: 26/26 tests pass with test assertions enabled.
-- Runtime smoke tests pass for the CLI, economy demo, grand-strategy demo, and Vulkan loader/device probe.
+- Runtime smoke tests pass for the CLI, economy demo, grand-strategy demo, and Vulkan loader/device probe. The checked-in Britain technical pack is intentionally render-only (metadata/coast pages); world-definition bootstrap is covered by its dedicated in-memory regression fixtures rather than that pack.
 - Release microbenchmarks complete successfully.
 - Market settlement monetary state uses stable settlement-account IDs, is included in deterministic checksums, and round-trips through the optional `MON1` save section without raising the base save/product version.
 - `MON1` validation rejects bad IDs, zero currency keys, wrong counts, duplicate sections, and corrupted payloads atomically. Pre-`MON1` v4 saves migrate to deterministic defaults.
+- Global CoreScript variables, event targets, typed collections, call-frame
+  bindings and deterministic random-draw counters round-trip through the tagged
+  `GLB1` extension; invalid global scope references are rejected atomically.
+- The normal world-aware weekly tick resolves due migration flows and routes
+  finalized data-driven research diffusion through the persisted GameClock
+  week, avoiding duplicate legacy diffusion when a research catalogue is active.
 - The weekly economy regression now checks exact aggregate monetary conservation and uses enough partitions to exercise actual multi-worker execution.
 - Modifier graphs evaluate deep dependency chains iteratively; a 50,000-node regression prevents stack-recursive evaluation from returning.
 - Economy content ingestion rejects empty/duplicate definition keys, invalid `GoodId` references, non-positive flows, and offset/ID capacity overflow before mutating tables.
@@ -23,6 +29,12 @@ Audit date: 2026-08-27. Product version remains **1.0.0**.
 ## Release benchmark snapshot
 
 Machine-specific numbers; use only as a regression baseline.
+
+Latest Windows x64 Release run (2026-08-28, 16 workers): economy weekly tick
+29.263 ms average / 30.708 ms p95 (30,000 buildings, 300,000 POPs), living-map
+steady update 0.693 ms, and dense 5M-row kernel 5.446 ms serial / 1.444 ms
+parallel. These values vary with host load; the historical measurements below
+remain useful for trend comparison only.
 
 - Economy: 128 markets, 32 goods, 30,000 buildings, 300,000 POPs; 16 job slots; weekly tick average 8.612 ms, p95 9.234 ms; checksum `0x3930b669bdc883ee`.
 - Living map: 8,000 provinces, 300,000 POPs, 30,000 buildings; steady update average 0.303 ms; checksum `0x027e1768e9202909`.
@@ -45,6 +57,9 @@ These are not test regressions introduced by the audit; they are boundaries of t
 - Economy work is partitioned primarily by market. A very large single world market cannot use all cores without deterministic entity sub-partitioning.
 - Economic definition keys are now unique and validated, but persistent saves still rely on dense definition IDs plus the content fingerprint rather than stable-key remapping for definition reorder migrations.
 - `src/core/ui/ScriptedGuiRuntime.cpp` retained UI runtime is now fully implemented, wired into `core_runtime`, and verified in the automated test suite.
+- Dense building/POP slot generations, liveness bitmaps and recycle order are
+  included in the world checksum and `SLT1` save extension, preventing stale
+  handles from silently becoming valid after long-running entity churn.
 
 ## Reproduction
 

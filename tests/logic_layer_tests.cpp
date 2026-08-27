@@ -83,6 +83,14 @@ void test_scope_resolver_and_builtin_primitives() {
     assert(registry.evaluate_trigger("pop_literacy_above", world, ScopeRef::pop(fixture.first_pop), 0.5));
     registry.execute_effect("set_pop_wealth", world, ScopeRef::pop(fixture.first_pop), 20.0);
     assert(world.pops.wealth_milli(fixture.first_pop) == 20000);
+
+    // Destroyed SoA rows must disappear from script traversal immediately;
+    // otherwise a late event can resolve a dead POP and throw from an accessor.
+    world.pops.destroy(fixture.second_pop);
+    assert(!ScopeResolver::valid(world, ScopeRef::pop(fixture.second_pop)));
+    assert(ScopeResolver::owner(world, ScopeRef::pop(fixture.second_pop)) == ScopeRef{});
+    assert(ScopeResolver::children(world, ScopeRef::country(fixture.country), ScopeType::Pop).size() == 1u);
+    assert(ScopeResolver::all(world, ScopeType::Pop).size() == 1u);
 }
 
 void test_corescript_2_scope_traversal_saved_scope_and_script_calls() {
@@ -450,4 +458,3 @@ int main() {
     std::cout << "Core 1.0 logic-foundation tests passed\n";
     return 0;
 }
-

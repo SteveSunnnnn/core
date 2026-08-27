@@ -322,6 +322,36 @@ void test_probabilistic_tech_spread_and_prerequisite_blocking() {
     assert(previous_progress > 0u);
 }
 
+void test_core_engine_research_spread_survives_save_boundary() {
+    CoreEngine source{{0u, 0xA11CEu, 0xBEEFu}};
+    add_simple_definitions(source.research());
+    source.research().set_rules({10'000u, 0u, 100'000u, 1'000'000u, 1'000'000u, 0u});
+    const auto leader = source.world().countries.create({"LEA", 1.0, 1.0, 1.0, 0.2});
+    const auto learner = source.world().countries.create({"LRN", 1.0, 1.0, 1.0, 0.2});
+    const auto first = script_symbol_hash("first");
+    source.world().grand_strategy.add_technology({leader, first, 1'000'000u, true});
+    source.world().grand_strategy.add_treaty(
+        {leader, learner, TreatyKind::TradeAgreement, 0u, true});
+
+    // The engine must run the data-driven spread phase at the weekly boundary.
+    source.advance_ticks(28u);
+    assert(source.world().grand_strategy.technologys().size() == 2u);
+    assert(source.world().grand_strategy.technologys()[1].progress_ppm == 25'000u);
+    const auto save = source.make_save();
+
+    CoreEngine restored{{0u, 0xA11CEu, 0xBEEFu}};
+    add_simple_definitions(restored.research());
+    restored.research().set_rules({10'000u, 0u, 100'000u, 1'000'000u, 1'000'000u, 0u});
+    restored.restore(save.bytes);
+    for (std::uint32_t week = 0; week < 45u; ++week) {
+        source.advance_ticks(28u);
+        restored.advance_ticks(28u);
+        assert(source.engine_checksum() == restored.engine_checksum());
+    }
+    assert(source.world().grand_strategy.technologys()[1].unlocked);
+    assert(restored.world().grand_strategy.technologys()[1].unlocked);
+}
+
 } // namespace
 
 int main() {
@@ -330,7 +360,7 @@ int main() {
     test_authoritative_research_save_load_and_determinism();
     test_tech_eras_and_natural_spread();
     test_probabilistic_tech_spread_and_prerequisite_blocking();
+    test_core_engine_research_spread_survives_save_boundary();
     std::cout << "Core 1.0 research system tests: PASS\n";
     return 0;
 }
-

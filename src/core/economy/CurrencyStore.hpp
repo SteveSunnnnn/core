@@ -115,6 +115,11 @@ public:
                                EconomyPrice silver_price_ppm = 64'516,
                                CountryStore* countries = nullptr) noexcept;
 
+    // Validate the authoritative currency table and its country references
+    // before a tick or save boundary. Exchange-rate history and per-tick flow
+    // counters are derived/UI state but remain bounded here as well.
+    [[nodiscard]] bool validate(std::size_t country_count) const noexcept;
+
     [[nodiscard]] std::size_t memory_bytes() const noexcept;
     [[nodiscard]] std::uint64_t checksum() const noexcept;
 
