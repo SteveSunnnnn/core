@@ -2,6 +2,7 @@
 #include "core/economy/EconomySystem.hpp"
 #include "core/jobs/JobSystem.hpp"
 #include "core/simulation/World.hpp"
+#include "core/scripting/ScriptRegistry.hpp"
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -159,7 +160,8 @@ static void test_market_index_rebuilds_on_membership_changes() {
     f.world.buildings.set_market(BuildingId{0u}, MarketId{1u});
 
     JobSystem jobs{0u};
-    economy.run_weekly(f.world, jobs);
+    EconomyTickProfile profile;
+    economy.run_weekly(f.world, jobs, &profile);
     assert(economy.index().pops(MarketId{0u}).size() == 7u);
     assert(economy.index().pops(MarketId{1u}).size() == 9u);
     assert(economy.index().buildings(MarketId{0u}).size() == 3u);
@@ -320,7 +322,8 @@ static void test_cross_currency_trade_and_fx_market() {
     const auto initial_gbp_rate = f.world.currencies.exchange_rate_ppm(gbp);
     const auto initial_c0_reserves = f.world.countries.foreign_reserves_milli(c0);
 
-    economy.run_weekly(f.world, jobs);
+    EconomyTickProfile profile;
+    economy.run_weekly(f.world, jobs, &profile);
 
     // Cross-currency trade should have shipped goods from m0 to m1
     assert(f.world.markets.inventory_row(m0)[f.grain.value()] < 50'000);
@@ -333,6 +336,7 @@ static void test_cross_currency_trade_and_fx_market() {
 
     // Exporter currency (GBP) experienced trade surplus demand and appreciated
     assert(f.world.currencies.exchange_rate_ppm(gbp) >= initial_gbp_rate);
+    assert(std::abs(profile.unexplained_monetary_delta_milli) <= 4);
 }
 
 static void test_monetary_sovereignty_and_seigniorage() {
@@ -473,6 +477,9 @@ static void test_sovereign_debt_issuance_credit_rating_and_default() {
     const CountryId c0{0u};
     f.world.countries.set_gdp(c0, 1000.0); // Real GDP = 1000
     f.world.countries.set_treasury(c0, 100.0); // Treasury = 100
+    const auto bank = f.world.banks.create({bank_stable_key("bank.test.central"), c0,
+        default_currency_key, 1'000'000, 0, 100'000, 80'000, 0, 50'000});
+    assert(f.world.banks.balance_sheet_balanced(bank));
 
     // Initial state: AAA rating, 3.0% yield, 0 debt
     f.world.countries.evaluate_credit_rating(c0);
@@ -504,9 +511,76 @@ static void test_sovereign_debt_issuance_credit_rating_and_default() {
 
     // 4. Repay debt: use surplus treasury to reduce debt
     const auto debt_before = f.world.countries.national_debt_milli(c0);
-    const auto repaid = f.world.countries.repay_sovereign_debt(c0, 1'000'000);
+    const auto repaid = f.world.countries.repay_sovereign_debt(c0, 1'000'000, f.world);
     assert(repaid > 0);
     assert(f.world.countries.national_debt_milli(c0) < debt_before);
+}
+
+static void test_bank_balance_sheet_credit_service_and_default() {
+    auto f = make_fixture(1u, 1u, 1u, 100u);
+    const CountryId country{0u};
+    const BuildingId building{0u};
+    const auto bank = f.world.banks.create({bank_stable_key("bank.test.commercial"), country,
+        default_currency_key, 1'000'000, 500'000, 100'000, 80'000, 10'000, 52'000});
+    const auto before = f.world.banks.bank(bank);
+    const auto funded = f.world.banks.fund_building(bank, building, 100'000, 52'000, 52);
+    assert(funded == 100'000);
+    f.world.buildings.cash_mut()[building.value()] = saturating_add(
+        f.world.buildings.cash(building), funded);
+    const auto originated = f.world.banks.bank(bank);
+    assert(originated.loan_assets_milli == before.loan_assets_milli + funded);
+    assert(originated.deposits_milli == before.deposits_milli + funded);
+    assert(f.world.banks.balance_sheet_balanced(bank));
+    assert(f.world.banks.validate(f.world.countries.size(), f.world.buildings.size()));
+
+    const auto cash_before = f.world.buildings.cash(building);
+    f.world.banks.run_weekly(f.world);
+    assert(f.world.buildings.cash(building) < cash_before);
+    assert(f.world.banks.loan(BankLoanId{0u}).principal_milli < funded);
+    assert(f.world.banks.balance_sheet_balanced(bank));
+
+    // A second borrower with no cash becomes non-performing and is charged
+    // against bank equity after twelve deterministic missed payments.
+    const auto second = f.world.buildings.create({MarketId{0u}, f.building_types[0], 1u, 1000, 0});
+    const auto second_funded = f.world.banks.fund_building(bank, second, 50'000, 52'000, 52);
+    assert(second_funded == 50'000);
+    for (int week = 0; week < 12; ++week) f.world.banks.run_weekly(f.world);
+    assert(f.world.banks.loan(BankLoanId{1u}).status == BankLoanStatus::Defaulted);
+    assert(f.world.banks.balance_sheet_balanced(bank));
+    assert(f.world.banks.validate(f.world.countries.size(), f.world.buildings.size()));
+
+    auto scripts = ScriptRegistry::make_builtin();
+    const auto scope = ScopeRef::country(country);
+    assert(scripts.evaluate_trigger("bank_reserves_above", f.world, scope, 100.0));
+    scripts.execute_effect("set_import_tariff", f.world, scope, 0.15);
+    scripts.execute_effect("set_export_tariff", f.world, scope, 0.05);
+    scripts.execute_effect("set_trade_logistics_capacity", f.world, scope, 250.0);
+    assert(f.world.trade_policies.get(country).import_tariff_ppm == 150'000);
+    assert(f.world.trade_policies.get(country).export_tariff_ppm == 50'000);
+    assert(f.world.trade_policies.get(country).logistics_capacity_milli == 250'000);
+}
+
+static void test_authored_trade_route_tariff_and_logistics_capacity() {
+    auto f = make_fixture(2u, 1u, 1u, 100u);
+    const MarketId exporter{0u}, importer{1u};
+    const CountryId export_country{0u}, import_country{1u};
+    f.world.markets.inventory_row(exporter)[f.grain.value()] = 50'000;
+    f.world.markets.shortage_row(importer)[f.grain.value()] = 50'000;
+    f.world.markets.price_row(exporter)[f.grain.value()] = 500;
+    f.world.markets.price_row(importer)[f.grain.value()] = 3'000;
+    f.world.grand_strategy.add_trade_route({exporter, importer, f.grain, 4'000, 1, true});
+    f.world.trade_policies.resize(2);
+    f.world.trade_policies.set(import_country, {100'000, 0, 3'000});
+    f.world.trade_policies.set(export_country, {0, 50'000, 10'000});
+    const auto importer_treasury = f.world.countries.treasury_milli(import_country);
+    const auto exporter_treasury = f.world.countries.treasury_milli(export_country);
+
+    EconomySystem economy{f.definitions}; economy.rebuild_indices(f.world); JobSystem jobs{0u};
+    economy.run_weekly(f.world, jobs);
+    assert(f.world.trade_policies.used_capacity(import_country) == 3'000);
+    assert(f.world.trade_policies.used_capacity(export_country) == 3'000);
+    assert(f.world.countries.treasury_milli(import_country) > importer_treasury);
+    assert(f.world.countries.treasury_milli(export_country) > exporter_treasury);
 }
 
 int main() {
@@ -526,6 +600,8 @@ int main() {
     test_gdp_real_numeraire_and_domestic_wages();
     test_gold_points_specie_arbitrage_and_drain();
     test_sovereign_debt_issuance_credit_rating_and_default();
+    test_bank_balance_sheet_credit_service_and_default();
+    test_authored_trade_route_tariff_and_logistics_capacity();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }

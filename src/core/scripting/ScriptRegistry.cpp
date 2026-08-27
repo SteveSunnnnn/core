@@ -57,6 +57,15 @@ std::uint64_t hash_argument(ScriptArgument argument) noexcept {
     return static_cast<std::uint64_t>(argument.number);
 }
 
+EconomyAmount economy_amount_argument(double value) noexcept {
+    if (!std::isfinite(value)) return 0;
+    const auto scaled = value * static_cast<double>(economy_scale);
+    if (scaled <= 0.0) return 0;
+    if (scaled >= static_cast<double>(std::numeric_limits<EconomyAmount>::max()))
+        return std::numeric_limits<EconomyAmount>::max();
+    return static_cast<EconomyAmount>(std::llround(scaled));
+}
+
 } // namespace
 
 TriggerPrimitiveId ScriptRegistry::register_trigger(std::string name, ScopeType scope, Trigger trigger) {
@@ -250,6 +259,59 @@ ScriptRegistry ScriptRegistry::make_builtin() {
         });
     registry.register_effect("set_gdp", ScopeType::Country,
         [](World& world, ScopeRef scope, double value) { world.countries.set_gdp(CountryId{scope.raw_id}, value); });
+    registry.register_trigger("national_debt_above", ScopeType::Country,
+        [](const World& world, ScopeRef scope, double value) {
+            return world.countries.national_debt_milli(CountryId{scope.raw_id}) > economy_amount_argument(value);
+        });
+    registry.register_trigger("bank_reserves_above", ScopeType::Country,
+        [](const World& world, ScopeRef scope, double value) {
+            const CountryId country{scope.raw_id};
+            const auto bank = world.banks.primary_bank(country, world.countries.primary_currency(country));
+            return bank.valid() && world.banks.bank(bank).reserves_milli > economy_amount_argument(value);
+        });
+    registry.register_trigger("bank_lending_capacity_above", ScopeType::Country,
+        [](const World& world, ScopeRef scope, double value) {
+            const CountryId country{scope.raw_id};
+            const auto bank = world.banks.primary_bank(country, world.countries.primary_currency(country));
+            return bank.valid() && world.banks.lendable_capacity(bank) > economy_amount_argument(value);
+        });
+    registry.register_effect("set_import_tariff", ScopeType::Country,
+        [](World& world, ScopeRef scope, double rate) {
+            const CountryId country{scope.raw_id};
+            auto policy = world.trade_policies.get(country);
+            policy.import_tariff_ppm = static_cast<std::int32_t>(std::clamp(rate, 0.0, 1.0) * ppm_scale + 0.5);
+            world.trade_policies.set(country, policy);
+        });
+    registry.register_effect("set_export_tariff", ScopeType::Country,
+        [](World& world, ScopeRef scope, double rate) {
+            const CountryId country{scope.raw_id};
+            auto policy = world.trade_policies.get(country);
+            policy.export_tariff_ppm = static_cast<std::int32_t>(std::clamp(rate, 0.0, 1.0) * ppm_scale + 0.5);
+            world.trade_policies.set(country, policy);
+        });
+    registry.register_effect("set_trade_logistics_capacity", ScopeType::Country,
+        [](World& world, ScopeRef scope, double amount) {
+            const CountryId country{scope.raw_id};
+            auto policy = world.trade_policies.get(country);
+            policy.logistics_capacity_milli = economy_amount_argument(amount);
+            world.trade_policies.set(country, policy);
+        });
+    registry.register_effect("issue_sovereign_bonds", ScopeType::Country,
+        [](World& world, ScopeRef scope, double amount) {
+            (void)world.countries.issue_sovereign_bonds(
+                CountryId{scope.raw_id}, economy_amount_argument(amount), world);
+        });
+    registry.register_effect("repay_sovereign_debt", ScopeType::Country,
+        [](World& world, ScopeRef scope, double amount) {
+            (void)world.countries.repay_sovereign_debt(
+                CountryId{scope.raw_id}, economy_amount_argument(amount), world);
+        });
+    registry.register_typed_effect("set_primary_currency", ScopeType::Country,
+        [](World& world, ScopeRef scope, ScriptArgument argument) {
+            const auto key = hash_argument(argument);
+            if (key != 0u && world.currencies.contains(key))
+                world.countries.set_primary_currency(CountryId{scope.raw_id}, key);
+        }, true, true, false, false);
 
     registry.register_trigger("state_population_above", ScopeType::State,
         [](const World& world, ScopeRef scope, double threshold) { double total=0.0; for(std::size_t i=0;i<world.pops.size();++i){const auto p=PopId{static_cast<std::uint32_t>(i)};const auto pr=world.pops.province(p);if(pr.valid()&&world.geography.province_state(pr)==StateId{scope.raw_id})total+=static_cast<double>(world.pops.population(p));} return total>threshold; });

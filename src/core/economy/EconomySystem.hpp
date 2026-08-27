@@ -17,6 +17,8 @@ struct MonetaryBalanceSheet {
     EconomyAmount treasury_deposits_milli = 0;
     EconomyAmount company_deposits_milli = 0;
     EconomyAmount investment_pool_deposits_milli = 0;
+    EconomyAmount bank_deposit_liabilities_milli = 0;
+    EconomyAmount bank_credit_assets_milli = 0;
     EconomyAmount total_milli = 0;
 };
 
@@ -31,6 +33,10 @@ struct EconomyTickProfile {
     MonetaryBalanceSheet money_before{};
     MonetaryBalanceSheet money_after{};
     EconomyAmount monetary_delta_milli = 0;
+    EconomyAmount private_credit_delta_milli = 0;
+    EconomyAmount central_issuance_milli = 0;
+    EconomyAmount currency_revaluation_milli = 0;
+    EconomyAmount unexplained_monetary_delta_milli = 0;
 };
 
 class EconomySystem {
@@ -109,6 +115,7 @@ private:
     // Per-market credit drawn by loss-making buildings this tick; settled
     // serially against investment pools and treasuries after the parallel pass.
     std::vector<EconomyAmount> market_loan_demand_milli_;
+    std::vector<EconomyAmount> building_loan_demand_milli_;
     // Actual per-building throughput chosen in production after input
     // shortages. Settlement consumes this exact value rather than recreating
     // an unconstrained theoretical production plan.

@@ -3,6 +3,8 @@
 #include "core/base/StrongId.hpp"
 #include "core/economy/BuildingStore.hpp"
 #include "core/economy/CurrencyStore.hpp"
+#include "core/economy/BankStore.hpp"
+#include "core/economy/TradePolicyStore.hpp"
 #include "core/economy/MarketStore.hpp"
 #include "core/economy/PopStore.hpp"
 #include "core/world/GeographyStore.hpp"
@@ -102,7 +104,7 @@ public:
     // Issue sovereign bonds to raise funds into treasury
     EconomyAmount issue_sovereign_bonds(CountryId id, EconomyAmount requested_amount, World& world);
     // Repay outstanding sovereign debt from treasury
-    EconomyAmount repay_sovereign_debt(CountryId id, EconomyAmount repayment_amount);
+    EconomyAmount repay_sovereign_debt(CountryId id, EconomyAmount repayment_amount, World& world);
     // Evaluate sovereign credit rating based on Debt/GDP, reserves, and default status
     void evaluate_credit_rating(CountryId id);
 
@@ -161,10 +163,12 @@ public:
     GeographyStore geography;
     GrandStrategyStore grand_strategy;
     CurrencyStore currencies;
+    BankStore banks;
+    TradePolicyStore trade_policies;
 
     [[nodiscard]] std::uint64_t checksum() const noexcept;
     [[nodiscard]] std::size_t economy_memory_bytes() const noexcept {
-        return markets.memory_bytes() + buildings.memory_bytes() + pops.memory_bytes() + geography.memory_bytes() + grand_strategy.memory_bytes() + currencies.memory_bytes();
+        return markets.memory_bytes() + buildings.memory_bytes() + pops.memory_bytes() + geography.memory_bytes() + grand_strategy.memory_bytes() + currencies.memory_bytes() + banks.memory_bytes() + trade_policies.memory_bytes();
     }
 };
 

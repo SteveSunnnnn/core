@@ -23,15 +23,14 @@ CurrencyStore::CurrencyStore() {
 
 void CurrencyStore::clear() noexcept {
     currencies_.clear();
+    index_.clear();
     register_currency(default_currency_key, "core.currency.default",
                       MonetaryStandard::GoldStandard, 1000, 15500, 1'000'000);
 }
 
 std::size_t CurrencyStore::find_index(CurrencyKey key) const noexcept {
-    for (std::size_t i = 0; i < currencies_.size(); ++i) {
-        if (currencies_[i].key == key) return i;
-    }
-    return static_cast<std::size_t>(-1);
+    const auto it = index_.find(key);
+    return it == index_.end() ? static_cast<std::size_t>(-1) : it->second;
 }
 
 std::size_t CurrencyStore::find_or_add_index(CurrencyKey key) noexcept {
@@ -47,6 +46,7 @@ std::size_t CurrencyStore::find_or_add_index(CurrencyKey key) noexcept {
     rec.exchange_rate_ppm = 1'000'000;
     rec.target_rate_ppm = 1'000'000;
     currencies_.push_back(std::move(rec));
+    index_.emplace(key, new_idx);
     return new_idx;
 }
 
@@ -79,6 +79,7 @@ void CurrencyStore::register_currency(CurrencyKey key, std::string_view name,
     rec.exchange_rate_ppm = std::clamp(initial_rate_ppm, kMinExchangeRatePpm, kMaxExchangeRatePpm);
     rec.target_rate_ppm = rec.exchange_rate_ppm;
     currencies_.push_back(std::move(rec));
+    index_.emplace(key, currencies_.size() - 1u);
 }
 
 EconomyPrice CurrencyStore::exchange_rate_ppm(CurrencyKey key) const noexcept {
@@ -90,6 +91,11 @@ EconomyPrice CurrencyStore::exchange_rate_ppm(CurrencyKey key) const noexcept {
 void CurrencyStore::set_exchange_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm) noexcept {
     const auto idx = find_or_add_index(key);
     currencies_[idx].exchange_rate_ppm = std::clamp(rate_ppm, kMinExchangeRatePpm, kMaxExchangeRatePpm);
+}
+
+void CurrencyStore::set_target_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm) noexcept {
+    const auto idx = find_or_add_index(key);
+    currencies_[idx].target_rate_ppm = std::clamp(rate_ppm, kMinExchangeRatePpm, kMaxExchangeRatePpm);
 }
 
 std::span<const EconomyPrice> CurrencyStore::exchange_rate_history(CurrencyKey key) const noexcept {
@@ -342,13 +348,15 @@ void CurrencyStore::update_exchange_rates(EconomyPrice gold_price_ppm,
                 bool defended = true;
                 if (countries != nullptr && cur.sovereign_leader.valid()) {
                     const auto reserves = countries->foreign_reserves_milli(cur.sovereign_leader);
-                    if (reserves >= fx_deficit) {
-                        countries->add_foreign_reserves_milli(cur.sovereign_leader, -fx_deficit);
+                    const auto reserve_cost = convert(fx_deficit, cur.key, default_currency_key);
+                    if (reserves >= reserve_cost) {
+                        countries->add_foreign_reserves_milli(cur.sovereign_leader, -reserve_cost);
                         cur.specie_export_mg = static_cast<std::uint64_t>(gold_exported_mg);
                     } else if (reserves > 0) {
                         countries->set_foreign_reserves_milli(cur.sovereign_leader, 0);
+                        const auto funded_currency = convert(reserves, default_currency_key, cur.key);
                         cur.specie_export_mg = static_cast<std::uint64_t>(
-                            mul_div_nonnegative(reserves, active_parity_mg, 1000));
+                            mul_div_nonnegative(funded_currency, active_parity_mg, 1000));
                         cur.convertibility_suspended = true;
                         defended = false;
                     } else {
@@ -372,7 +380,8 @@ void CurrencyStore::update_exchange_rates(EconomyPrice gold_price_ppm,
                 cur.specie_import_mg = static_cast<std::uint64_t>(gold_imported_mg);
 
                 if (countries != nullptr && cur.sovereign_leader.valid()) {
-                    countries->add_foreign_reserves_milli(cur.sovereign_leader, fx_surplus);
+                    countries->add_foreign_reserves_milli(cur.sovereign_leader,
+                        convert(fx_surplus, cur.key, default_currency_key));
                 }
                 cur.exchange_rate_ppm = import_point;
             }
@@ -396,6 +405,7 @@ std::size_t CurrencyStore::memory_bytes() const noexcept {
         bytes += c.name.capacity();
         bytes += c.history_rates_ppm.capacity() * sizeof(EconomyPrice);
     }
+    bytes += index_.size() * (sizeof(std::pair<const CurrencyKey, std::size_t>) + 3u * sizeof(void*));
     return bytes;
 }
 
@@ -411,6 +421,7 @@ std::uint64_t CurrencyStore::checksum() const noexcept {
         h.add(c.silver_parity_mg);
         h.add(c.exchange_rate_ppm);
         h.add(c.target_rate_ppm);
+        h.add(c.convertibility_suspended);
         h.add(c.trade_demand_milli);
         h.add(c.trade_supply_milli);
         h.add(c.seigniorage_accrued_milli);

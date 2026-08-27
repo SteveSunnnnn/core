@@ -27,6 +27,7 @@ docs/CORE_SCRIPT.md
 docs/DETERMINISM.md
 docs/ECONOMY_ARCHITECTURE.md
 docs/FINAL_ENGINE_AUDIT.md
+docs/FINANCE_BANKING.md
 docs/GPU_TIERS.md
 docs/JOB_SYSTEM.md
 docs/LIVING_MAP_ARCHITECTURE.md
@@ -108,6 +109,8 @@ src/core/content/ResearchContent.cpp
 src/core/content/ResearchContent.hpp
 src/core/content/VirtualFileSystem.cpp
 src/core/content/VirtualFileSystem.hpp
+src/core/economy/BankStore.cpp
+src/core/economy/BankStore.hpp
 src/core/economy/BuildingStore.cpp
 src/core/economy/BuildingStore.hpp
 src/core/economy/CurrencyStore.cpp
@@ -123,6 +126,8 @@ src/core/economy/MarketStore.cpp
 src/core/economy/MarketStore.hpp
 src/core/economy/PopStore.cpp
 src/core/economy/PopStore.hpp
+src/core/economy/TradePolicyStore.cpp
+src/core/economy/TradePolicyStore.hpp
 src/core/editor/GuiLayoutEditor.cpp
 src/core/editor/GuiLayoutEditor.hpp
 src/core/editor/MapEditorSystem.cpp

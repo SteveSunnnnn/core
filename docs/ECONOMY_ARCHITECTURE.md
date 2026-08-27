@@ -1,10 +1,11 @@
-# Core 0.8 Economy Architecture
+# Core 1.0 Economy Architecture
 
 ## Goal
 
-Core 0.8 proves that a Victoria-style POP/building/market loop can scale while preserving deterministic
-results across worker counts. It is a vertical slice, not the final economic design: trade routes,
-credit, ownership shares, qualifications, migration and a full labor matcher remain later work.
+Core 1.0 provides a scalable POP/building/market loop with deterministic results
+across worker counts. Currency, routed trade, banking, credit, ownership,
+construction, qualifications, and migration layer onto the same data-oriented
+world without entering unrelated hot paths.
 
 ## Runtime data layout
 
@@ -67,12 +68,12 @@ only a small number of need profiles.
 
 ## Current model boundaries
 
-0.8 deliberately keeps several systems simple:
+Core 1.0 deliberately keeps several systems simple:
 
 - POPs retain an assigned employer; unemployed workers are not yet searched across all alternative jobs.
 - Markets use price response to supply/demand imbalance rather than stockpile logistics.
-- No trade-route network or inter-market arbitrage yet.
-- No ownership dividends, investment pool, banking, credit, qualifications or migration yet.
+- Route transport modes and interbank/central-bank networks remain aggregate;
+  see `FINANCE_BANKING.md` for implemented contracts and boundaries.
 - Wage adjustment is a bounded weekly feedback rule, not the final bargaining model.
 - Price history/ring buffers are not yet implemented.
 

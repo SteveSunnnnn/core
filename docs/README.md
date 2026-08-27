@@ -15,6 +15,7 @@
 - `NOTIFICATION_RUNTIME.md` and `RESEARCH_ARCHITECTURE.md` — content runtimes.
 - `SCRIPTED_GUI.md` — scripted GUI compiler and runtime boundary.
 - `ECONOMY_ARCHITECTURE.md` — economy data and tick model.
+- `FINANCE_BANKING.md` — currency, FX, trade settlement, and bank ledgers.
 
 ## World and rendering
 

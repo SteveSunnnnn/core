@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -64,6 +65,7 @@ public:
 
     [[nodiscard]] EconomyPrice exchange_rate_ppm(CurrencyKey key) const noexcept;
     void set_exchange_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm) noexcept;
+    void set_target_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm) noexcept;
     [[nodiscard]] std::span<const EconomyPrice> exchange_rate_history(CurrencyKey key) const noexcept;
 
     [[nodiscard]] MonetaryStandard monetary_standard(CurrencyKey key) const noexcept;
@@ -121,6 +123,8 @@ private:
     [[nodiscard]] std::size_t find_or_add_index(CurrencyKey key) noexcept;
 
     std::vector<CurrencyRecord> currencies_;
+    // Lookup-only accelerator; authoritative iteration remains stable vector order.
+    std::map<CurrencyKey, std::size_t> index_;
 };
 
 } // namespace core

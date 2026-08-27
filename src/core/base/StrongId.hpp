@@ -68,6 +68,8 @@ struct LawEnactmentTag {};
 struct WarTag {};
 struct ParliamentTag {};
 struct SettlementAccountTag {};
+struct BankTag {};
+struct BankLoanTag {};
 struct CulturalAcceptanceTag {};
 struct DiplomaticSwayTag {};
 struct WarGoalTag {};
@@ -125,6 +127,8 @@ using NavalBattleId = StrongId<NavalBattleTag>;
 
 
 using SettlementAccountId = StrongId<SettlementAccountTag, std::uint64_t>;
+using BankId = StrongId<BankTag>;
+using BankLoanId = StrongId<BankLoanTag>;
 
 
 } // namespace core
@@ -137,4 +141,3 @@ struct hash<core::StrongId<Tag, Rep>> {
     }
 };
 } // namespace std
-

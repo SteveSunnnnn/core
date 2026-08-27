@@ -22,25 +22,59 @@ using Clock = std::chrono::steady_clock;
 
 MonetaryBalanceSheet EconomySystem::monetary_balance_sheet(const World& world) noexcept {
     MonetaryBalanceSheet sheet;
-    for (const auto value : world.pops.cash_all())
-        sheet.pop_deposits_milli = saturating_add(sheet.pop_deposits_milli, value);
-    for (const auto value : world.buildings.hot_data().cash_milli)
-        sheet.building_deposits_milli = saturating_add(sheet.building_deposits_milli, value);
+    for (std::size_t i = 0; i < world.pops.size(); ++i) {
+        const PopId pop{static_cast<PopId::rep_type>(i)};
+        const auto market = world.pops.market(pop);
+        const auto currency = market.valid() && market.value() < world.markets.size()
+            ? world.markets.currency_key(market) : default_currency_key;
+        sheet.pop_deposits_milli = saturating_add(sheet.pop_deposits_milli,
+            world.currencies.convert(world.pops.cash(pop), currency, default_currency_key));
+    }
+    for (std::size_t i = 0; i < world.buildings.size(); ++i) {
+        const BuildingId building{static_cast<BuildingId::rep_type>(i)};
+        const auto market = world.buildings.market(building);
+        const auto currency = market.valid() && market.value() < world.markets.size()
+            ? world.markets.currency_key(market) : default_currency_key;
+        sheet.building_deposits_milli = saturating_add(sheet.building_deposits_milli,
+            world.currencies.convert(world.buildings.cash(building), currency, default_currency_key));
+    }
     for (std::size_t mi = 0; mi < world.markets.size(); ++mi) {
         sheet.market_clearing_milli = saturating_add(
             sheet.market_clearing_milli,
-            world.markets.clearing_cash(MarketId{static_cast<MarketId::rep_type>(mi)}));
+            world.currencies.convert(
+                world.markets.clearing_cash(MarketId{static_cast<MarketId::rep_type>(mi)}),
+                world.markets.currency_key(MarketId{static_cast<MarketId::rep_type>(mi)}),
+                default_currency_key));
     }
     for (std::size_t ci = 0; ci < world.countries.size(); ++ci) {
         sheet.treasury_deposits_milli = saturating_add(
             sheet.treasury_deposits_milli,
-            world.countries.treasury_milli(CountryId{static_cast<CountryId::rep_type>(ci)}));
+            world.currencies.convert(
+                world.countries.treasury_milli(CountryId{static_cast<CountryId::rep_type>(ci)}),
+                world.countries.primary_currency(CountryId{static_cast<CountryId::rep_type>(ci)}),
+                default_currency_key));
     }
-    for (const auto& company : world.grand_strategy.companys())
-        sheet.company_deposits_milli = saturating_add(sheet.company_deposits_milli, company.cash_milli);
-    for (const auto& pool : world.grand_strategy.investment_pools())
+    for (const auto& company : world.grand_strategy.companys()) {
+        const auto currency = company.country.valid() && company.country.value() < world.countries.size()
+            ? world.countries.primary_currency(company.country) : default_currency_key;
+        sheet.company_deposits_milli = saturating_add(sheet.company_deposits_milli,
+            world.currencies.convert(company.cash_milli, currency, default_currency_key));
+    }
+    for (const auto& pool : world.grand_strategy.investment_pools()) {
+        const auto currency = pool.country.valid() && pool.country.value() < world.countries.size()
+            ? world.countries.primary_currency(pool.country) : default_currency_key;
         sheet.investment_pool_deposits_milli = saturating_add(
-            sheet.investment_pool_deposits_milli, pool.cash_milli);
+            sheet.investment_pool_deposits_milli,
+            world.currencies.convert(pool.cash_milli, currency, default_currency_key));
+    }
+    for (std::size_t i = 0; i < world.banks.size(); ++i) {
+        const auto bank = world.banks.bank(BankId{static_cast<BankId::rep_type>(i)});
+        sheet.bank_deposit_liabilities_milli = saturating_add(sheet.bank_deposit_liabilities_milli,
+            world.currencies.convert(bank.deposits_milli, bank.currency, default_currency_key));
+        sheet.bank_credit_assets_milli = saturating_add(sheet.bank_credit_assets_milli,
+            world.currencies.convert(saturating_add(bank.loan_assets_milli, bank.sovereign_bonds_milli),
+                                     bank.currency, default_currency_key));
+    }
     sheet.total_milli = saturating_add(sheet.pop_deposits_milli, sheet.building_deposits_milli);
     sheet.total_milli = saturating_add(sheet.total_milli, sheet.market_clearing_milli);
     sheet.total_milli = saturating_add(sheet.total_milli, sheet.treasury_deposits_milli);
@@ -92,6 +126,7 @@ std::size_t EconomySystem::scratch_memory_bytes() const noexcept {
         + market_sales_ppm_.capacity() * sizeof(std::int64_t)
         + profile_fulfillment_ppm_.capacity() * sizeof(std::int64_t)
         + market_loan_demand_milli_.capacity() * sizeof(EconomyAmount)
+        + building_loan_demand_milli_.capacity() * sizeof(EconomyAmount)
         + building_throughput_ppm_.capacity() * sizeof(std::int32_t)
         + pop_hot_.capacity() * sizeof(PopHotRow)
         + pop_hot_offsets_.capacity() * sizeof(std::uint32_t);
@@ -373,6 +408,97 @@ JobDispatchStats EconomySystem::consumption(World& world, JobSystem& jobs) {
 JobDispatchStats EconomySystem::trade(World& world) {
     const std::size_t markets = world.markets.size();
     const std::size_t goods = world.markets.good_count();
+    if (world.trade_policies.size() != world.countries.size())
+        world.trade_policies.resize(world.countries.size());
+    world.trade_policies.begin_week();
+
+    const auto routes = world.grand_strategy.trade_routes();
+    bool has_authored_routes = false;
+    for (const auto& route : routes) if (route.active && route.quantity_milli > 0) { has_authored_routes = true; break; }
+
+    const auto ship_leg = [&](MarketId exp, MarketId imp, GoodId good,
+                              EconomyAmount capacity) -> EconomyAmount {
+        if (!exp.valid() || !imp.valid() || exp == imp || good.value() >= goods ||
+            exp.value() >= markets || imp.value() >= markets || capacity <= 0) return 0;
+        const auto gi = static_cast<std::size_t>(good.value());
+        auto exp_inventory = world.markets.inventory_row(exp);
+        auto imp_inventory = world.markets.inventory_row(imp);
+        auto imp_shortage = world.markets.shortage_row(imp);
+        if (exp_inventory[gi] <= 0 || imp_shortage[gi] <= 0) return 0;
+
+        const CurrencyKey exp_cur = world.markets.currency_key(exp);
+        const CurrencyKey imp_cur = world.markets.currency_key(imp);
+        const CountryId exp_country = world.markets.owner(exp);
+        const CountryId imp_country = world.markets.owner(imp);
+        const auto raw_exp_price = world.markets.price(exp, good);
+        const auto raw_imp_price = world.markets.price(imp, good);
+        const auto exp_price_in_imp = world.currencies.convert_price(raw_exp_price, exp_cur, imp_cur);
+        const auto transport_in_imp = world.currencies.convert_price(
+            std::max<EconomyPrice>(1, base_price_milli_[gi] / 10), default_currency_key, imp_cur);
+        const auto& imp_policy = world.trade_policies.get(imp_country);
+        const auto& exp_policy = world.trade_policies.get(exp_country);
+        const auto import_price_tax = mul_div_nonnegative(exp_price_in_imp, imp_policy.import_tariff_ppm, ppm_scale);
+        const auto export_price_tax = mul_div_nonnegative(exp_price_in_imp, exp_policy.export_tariff_ppm, ppm_scale);
+        const auto landed_price = saturating_add(exp_price_in_imp,
+            saturating_add(transport_in_imp, saturating_add(import_price_tax, export_price_tax)));
+        if (raw_imp_price <= landed_price) return 0;
+
+        EconomyAmount shipped = std::min({capacity, exp_inventory[gi], imp_shortage[gi]});
+        if (imp_country.valid() && exp_country.valid() && imp_country != exp_country) {
+            shipped = std::min(shipped, world.trade_policies.available_capacity(imp_country));
+            shipped = std::min(shipped, world.trade_policies.available_capacity(exp_country));
+        }
+        if (shipped <= 0) return 0;
+        if (imp_country.valid() && exp_country.valid() && imp_country != exp_country) {
+            (void)world.trade_policies.reserve_capacity(imp_country, shipped);
+            (void)world.trade_policies.reserve_capacity(exp_country, shipped);
+        }
+
+        exp_inventory[gi] = saturating_sub(exp_inventory[gi], shipped);
+        imp_inventory[gi] = saturating_add(imp_inventory[gi], shipped);
+        imp_shortage[gi] = saturating_sub(imp_shortage[gi], shipped);
+
+        const auto imp_price_in_exp = world.currencies.convert_price(raw_imp_price, imp_cur, exp_cur);
+        const auto exp_invoice_price = saturating_add(raw_exp_price,
+            saturating_sub(imp_price_in_exp, raw_exp_price) / 2);
+        const auto exp_invoice = money_for_quantity(shipped, exp_invoice_price);
+        const auto imp_cost = world.currencies.convert(exp_invoice, exp_cur, imp_cur);
+        const auto import_tariff = mul_div_nonnegative(imp_cost, imp_policy.import_tariff_ppm, ppm_scale);
+        const auto export_tariff = mul_div_nonnegative(exp_invoice, exp_policy.export_tariff_ppm, ppm_scale);
+
+        world.markets.add_clearing_cash(imp, -saturating_add(imp_cost, import_tariff));
+        world.markets.add_clearing_cash(exp, saturating_sub(exp_invoice, export_tariff));
+        if (imp_country.valid() && import_tariff > 0) world.countries.add_treasury_milli(imp_country, import_tariff);
+        if (exp_country.valid() && export_tariff > 0) world.countries.add_treasury_milli(exp_country, export_tariff);
+
+        if (imp_cur != exp_cur) world.currencies.record_fx_flow(imp_cur, exp_cur, exp_invoice);
+        if (imp_country.valid() && exp_country.valid() && imp_country != exp_country) {
+            // BOP and reserve accounts use the global numeraire, never a mix
+            // of the two invoice currencies.
+            const auto numeraire_value = world.currencies.convert(exp_invoice, exp_cur, default_currency_key);
+            world.countries.add_balance_of_payments_milli(imp_country, -numeraire_value);
+            world.countries.add_balance_of_payments_milli(exp_country, numeraire_value);
+            if (imp_cur != exp_cur)
+                world.countries.add_foreign_reserves_milli(exp_country, numeraire_value);
+        }
+        return shipped;
+    };
+
+    if (has_authored_routes) {
+        // Authored routes are already stable-ID ordered. Complexity is O(R),
+        // independent of the number of unrelated markets.
+        for (const auto& route : routes) {
+            if (!route.active || route.quantity_milli <= 0) continue;
+            const auto capacity = mul_div_nonnegative(route.quantity_milli,
+                std::max<std::uint16_t>(1, route.level), 1);
+            (void)ship_leg(route.source, route.destination, route.good, capacity);
+        }
+        return JobDispatchStats{};
+    }
+
+    // Compatibility/open-market mode: when content declares no routes, use
+    // deterministic global arbitrage. Price ordering is normalized across
+    // currencies before comparisons.
     for (std::size_t gi = 0; gi < goods; ++gi) {
         trade_importers_.clear();
         trade_exporters_.clear();
@@ -387,7 +513,10 @@ JobDispatchStats EconomySystem::trade(World& world) {
         }
         if (trade_importers_.empty() || trade_exporters_.empty()) continue;
         const auto price_of = [&](std::uint32_t mi) {
-            return world.markets.price(MarketId{static_cast<MarketId::rep_type>(mi)}, GoodId{static_cast<GoodId::rep_type>(gi)});
+            const MarketId market{static_cast<MarketId::rep_type>(mi)};
+            return world.currencies.convert_price(world.markets.price(
+                market, GoodId{static_cast<GoodId::rep_type>(gi)}),
+                world.markets.currency_key(market), default_currency_key);
         };
         // Highest-price shortage markets buy first; cheapest glut markets
         // sell first; id order breaks ties so allocation is deterministic.
@@ -399,75 +528,12 @@ JobDispatchStats EconomySystem::trade(World& world) {
             if (price_of(a) != price_of(b)) return price_of(a) < price_of(b);
             return a < b;
         });
-        const auto base = base_price_milli_[gi];
-        // Transport band: trade only while the price gap covers shipping.
-        const EconomyAmount transport_milli = std::max<EconomyAmount>(1, base / 10);
         for (const auto importer : trade_importers_) {
             const MarketId imp{static_cast<MarketId::rep_type>(importer)};
-            for (std::size_t e = 0; e < trade_exporters_.size(); ++e) {
-                const MarketId exp{static_cast<MarketId::rep_type>(trade_exporters_[e])};
-                if (imp == exp) continue;
-
-                const CurrencyKey imp_cur = world.markets.currency_key(imp);
-                const CurrencyKey exp_cur = world.markets.currency_key(exp);
-                const EconomyPrice raw_exp_price = price_of(trade_exporters_[e]);
-                const EconomyPrice raw_imp_price = price_of(importer);
-
-                // Convert exporter's price into importer's currency to verify transport profitability
-                const EconomyPrice exp_price_in_imp_cur = (imp_cur == exp_cur)
-                    ? raw_exp_price
-                    : world.currencies.convert_price(raw_exp_price, exp_cur, imp_cur);
-
-                if (saturating_sub(raw_imp_price, exp_price_in_imp_cur) <= transport_milli) break;
-
-                auto imp_shortage_row = world.markets.shortage_row(imp);
-                if (imp_shortage_row[gi] <= 0) break;
-                auto exp_inventory = world.markets.inventory_row(exp);
-                auto imp_inventory = world.markets.inventory_row(imp);
-                auto imp_shortage = imp_shortage_row;
-                const EconomyAmount shipped = std::min(exp_inventory[gi], imp_shortage[gi]);
-                if (shipped <= 0) continue;
-
-                exp_inventory[gi] = saturating_sub(exp_inventory[gi], shipped);
-                imp_inventory[gi] = saturating_add(imp_inventory[gi], shipped);
-                imp_shortage[gi] = saturating_sub(imp_shortage[gi], shipped);
-
-                // Multi-currency invoice clearance:
-                // Exporter receives invoice in exporter's local currency;
-                // Importer pays converted invoice in importer's local currency.
-                EconomyAmount exp_invoice = 0;
-                EconomyAmount imp_cost = 0;
-
-                if (imp_cur == exp_cur) {
-                    const EconomyPrice invoice_price = saturating_add(
-                        raw_exp_price, saturating_sub(raw_imp_price, raw_exp_price) / 2);
-                    exp_invoice = money_for_quantity(shipped, invoice_price);
-                    imp_cost = exp_invoice;
-                } else {
-                    const EconomyPrice imp_price_in_exp_cur =
-                        world.currencies.convert_price(raw_imp_price, imp_cur, exp_cur);
-                    const EconomyPrice exp_invoice_price = saturating_add(
-                        raw_exp_price, saturating_sub(imp_price_in_exp_cur, raw_exp_price) / 2);
-                    exp_invoice = money_for_quantity(shipped, exp_invoice_price);
-                    imp_cost = world.currencies.convert(exp_invoice, exp_cur, imp_cur);
-
-                    // Record bilateral FX demand: importer sells imp_cur to buy exp_cur
-                    world.currencies.record_fx_flow(imp_cur, exp_cur, exp_invoice);
-                }
-
-                world.markets.add_clearing_cash(imp, -imp_cost);
-                world.markets.add_clearing_cash(exp, exp_invoice);
-
-                // Track national-level Foreign Reserves and Balance of Payments
-                const CountryId imp_country = world.markets.owner(imp);
-                const CountryId exp_country = world.markets.owner(exp);
-                if (imp_country.valid() && exp_country.valid() && imp_country != exp_country) {
-                    if (imp_cur != exp_cur) {
-                        world.countries.add_balance_of_payments_milli(imp_country, -imp_cost);
-                        world.countries.add_balance_of_payments_milli(exp_country, exp_invoice);
-                        world.countries.add_foreign_reserves_milli(exp_country, exp_invoice);
-                    }
-                }
+            for (const auto exporter : trade_exporters_) {
+                const MarketId exp{static_cast<MarketId::rep_type>(exporter)};
+                if (imp != exp) (void)ship_leg(exp, imp,
+                    GoodId{static_cast<GoodId::rep_type>(gi)}, std::numeric_limits<EconomyAmount>::max());
             }
         }
     }
@@ -527,6 +593,7 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
     std::fill(market_dividend_milli_.begin(), market_dividend_milli_.end(), EconomyAmount{0});
     std::fill(market_gdp_milli_.begin(), market_gdp_milli_.end(), EconomyAmount{0});
     std::fill(market_population_.begin(), market_population_.end(), std::uint64_t{0});
+    std::fill(building_loan_demand_milli_.begin(), building_loan_demand_milli_.end(), EconomyAmount{0});
     const auto building_types = world.buildings.types();
     const auto building_levels = world.buildings.levels();
     const auto building_employees = world.buildings.employees_all();
@@ -625,7 +692,9 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
                     // investment pool/treasury after the parallel pass, so it
                     // is paired with an explicit funding leg below.
                     if (building_cash[bi] < building_credit_limit_milli) {
-                        loan_demand = saturating_add(loan_demand, building_credit_limit_milli - building_cash[bi]);
+                        const auto requested_credit = building_credit_limit_milli - building_cash[bi];
+                        building_loan_demand_milli_[bi] = requested_credit;
+                        loan_demand = saturating_add(loan_demand, requested_credit);
                         building_cash[bi] = building_credit_limit_milli;
                     }
 
@@ -759,19 +828,33 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
         // market's stable clearing account (the transitional lender of last
         // resort) instead of disappearing as phantom money.
         if (market_loan_demand_milli_[mi] > 0) {
-            EconomyAmount covered = world.grand_strategy.withdraw_investment_pool_funds(owner, market_loan_demand_milli_[mi]);
-            const EconomyAmount remaining = saturating_sub(market_loan_demand_milli_[mi], covered);
-            if (remaining > 0) {
-                const EconomyAmount treasury_milli = std::max<EconomyAmount>(
-                    0, world.countries.treasury_milli(owner));
-                const EconomyAmount from_treasury = std::min(remaining, treasury_milli);
-                if (from_treasury > 0) {
-                    world.countries.add_treasury_milli(owner, -from_treasury);
-                    covered = saturating_add(covered, from_treasury);
+            const auto bank = world.banks.primary_bank(owner, world.markets.currency_key(market));
+            for (const auto building : index_.buildings(market)) {
+                const auto bi = static_cast<std::size_t>(building.value());
+                const auto requested = building_loan_demand_milli_[bi];
+                if (requested <= 0) continue;
+                EconomyAmount covered = bank.valid()
+                    ? world.banks.fund_building(bank, building, requested) : 0;
+                auto remaining = saturating_sub(requested, covered);
+                if (remaining > 0) {
+                    const auto from_pool = world.grand_strategy.withdraw_investment_pool_funds(owner, remaining);
+                    covered = saturating_add(covered, from_pool);
+                    remaining = saturating_sub(remaining, from_pool);
                 }
+                if (remaining > 0) {
+                    const auto treasury_milli = std::max<EconomyAmount>(0, world.countries.treasury_milli(owner));
+                    const auto from_treasury = std::min(remaining, treasury_milli);
+                    if (from_treasury > 0) {
+                        world.countries.add_treasury_milli(owner, -from_treasury);
+                        covered = saturating_add(covered, from_treasury);
+                        remaining = saturating_sub(remaining, from_treasury);
+                    }
+                }
+                // The stable market account remains the explicit lender of
+                // last resort only for credit the regulated bank and funded
+                // sectors could not supply.
+                if (remaining > 0) world.markets.add_clearing_cash(market, -remaining);
             }
-            const EconomyAmount uncovered = saturating_sub(market_loan_demand_milli_[mi], covered);
-            if (uncovered > 0) world.markets.add_clearing_cash(market, -uncovered);
         }
         if (market_tax_milli_[mi] != 0) {
             // CLOSED-LOOP: Tax revenue credited to treasury
@@ -791,10 +874,15 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
         // Service Sovereign Debt interest:
         const auto debt_service = world.countries.weekly_debt_service_milli(country);
         if (debt_service > 0) {
-            const auto treasury_avail = world.countries.treasury_milli(country);
-            if (treasury_avail >= debt_service) {
-                // Solvently pay interest
-                world.countries.add_treasury_milli(country, -debt_service);
+            const auto treasury_avail = std::max<EconomyAmount>(0, world.countries.treasury_milli(country));
+            const auto paid = std::min(treasury_avail, debt_service);
+            if (paid > 0) {
+                world.countries.add_treasury_milli(country, -paid);
+                const auto bank_interest = world.banks.receive_sovereign_interest(country, paid);
+                const auto saver_interest = saturating_sub(paid, bank_interest);
+                if (saver_interest > 0) world.grand_strategy.add_investment_pool_funds(country, saver_interest);
+            }
+            if (paid == debt_service) {
                 if (world.countries.default_weeks(country) > 0) {
                     world.countries.set_default_weeks(country, world.countries.default_weeks(country) - 1);
                 }
@@ -893,6 +981,8 @@ void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile
     if (building_remaining_.size() != world.buildings.size()) building_remaining_.assign(world.buildings.size(), 0u);
     if (building_throughput_ppm_.size() != world.buildings.size())
         building_throughput_ppm_.assign(world.buildings.size(), static_cast<std::int32_t>(ppm_scale));
+    if (building_loan_demand_milli_.size() != world.buildings.size())
+        building_loan_demand_milli_.assign(world.buildings.size(), 0);
     const auto total_begin=Clock::now();
     if(profile) profile->money_before=monetary_balance_sheet(world);
     std::size_t workers_used=1u;
@@ -903,6 +993,7 @@ void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile
         workers_used=std::max(workers_used,stats.workers_used);
         if(out!=nullptr)*out=std::chrono::duration_cast<std::chrono::nanoseconds>(end-begin);
     };
+    world.banks.run_weekly(world);
     run_phase([&]{return settle_investment_pool_contributions(world);},nullptr);
     run_phase([&]{return gather_pop_hot(world,jobs);},nullptr);
     run_phase([&]{return employment(world,jobs);},profile?&profile->employment:nullptr);
@@ -911,21 +1002,38 @@ void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile
     run_phase([&]{return trade(world);},nullptr);
     run_phase([&]{return update_prices(world,jobs);},profile?&profile->prices:nullptr);
     run_phase([&]{return settlement(world,jobs);},profile?&profile->settlement:nullptr);
+    // Commit gathered POP cash before FX revaluation diagnostics so the
+    // numeraire change is measured on the actual post-settlement balances.
+    run_phase([&]{return scatter_pop_hot(world,jobs);},nullptr);
+    const auto pre_fx_sheet = profile ? monetary_balance_sheet(world) : MonetaryBalanceSheet{};
     world.currencies.evaluate_monetary_sovereignty(world.countries);
     world.currencies.update_exchange_rates(1'000'000, 64'516, &world.countries);
+    const auto post_fx_sheet = profile ? monetary_balance_sheet(world) : MonetaryBalanceSheet{};
+    EconomyAmount central_issuance = 0;
     for (const auto& cur : world.currencies.currencies()) {
         const auto seigniorage = cur.seigniorage_accrued_milli;
         if (seigniorage > 0 && cur.sovereign_leader.valid()) {
             world.countries.add_treasury_milli(cur.sovereign_leader, seigniorage);
+            central_issuance = saturating_add(central_issuance,
+                world.currencies.convert(seigniorage, cur.key, default_currency_key));
             world.currencies.clear_seigniorage(cur.key);
         }
     }
     run_phase([&]{return construction(world);},nullptr);
-    run_phase([&]{return scatter_pop_hot(world,jobs);},nullptr);
     if(profile){
         profile->money_after=monetary_balance_sheet(world);
         profile->monetary_delta_milli=saturating_sub(
             profile->money_after.total_milli,profile->money_before.total_milli);
+        profile->private_credit_delta_milli=saturating_sub(
+            pre_fx_sheet.bank_deposit_liabilities_milli,
+            profile->money_before.bank_deposit_liabilities_milli);
+        profile->central_issuance_milli=central_issuance;
+        profile->currency_revaluation_milli=saturating_sub(
+            post_fx_sheet.total_milli,pre_fx_sheet.total_milli);
+        profile->unexplained_monetary_delta_milli=saturating_sub(
+            saturating_sub(saturating_sub(profile->monetary_delta_milli,
+                profile->private_credit_delta_milli),profile->central_issuance_milli),
+            profile->currency_revaluation_milli);
         profile->total=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-total_begin);
         profile->workers_used=workers_used;
     }

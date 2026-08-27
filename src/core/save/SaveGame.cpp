@@ -33,6 +33,9 @@ constexpr std::uint32_t gameplay_context_section_tag = 0x31544347u; // "GCT1" in
 constexpr std::uint32_t on_action_section_tag = 0x31414e4fu; // "ONA1" in little endian.
 constexpr std::uint32_t market_monetary_section_tag = 0x314e4f4du; // "MON1" in little endian.
 constexpr std::uint32_t fx_section_tag = 0x31305846u; // "FX01" in little endian.
+constexpr std::uint32_t financial_section_tag = 0x314e4946u; // "FIN1" in little endian.
+constexpr std::uint32_t max_banks = 65'536u;
+constexpr std::uint32_t max_bank_loans = 5'000'000u;
 constexpr std::uint32_t max_context_bindings = 65'536u;
 constexpr std::uint32_t max_context_collections = 4'096u;
 constexpr std::uint32_t max_context_values = 1'000'000u;
@@ -250,6 +253,27 @@ std::uint64_t legacy_world_checksum_v4_pre_fx(const World& world) noexcept {
     h.add(world.pops.checksum());
     h.add(world.geography.checksum());
     h.add(world.grand_strategy.checksum());
+    return h.value();
+}
+
+std::uint64_t legacy_currency_checksum_pre_integrity(const CurrencyStore& currencies) noexcept {
+    Fnv1a64 h;
+    h.add(currencies.size());
+    for (const auto& c : currencies.currencies()) {
+        h.add(c.key); h.add(c.name); h.add(static_cast<std::uint8_t>(c.standard));
+        h.add(c.sovereign_leader.value()); h.add(c.gold_parity_mg); h.add(c.silver_parity_mg);
+        h.add(c.exchange_rate_ppm); h.add(c.target_rate_ppm); h.add(c.trade_demand_milli);
+        h.add(c.trade_supply_milli); h.add(c.seigniorage_accrued_milli);
+    }
+    return h.value();
+}
+
+std::uint64_t legacy_world_checksum_pre_financial(const World& world) noexcept {
+    Fnv1a64 h;
+    h.add(world.countries.checksum()); h.add(world.markets.checksum());
+    h.add(world.buildings.checksum()); h.add(world.pops.checksum());
+    h.add(world.geography.checksum()); h.add(world.grand_strategy.checksum());
+    h.add(legacy_currency_checksum_pre_integrity(world.currencies));
     return h.value();
 }
 
@@ -932,10 +956,10 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         const auto leader_val = r.u32();
         const auto rate = r.i64();
         const auto target = r.i64();
-        (void)target;
         const auto suspended = r.boolean();
         currencies.register_currency(key, name, std_val, gold_mg, silver_mg, rate);
         currencies.set_exchange_rate_ppm(key, rate);
+        currencies.set_target_rate_ppm(key, target);
         currencies.set_monetary_standard(key, std_val);
         currencies.set_gold_parity_mg(key, gold_mg);
         currencies.set_silver_parity_mg(key, silver_mg);
@@ -965,6 +989,74 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         countries.set_credit_rating(id, static_cast<CreditRating>(rating_val));
         countries.set_bond_yield_ppm(id, bond_yield);
         countries.set_default_weeks(id, def_weeks);
+    }
+    return decoded;
+}
+
+struct DecodedFinancialState { bool present = false; };
+
+void encode_financial_section(Writer& w, const World& world) {
+    w.u32(financial_section_tag);
+    w.u32(static_cast<std::uint32_t>(world.trade_policies.size()));
+    for (std::size_t i = 0; i < world.trade_policies.size(); ++i) {
+        const CountryId country{static_cast<CountryId::rep_type>(i)};
+        const auto& policy = world.trade_policies.get(country);
+        w.i32(policy.import_tariff_ppm); w.i32(policy.export_tariff_ppm);
+        w.i64(policy.logistics_capacity_milli); w.i64(world.trade_policies.used_capacity(country));
+    }
+    w.u32(static_cast<std::uint32_t>(world.banks.size()));
+    for (std::size_t i = 0; i < world.banks.size(); ++i) {
+        const auto b = world.banks.bank(BankId{static_cast<BankId::rep_type>(i)});
+        w.u64(b.key); wid(w, b.country); w.u64(b.currency);
+        w.i64(b.reserves_milli); w.i64(b.deposits_milli); w.i64(b.equity_milli);
+        w.i64(b.loan_assets_milli); w.i64(b.sovereign_bonds_milli);
+        w.i64(b.nonperforming_milli); w.i64(b.retained_earnings_milli);
+        w.i32(b.reserve_requirement_ppm); w.i32(b.capital_requirement_ppm);
+        w.i64(b.deposit_rate_ppm); w.i64(b.loan_rate_ppm); w.u8(static_cast<std::uint8_t>(b.status));
+    }
+    w.u32(static_cast<std::uint32_t>(world.banks.loan_count()));
+    for (std::size_t i = 0; i < world.banks.loan_count(); ++i) {
+        const auto l = world.banks.loan(BankLoanId{static_cast<BankLoanId::rep_type>(i)});
+        w.u64(l.key); wid(w, l.bank); w.u8(static_cast<std::uint8_t>(l.borrower_kind));
+        w.u32(l.borrower_id); w.i64(l.principal_milli); w.i64(l.annual_rate_ppm);
+        w.u16(l.remaining_weeks); w.u16(l.arrears_weeks); w.u8(static_cast<std::uint8_t>(l.status));
+    }
+}
+
+DecodedFinancialState decode_financial_section(Reader& r, World& world) {
+    if (r.u32() != financial_section_tag) throw std::runtime_error("invalid financial extension tag");
+    DecodedFinancialState decoded{true};
+    const auto policy_count = r.count(max_countries);
+    if (policy_count > world.countries.size()) throw std::runtime_error("financial policy country count mismatch");
+    world.trade_policies.resize(policy_count);
+    for (std::uint32_t i = 0; i < policy_count; ++i) {
+        const CountryId country{i};
+        TradePolicy policy;
+        policy.import_tariff_ppm = r.i32(); policy.export_tariff_ppm = r.i32();
+        policy.logistics_capacity_milli = r.i64(); const auto used = r.i64();
+        world.trade_policies.set(country, policy);
+        if (used < 0 || world.trade_policies.reserve_capacity(country, used) != used)
+            throw std::runtime_error("invalid used trade logistics capacity");
+    }
+    const auto bank_count = r.count(max_banks);
+    world.banks.clear();
+    for (std::uint32_t i = 0; i < bank_count; ++i) {
+        BankSnapshot b;
+        b.key=r.u64(); b.country=rid<CountryId>(r); b.currency=r.u64();
+        b.reserves_milli=r.i64(); b.deposits_milli=r.i64(); b.equity_milli=r.i64();
+        b.loan_assets_milli=r.i64(); b.sovereign_bonds_milli=r.i64();
+        b.nonperforming_milli=r.i64(); b.retained_earnings_milli=r.i64();
+        b.reserve_requirement_ppm=r.i32(); b.capital_requirement_ppm=r.i32();
+        b.deposit_rate_ppm=r.i64(); b.loan_rate_ppm=r.i64(); b.status=static_cast<BankStatus>(r.u8());
+        world.banks.restore_bank(b);
+    }
+    const auto loan_count = r.count(max_bank_loans);
+    for (std::uint32_t i = 0; i < loan_count; ++i) {
+        BankLoanSnapshot l;
+        l.key=r.u64(); l.bank=rid<BankId>(r); l.borrower_kind=static_cast<BankBorrowerKind>(r.u8());
+        l.borrower_id=r.u32(); l.principal_milli=r.i64(); l.annual_rate_ppm=r.i64();
+        l.remaining_weeks=r.u16(); l.arrears_weeks=r.u16(); l.status=static_cast<BankLoanStatus>(r.u8());
+        world.banks.restore_loan(l);
     }
     return decoded;
 }
@@ -1159,6 +1251,7 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     // earlier v4 payloads and for the synthetic v3 compatibility fixture.
     encode_market_monetary_section(p, world.markets);
     encode_fx_section(p, world.currencies, world.countries);
+    encode_financial_section(p, world);
 
     const auto checksum=world.checksum();
     const auto runtime_state_checksum = has_on_action_section
@@ -1244,6 +1337,7 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     DecodedOnActionState decoded_on_actions;
     DecodedMarketMonetaryState decoded_market_monetary;
     DecodedFxState decoded_fx;
+    DecodedFinancialState decoded_financial;
     if (ver == legacy_version) {
         decode_grand_v1(p, decoded.grand_strategy);
     } else {
@@ -1273,6 +1367,10 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
                         throw std::runtime_error("duplicate fx extension");
                     decoded_fx = decode_fx_section(
                         p, decoded.currencies, decoded.countries);
+                } else if (tag == financial_section_tag) {
+                    if (decoded_financial.present)
+                        throw std::runtime_error("duplicate financial extension");
+                    decoded_financial = decode_financial_section(p, decoded);
                 } else {
                     throw std::runtime_error("unknown extension section in Core save");
                 }
@@ -1286,6 +1384,10 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
                                          decoded.geography.province_count(), decoded.geography.state_count(),
                                          decoded.buildings.size(), definitions.good_count()))
         throw std::runtime_error("invalid grand-strategy references in save");
+    if (!decoded.banks.validate(decoded.countries.size(), decoded.buildings.size()))
+        throw std::runtime_error("invalid banking references or balance sheet in save");
+    if (!decoded.trade_policies.validate(decoded.countries.size()))
+        throw std::runtime_error("invalid trade policy state in save");
     for(std::size_t i=0;i<decoded.buildings.size();++i){const BuildingId id{static_cast<BuildingId::rep_type>(i)};if(decoded.buildings.market(id).valid()&&decoded.buildings.market(id).value()>=decoded.markets.size())throw std::runtime_error("building market reference invalid");if(decoded.buildings.type(id).value()>=definitions.building_type_count())throw std::runtime_error("building type reference invalid");const auto pm=decoded.buildings.production_method(id);if(pm.valid()){if(pm.value()>=definitions.production_method_count())throw std::runtime_error("production method reference invalid");if(definitions.production_method(pm).building_type!=decoded.buildings.type(id))throw std::runtime_error("production method building-type mismatch");}if(decoded.buildings.province(id).valid()&&decoded.buildings.province(id).value()>=decoded.geography.province_count())throw std::runtime_error("building province reference invalid");}
     for(std::size_t i=0;i<decoded.pops.size();++i){const PopId id{static_cast<PopId::rep_type>(i)};if(decoded.pops.market(id).valid()&&decoded.pops.market(id).value()>=decoded.markets.size())throw std::runtime_error("pop market reference invalid");if(decoded.pops.need_profile(id).value()>=definitions.need_profile_count())throw std::runtime_error("pop need-profile reference invalid");if(decoded.pops.employer(id).valid()&&decoded.pops.employer(id).value()>=decoded.buildings.size())throw std::runtime_error("pop employer reference invalid");if(decoded.pops.province(id).valid()&&decoded.pops.province(id).value()>=decoded.geography.province_count())throw std::runtime_error("pop province reference invalid");}
     gameplay.validate_state(decoded_gameplay.instances, decoded_gameplay.log, decoded,
@@ -1300,8 +1402,10 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     bool world_checksum_matches = false;
     if (ver == legacy_version) {
         world_checksum_matches = legacy_world_checksum_v1(decoded) == expected_checksum;
+    } else if (decoded_financial.present) {
+        world_checksum_matches = decoded.checksum() == expected_checksum;
     } else if (decoded_fx.present || decoded_market_monetary.present) {
-        world_checksum_matches = decoded.checksum() == expected_checksum ||
+        world_checksum_matches = legacy_world_checksum_pre_financial(decoded) == expected_checksum ||
                                  legacy_world_checksum_v4_pre_fx(decoded) == expected_checksum;
     } else if (ver == runtime_v3_version) {
         world_checksum_matches =

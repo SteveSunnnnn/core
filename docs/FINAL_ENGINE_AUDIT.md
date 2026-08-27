@@ -38,9 +38,10 @@ Machine-specific numbers; use only as a regression baseline.
 
 These are not test regressions introduced by the audit; they are boundaries of the current design that should remain visible:
 
-- Market clearing is a first closed-loop settlement layer, not yet a full commercial-bank/central-bank ledger. Unfunded building credit is represented by a clearing-account debit rather than a persistent loan contract with principal, interest, maturity, and default state.
+- Commercial banking now uses balanced bank ledgers and persistent building-loan contracts with reserve/capital constraints, amortization, arrears, non-performing classification, default charge-offs, and insolvency. The market clearing account remains only the final fallback when regulated banks and funded domestic sectors cannot cover a building overdraft.
 - Country treasury is still stored as binary64 for save compatibility and adapted to fixed-point milli-units at the economy boundary. A future internal finance schema should make the fixed-point treasury account authoritative.
 - Multi-currency goods trade and FX clearing are active via `CurrencyStore`, with Gold/Silver/Bimetallism/Fiat monetary standards, currency unions, and prestige-based monetary sovereignty with seigniorage.
+- Authored trade routes, import/export tariffs, and per-country international logistics budgets now constrain trade; foreign reserves and balance-of-payments entries use one global numeraire.
 - Economy work is partitioned primarily by market. A very large single world market cannot use all cores without deterministic entity sub-partitioning.
 - Economic definition keys are now unique and validated, but persistent saves still rely on dense definition IDs plus the content fingerprint rather than stable-key remapping for definition reorder migrations.
 - `src/core/ui/ScriptedGuiRuntime.cpp` retained UI runtime is now fully implemented, wired into `core_runtime`, and verified in the automated test suite.

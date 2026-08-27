@@ -111,11 +111,12 @@ EconomyAmount CountryStore::foreign_reserves_milli(CountryId id) const {
     return i < foreign_reserves_milli_.size() ? foreign_reserves_milli_[i] : 0;
 }
 void CountryStore::set_foreign_reserves_milli(CountryId id, EconomyAmount amount) {
-    foreign_reserves_milli_[idx(id)] = amount;
+    foreign_reserves_milli_[idx(id)] = std::max<EconomyAmount>(0, amount);
 }
 void CountryStore::add_foreign_reserves_milli(CountryId id, EconomyAmount delta) {
     const auto i = idx(id);
-    foreign_reserves_milli_[i] = saturating_add(foreign_reserves_milli_[i], delta);
+    foreign_reserves_milli_[i] = std::max<EconomyAmount>(0,
+        saturating_add(foreign_reserves_milli_[i], delta));
 }
 EconomyAmount CountryStore::balance_of_payments_milli(CountryId id) const {
     const auto i = idx(id);
@@ -266,16 +267,21 @@ EconomyAmount CountryStore::issue_sovereign_bonds(CountryId id, EconomyAmount re
     const auto actual_borrow = std::min(requested_amount, capacity);
     if (actual_borrow <= 0) return 0;
 
-    // Withdraw funding from domestic investment pool if available
-    EconomyAmount from_pool = world.grand_strategy.withdraw_investment_pool_funds(id, actual_borrow);
-    (void)from_pool;
-
-    add_treasury_milli(id, actual_borrow);
-    add_national_debt_milli(id, actual_borrow);
+    // Banks create a matched treasury deposit and bond asset, bounded by
+    // reserve/capital requirements. Any remainder must be funded by actual
+    // accumulated investment-pool cash; unfunded requests are not issued.
+    const auto from_banks = world.banks.fund_sovereign_bonds(
+        id, primary_currency(id), actual_borrow, bond_yield_ppm(id));
+    const auto from_pool = world.grand_strategy.withdraw_investment_pool_funds(
+        id, saturating_sub(actual_borrow, from_banks));
+    const auto funded = saturating_add(from_banks, from_pool);
+    if (funded <= 0) return 0;
+    add_treasury_milli(id, funded);
+    add_national_debt_milli(id, funded);
     evaluate_credit_rating(id);
-    return actual_borrow;
+    return funded;
 }
-EconomyAmount CountryStore::repay_sovereign_debt(CountryId id, EconomyAmount repayment_amount) {
+EconomyAmount CountryStore::repay_sovereign_debt(CountryId id, EconomyAmount repayment_amount, World& world) {
     if (repayment_amount <= 0) return 0;
     const auto current_debt = national_debt_milli(id);
     const auto treasury_avail = std::max<EconomyAmount>(0, treasury_milli(id));
@@ -283,6 +289,9 @@ EconomyAmount CountryStore::repay_sovereign_debt(CountryId id, EconomyAmount rep
     if (actual_repay <= 0) return 0;
 
     add_treasury_milli(id, -actual_repay);
+    const auto bank_repayment = world.banks.redeem_sovereign_bonds(id, actual_repay);
+    const auto saver_repayment = saturating_sub(actual_repay, bank_repayment);
+    if (saver_repayment > 0) world.grand_strategy.add_investment_pool_funds(id, saver_repayment);
     add_national_debt_milli(id, -actual_repay);
     evaluate_credit_rating(id);
     return actual_repay;
@@ -365,6 +374,8 @@ std::uint64_t World::checksum() const noexcept {
     h.add(geography.checksum());
     h.add(grand_strategy.checksum());
     h.add(currencies.checksum());
+    h.add(banks.checksum());
+    h.add(trade_policies.checksum());
     return h.value();
 }
 

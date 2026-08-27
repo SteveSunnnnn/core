@@ -3,6 +3,7 @@
 #include "core/content/DefinitionDatabase.hpp"
 #include "core/scripting/CoreScriptParser.hpp"
 #include <cassert>
+#include <array>
 #include <iostream>
 #include <fstream>
 #include <iterator>
@@ -454,6 +455,58 @@ void test_market_monetary_roundtrip_and_stable_accounts() {
     assert(restored.world().markets.clearing_cash(MarketId{1u}) == -123'456'789);
 }
 
+void add_financial_definitions(CoreEngine& engine) {
+    const auto good = engine.definitions().add_good({"bank_test_good", 1'000});
+    const std::array<RecipeFlow, 1> output{{{good, 1'000}}};
+    (void)engine.definitions().add_building_type("bank_test_building", 100, {}, output);
+}
+
+void test_financial_section_roundtrip_and_atomic_validation() {
+    constexpr std::uint32_t fin1_tag = 0x314e4946u;
+    CoreEngine source{{0u, 0x10203040u, 0x50607080u}};
+    add_financial_definitions(source);
+    const auto country = source.world().countries.create({"BNK", 1'000.0, 100.0, 100.0, 0.2});
+    source.world().markets.resize(1, source.definitions());
+    source.world().markets.set_owner(MarketId{0u}, country);
+    const auto building = source.world().buildings.create({MarketId{0u}, BuildingTypeId{0u}, 1u, 1'000, 50'000});
+    source.world().trade_policies.resize(1);
+    source.world().trade_policies.set(country, {125'000, 25'000, 250'000});
+    (void)source.world().trade_policies.reserve_capacity(country, 10'000);
+    const auto bank = source.world().banks.create({bank_stable_key("bank.roundtrip"), country,
+        default_currency_key, 1'000'000, 400'000, 100'000, 80'000, 10'000, 60'000});
+    const auto funded = source.world().banks.fund_building(bank, building, 100'000, 60'000, 104);
+    assert(funded == 100'000);
+    source.world().buildings.cash_mut()[building.value()] = saturating_add(
+        source.world().buildings.cash(building), funded);
+    assert(source.world().banks.validate(1, 1));
+    const auto checksum = source.world().checksum();
+    const auto save = source.make_save();
+    const auto fin_offset = find_u32_le(save.bytes, fin1_tag);
+    assert(fin_offset != save.bytes.size());
+
+    CoreEngine restored{{0u, 0x10203040u, 0x50607080u}};
+    add_financial_definitions(restored);
+    restored.restore(save.bytes);
+    assert(restored.world().checksum() == checksum);
+    assert(restored.world().banks.size() == 1u);
+    assert(restored.world().banks.loan_count() == 1u);
+    assert(restored.world().banks.balance_sheet_balanced(BankId{0u}));
+    assert(restored.world().trade_policies.get(country).import_tariff_ppm == 125'000);
+    assert(restored.world().trade_policies.used_capacity(country) == 10'000);
+
+    // FIN1 layout starts with tag, policy count, fixed policy rows, bank count,
+    // then the first stable bank key. A zero key must reject atomically.
+    auto corrupt = save.bytes;
+    const auto bank_key_offset = fin_offset + 12u + source.world().trade_policies.size() * 24u;
+    write_u64_le(corrupt, bank_key_offset, 0u);
+    refresh_save_payload_framing(corrupt);
+    const auto before = restored.engine_checksum();
+    bool rejected = false;
+    try { restored.restore(corrupt); } catch (const std::exception&) { rejected = true; }
+    assert(rejected);
+    assert(restored.engine_checksum() == before);
+}
+
 void test_pre_mon1_v4_migrates_with_legacy_world_checksum() {
     constexpr std::uint32_t mon1_tag = 0x314e4f4du;
     CoreEngine source{{0u, 0x11112222u, 0x33334444u}};
@@ -633,6 +686,7 @@ int main() {
     test_legacy_v1_save_migration();
     test_runtime_v3_read_only_migration();
     test_market_monetary_roundtrip_and_stable_accounts();
+    test_financial_section_roundtrip_and_atomic_validation();
     test_pre_mon1_v4_migrates_with_legacy_world_checksum();
     test_corrupt_or_duplicate_mon1_is_atomic();
     test_duplicate_keys_rejected();

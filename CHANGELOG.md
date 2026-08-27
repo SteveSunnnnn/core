@@ -1,5 +1,14 @@
 # Changelog
 
+## Core 1.0 Development — Financial Ledger Completion — 2026-08-27
+
+- Added SoA commercial-bank and persistent loan stores with stable keys, balanced assets/liabilities, reserve and capital requirements, interest, amortization, arrears, NPL classification, charge-offs, and insolvency.
+- Added the optional `FIN1` save extension with atomic validation, deterministic checksums, and pre-FIN1 migration.
+- Routed sovereign issuance through funded bank capacity or accumulated saver pools and returned debt service to recorded lenders.
+- Added authored-route capacity, tariffs, international logistics budgets, global-numeraire BOP/reserve accounting, and cross-currency price ordering.
+- Split monetary diagnostics into private-credit creation, central issuance, currency revaluation, and unexplained residual.
+- Added CoreScript finance triggers/effects and logarithmic currency/bank lookup accelerators outside the high-cardinality hot path.
+
 ## Core 1.0 Development — Monetary Standards, Currency Zones & Monetary Sovereignty — 2026-08-27
 - Refactored `CurrencyStore` (`src/core/economy/CurrencyStore.cpp`) to implement authentic **Monetary Standards**: `GoldStandard` (anchored to fine gold milligrams and bounded by gold transport points), `SilverStandard`, `Bimetallism` (governed by Gresham's Law ratio dynamics), and `FiatFloating` (market credit-driven).
 - Implemented **Currency Zones (Monetary Unions)** and **Monetary Sovereignty**: The member country with highest prestige and power in a currency union dynamically holds monetary sovereignty, dictating metallic parity policy and harvesting seigniorage revenues into its national treasury.
