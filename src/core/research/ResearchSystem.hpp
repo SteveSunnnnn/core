@@ -106,6 +106,8 @@ private:
     std::vector<TechnologyDefinition> definitions_;
     std::unordered_map<std::uint64_t, std::uint32_t> definition_lookup_;
     std::vector<std::uint32_t> innovation_milli_;
+    std::vector<std::uint64_t> literate_pop_cache_;
+    std::vector<std::uint64_t> total_pop_cache_;
     std::uint64_t weekly_ticks_ = 0u;
     bool finalized_ = false;
 };

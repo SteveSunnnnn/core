@@ -951,9 +951,29 @@ void GrandStrategyStore::run_tech_spread_weekly(World& world) {
 
 void GrandStrategyStore::run_state_resistance_weekly(World& world) {
     const auto state_count = world.geography.state_count();
+    if (state_count == 0) return;
+
     const auto pop_provinces = world.pops.provinces();
     const auto pop_sols = world.pops.sol_all();
     const auto province_states = world.geography.province_states();
+    const auto pop_size = world.pops.size();
+
+    // Single-pass bucket aggregation: O(POPs + States) instead of O(States * POPs)
+    std::vector<std::int64_t> sol_sum(state_count, 0);
+    std::vector<std::uint32_t> pop_count(state_count, 0u);
+
+    for (std::size_t pi = 0; pi < pop_size; ++pi) {
+        if (pi < pop_provinces.size() && pop_provinces[pi].valid()) {
+            const auto prov_id = pop_provinces[pi].value();
+            if (prov_id < province_states.size()) {
+                const auto state = province_states[prov_id];
+                if (state.valid() && static_cast<std::size_t>(state.value()) < state_count && pi < pop_sols.size()) {
+                    sol_sum[state.value()] += pop_sols[pi];
+                    ++pop_count[state.value()];
+                }
+            }
+        }
+    }
 
     for (std::size_t si = 0; si < state_count; ++si) {
         const StateId state{static_cast<StateId::rep_type>(si)};
@@ -963,21 +983,8 @@ void GrandStrategyStore::run_state_resistance_weekly(World& world) {
         const auto owner = world.geography.state_owner(state);
         if (!owner.valid() || static_cast<std::size_t>(owner.value()) >= world.countries.size()) continue;
 
-        std::int64_t sol_sum = 0;
-        std::size_t pop_count = 0;
-        for (std::size_t pi = 0; pi < world.pops.size(); ++pi) {
-            if (pi < pop_provinces.size() && pop_provinces[pi].valid()) {
-                const auto prov_id = pop_provinces[pi].value();
-                if (prov_id < province_states.size() && province_states[prov_id] == state) {
-                    if (pi < pop_sols.size()) {
-                        sol_sum += pop_sols[pi];
-                        ++pop_count;
-                    }
-                }
-            }
-        }
-
-        const auto avg_sol = pop_count > 0 ? sol_sum / static_cast<std::int64_t>(pop_count) : 10'000;
+        const auto count = pop_count[si];
+        const auto avg_sol = count > 0 ? sol_sum[si] / static_cast<std::int64_t>(count) : 10'000;
 
         if (avg_sol >= 9'000 && !world.countries.is_in_default(owner)) {
             world.geography.add_state_resistance_ppm(state, -2'000);

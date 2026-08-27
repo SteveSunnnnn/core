@@ -214,10 +214,12 @@ TechnologyId ResearchSystem::active_research(const World& world, CountryId count
 
 
 void ResearchSystem::rebuild_innovation(const World& world) {
-    innovation_milli_.assign(world.countries.size(), rules_.base_innovation_milli);
+    const auto country_count = world.countries.size();
+    innovation_milli_.assign(country_count, rules_.base_innovation_milli);
+    literate_pop_cache_.assign(country_count, 0u);
+    total_pop_cache_.assign(country_count, 0u);
     if (innovation_milli_.empty()) return;
 
-    std::vector<std::uint64_t> literate_population(world.countries.size(), 0u);
     const auto pop_sizes = world.pops.populations();
     const auto pop_literacy = world.pops.literacy_all();
     const auto pop_provinces = world.pops.provinces();
@@ -234,13 +236,14 @@ void ResearchSystem::rebuild_innovation(const World& world) {
             if (market.valid() && static_cast<std::size_t>(market.value()) < world.markets.size())
                 country = world.markets.owner(market);
         }
-        if (!valid_country(country, world.countries.size())) continue;
+        if (!valid_country(country, country_count)) continue;
+        const auto c_idx = static_cast<std::size_t>(country.value());
+        total_pop_cache_[c_idx] += pop_sizes[i];
         const auto weighted = static_cast<std::uint64_t>(pop_sizes[i]) * pop_literacy[i] / 10'000u;
-        auto& total = literate_population[country.value()];
-        total = saturating_add_u64(total, weighted);
+        literate_pop_cache_[c_idx] = saturating_add_u64(literate_pop_cache_[c_idx], weighted);
     }
 
-    for (std::size_t i = 0; i < innovation_milli_.size(); ++i) {
+    for (std::size_t i = 0; i < country_count; ++i) {
         const auto country = CountryId{static_cast<CountryId::rep_type>(i)};
 
         // Education institution multiplier (up to +75% innovation boost from Level 5 modern education)
@@ -252,7 +255,7 @@ void ResearchSystem::rebuild_innovation(const World& world) {
         }
 
         const auto from_population = detail::mul_div_u64_saturating(
-            literate_population[i], rules_.innovation_per_million_literate_population_milli,
+            literate_pop_cache_[i], rules_.innovation_per_million_literate_population_milli,
             1'000'000u, rules_.max_innovation_milli);
         const auto amplified_pop = from_population + (from_population * edu_bonus_ppm / 1'000'000u);
 
@@ -327,21 +330,9 @@ void ResearchSystem::run_tech_spread_weekly(World& world) {
     ++weekly_ticks_;
     const auto country_count = world.countries.size();
 
-    // Compute literacy and total population for absorptive capacity
-    std::vector<std::uint64_t> literate_pop(country_count, 0u);
-    std::vector<std::uint64_t> total_pop(country_count, 0u);
-    const auto pop_sizes = world.pops.populations();
-    const auto pop_literacy = world.pops.literacy_all();
-    const auto pop_provinces = world.pops.provinces();
-    const auto province_owners = world.geography.province_owners();
-
-    for (std::size_t i = 0; i < pop_sizes.size(); ++i) {
-        const auto province = pop_provinces[i];
-        if (!province.valid() || static_cast<std::size_t>(province.value()) >= province_owners.size()) continue;
-        const auto country = province_owners[province.value()];
-        if (!valid_country(country, country_count)) continue;
-        total_pop[country.value()] += pop_sizes[i];
-        literate_pop[country.value()] += static_cast<std::uint64_t>(pop_sizes[i]) * pop_literacy[i] / 10'000u;
+    // Ensure caches are up to date
+    if (total_pop_cache_.size() != country_count) {
+        rebuild_innovation(world);
     }
 
     for (std::size_t ci = 0; ci < country_count; ++ci) {
@@ -349,8 +340,8 @@ void ResearchSystem::run_tech_spread_weekly(World& world) {
 
         // Absorptive capacity (scaled by literacy & education, baseline 100% when no pop demographics)
         std::uint32_t absorptive_capacity_ppm = 1'000'000u;
-        if (total_pop[ci] > 0u) {
-            const auto lit_ppm = static_cast<std::uint32_t>((literate_pop[ci] * 1'000'000ull) / total_pop[ci]);
+        if (total_pop_cache_[ci] > 0u) {
+            const auto lit_ppm = static_cast<std::uint32_t>((literate_pop_cache_[ci] * 1'000'000ull) / total_pop_cache_[ci]);
             absorptive_capacity_ppm = std::clamp<std::uint32_t>(lit_ppm, 200'000u, 1'000'000u);
         }
 
