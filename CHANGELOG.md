@@ -13,11 +13,14 @@
   - Resistance naturally decays toward zero ($-2,000$ ppm/week, $\approx 10.4\%$ annualized) when local population Standard of Living (SoL $\ge 9.0$) is high, cultural acceptance is maintained, and institutions are funded, organically transforming the territory into an integrated core without arbitrary point expenditure.
 - **Continuous Social & Geopolitical Progression**:
   - POP qualification accumulation (`qualification_permyriad`) smoothly builds up weekly driven by local literacy rates and standard of living.
-  - **Realistic Probabilistic & Prerequisite-Gated Tech Spread** (`src/core/research/ResearchSystem.cpp` / `hpp` & `GrandStrategyStore.cpp`):
-    - **Strict Prerequisite Gating**: A technology CANNOT spread to a country if that country has not unlocked all prerequisite technologies (`prerequisites_complete`).
-    - **Era Gating**: Advanced era technologies cannot diffuse to civilizations that have not yet unlocked preceding eras (`is_era_unlocked`).
-    - **Deterministic Probabilistic Rolls**: Diffusion is probabilistic rather than guaranteed every week; base chance is modulated by bilateral trade agreements, alliances, treaties, and peaceful relations using deterministic `Fnv1a64` hashing. Hostile relations and closed borders completely halt foreign technological ingress.
-    - **Slow, Natural Progression**: Successful rolls contribute fractional progress inversely scaled by technological complexity/cost ($\approx 0.1\% \sim 1\%$ per roll), requiring years of natural commercial and cultural contact to complete full diffusion.
+  - **Comprehensive Realistic Technology & Research Mechanics** (`src/core/research/ResearchSystem.cpp` / `hpp`):
+    - **Multi-Pillar Innovation Generation**: Academic & popular innovation scales dynamically with literate population, amplified by up to $+75\%$ through government **Education Institutions (Tiers 1~5)**.
+    - **Category-Specific Research Specialization**: Industrialized economies accelerate **Production** technologies ($+20\%$), military powers accelerate **Military** doctrines ($+15\%$), and high-literacy civic societies accelerate **Society/Economic** sciences ($+15\%$).
+    - **Scientific Breakthroughs ("Eureka" Moments)**: Active research has a deterministic weekly chance ($2.5\%$) to trigger inspiration breakthroughs, delivering $+5\%$ immediate progress leaps.
+    - **World-First Discovery Honors**: The pioneer country to first invent a technology in the world is awarded $+5.0$ international **Prestige**, reflecting global acclaim and technological leadership.
+    - **Realistic Absorptive Capacity**: Foreign tech diffusion rate is directly modulated by the recipient nation's literacy and educational capacity, preventing backward, illiterate societies from instant assimilation while rewarding educational reforms.
+    - **Strict Prerequisite & Era Gating**: Technologies cannot diffuse without all prerequisite dependencies unlocked and era thresholds achieved.
+    - **Deterministic Probabilistic Rolls**: Diffusion requires peaceful diplomatic contact, trade agreements, and alliances, with deterministic `Fnv1a64` rolls.
   - Peacetime diplomatic relation drift, tension cooldown, and unengaged army readiness/organization recovery advance continuously.
 - **Tagged `RES1` Save Extension** (`src/core/save/SaveGame.cpp`):
   - Emits and decodes state resistance state within a backward-compatible tagged section, preserving 100% downward compatibility across v1, v3, and v4 save schemas.

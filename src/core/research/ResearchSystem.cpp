@@ -241,11 +241,23 @@ void ResearchSystem::rebuild_innovation(const World& world) {
     }
 
     for (std::size_t i = 0; i < innovation_milli_.size(); ++i) {
+        const auto country = CountryId{static_cast<CountryId::rep_type>(i)};
+
+        // Education institution multiplier (up to +75% innovation boost from Level 5 modern education)
+        std::uint32_t edu_bonus_ppm = 0u;
+        for (const auto& inst : world.grand_strategy.institutions()) {
+            if (inst.country == country && inst.level > 0) {
+                edu_bonus_ppm = std::min<std::uint32_t>(750'000u, edu_bonus_ppm + inst.level * 150'000u);
+            }
+        }
+
         const auto from_population = detail::mul_div_u64_saturating(
             literate_population[i], rules_.innovation_per_million_literate_population_milli,
             1'000'000u, rules_.max_innovation_milli);
+        const auto amplified_pop = from_population + (from_population * edu_bonus_ppm / 1'000'000u);
+
         const auto total = std::min<std::uint64_t>(
-            static_cast<std::uint64_t>(rules_.base_innovation_milli) + from_population,
+            static_cast<std::uint64_t>(rules_.base_innovation_milli) + amplified_pop,
             rules_.max_innovation_milli);
         innovation_milli_[i] = static_cast<std::uint32_t>(total);
     }
@@ -267,9 +279,33 @@ ResearchTickStats ResearchSystem::run_weekly(World& world) {
         if (!potential_passes(*definition, world, country)) { ++stats.stalled_countries; continue; }
 
         ++stats.countries_with_research;
-        const auto delta = detail::mul_div_u64_saturating(
-            innovation_milli_[country_index], 1'000'000u, definition->cost_milli, 1'000'000u);
+
+        // Category-specific research specialization focus
+        std::uint32_t speed_multiplier_ppm = 1'000'000u;
+        if (definition->category == TechnologyCategory::Production && world.countries.gdp(country) > 500.0) {
+            speed_multiplier_ppm += 200'000u; // Industrial economy bonus (+20%)
+        } else if (definition->category == TechnologyCategory::Society) {
+            speed_multiplier_ppm += 150'000u; // Academic/civic focus (+15%)
+        } else if (definition->category == TechnologyCategory::Military && world.countries.prestige(country) > 10.0) {
+            speed_multiplier_ppm += 150'000u; // Military doctrine focus (+15%)
+        }
+
+        const auto effective_innovation = static_cast<std::uint64_t>(innovation_milli_[country_index]) * speed_multiplier_ppm / 1'000'000u;
+        auto delta = detail::mul_div_u64_saturating(
+            effective_innovation, 1'000'000u, definition->cost_milli, 1'000'000u);
         if (delta == 0u) { ++stats.stalled_countries; continue; }
+
+        // Eureka / Breakthrough Moment (2.5% deterministic weekly chance)
+        Fnv1a64 eureka_hash;
+        eureka_hash.add(weekly_ticks_);
+        eureka_hash.add(static_cast<std::uint32_t>(country.value()));
+        eureka_hash.add(definition->key_hash);
+        eureka_hash.add(record.progress_ppm);
+        if ((eureka_hash.value() % 1'000'000u) < 25'000u && record.progress_ppm < 900'000u) {
+            delta += 50'000u; // +5% Eureka breakthrough boost
+            ++stats.eureka_breakthroughs;
+        }
+
         const auto next = std::min<std::uint64_t>(
             static_cast<std::uint64_t>(record.progress_ppm) + delta, 1'000'000u);
         record.progress_ppm = static_cast<std::uint32_t>(next);
@@ -277,6 +313,20 @@ ResearchTickStats ResearchSystem::run_weekly(World& world) {
 
         record.unlocked = true;
         ++stats.completed_technologies;
+
+        // World-First Discovery Prestige Reward
+        bool is_world_first = true;
+        for (const auto& other_rec : world.grand_strategy.technologys()) {
+            if (other_rec.key_hash == record.key_hash && other_rec.country != country && other_rec.unlocked) {
+                is_world_first = false;
+                break;
+            }
+        }
+        if (is_world_first) {
+            world.countries.add_prestige(country, 5.0);
+            ++stats.world_first_discoveries;
+        }
+
         if (definition->on_researched.has_value()) {
             (void)vm_.execute_if(*definition->on_researched, world, ScopeRef::country(country));
         }
@@ -288,8 +338,34 @@ void ResearchSystem::run_tech_spread_weekly(World& world) {
     if (!finalized_) return;
     ++weekly_ticks_;
     const auto country_count = world.countries.size();
+
+    // Compute literacy and total population for absorptive capacity
+    std::vector<std::uint64_t> literate_pop(country_count, 0u);
+    std::vector<std::uint64_t> total_pop(country_count, 0u);
+    const auto pop_sizes = world.pops.populations();
+    const auto pop_literacy = world.pops.literacy_all();
+    const auto pop_provinces = world.pops.provinces();
+    const auto province_owners = world.geography.province_owners();
+
+    for (std::size_t i = 0; i < pop_sizes.size(); ++i) {
+        const auto province = pop_provinces[i];
+        if (!province.valid() || static_cast<std::size_t>(province.value()) >= province_owners.size()) continue;
+        const auto country = province_owners[province.value()];
+        if (!valid_country(country, country_count)) continue;
+        total_pop[country.value()] += pop_sizes[i];
+        literate_pop[country.value()] += static_cast<std::uint64_t>(pop_sizes[i]) * pop_literacy[i] / 10'000u;
+    }
+
     for (std::size_t ci = 0; ci < country_count; ++ci) {
         const auto country = CountryId{static_cast<CountryId::rep_type>(ci)};
+
+        // Absorptive capacity (scaled by literacy & education, baseline 100% when no pop demographics)
+        std::uint32_t absorptive_capacity_ppm = 1'000'000u;
+        if (total_pop[ci] > 0u) {
+            const auto lit_ppm = static_cast<std::uint32_t>((literate_pop[ci] * 1'000'000ull) / total_pop[ci]);
+            absorptive_capacity_ppm = std::clamp<std::uint32_t>(lit_ppm, 200'000u, 1'000'000u);
+        }
+
         for (const auto& def : definitions_) {
             if (completed(world, country, def.key_hash)) continue;
             // Strict prerequisite check: CANNOT spread if prerequisites are missing!
@@ -341,10 +417,23 @@ void ResearchSystem::run_tech_spread_weekly(World& world) {
             for (auto& record : world.grand_strategy.technologys_) {
                 if (record.country == country && record.key_hash == def.key_hash && !record.unlocked) {
                     const auto cost_denom = std::max<std::uint64_t>(1u, static_cast<std::uint64_t>(def.cost_milli) / 1'000u);
-                    const auto spread_delta = std::max<std::uint32_t>(10u, static_cast<std::uint32_t>((1'000'000ull * rules_.tech_spread_rate_ppm) / (cost_denom * 1'000'000ull)));
+                    auto spread_delta = std::max<std::uint32_t>(10u, static_cast<std::uint32_t>((1'000'000ull * rules_.tech_spread_rate_ppm) / (cost_denom * 1'000'000ull)));
+                    // Modulate spread delta by receiving country's absorptive capacity
+                    spread_delta = std::max<std::uint32_t>(5u, static_cast<std::uint32_t>((static_cast<std::uint64_t>(spread_delta) * absorptive_capacity_ppm) / 1'000'000ull));
+
                     record.progress_ppm = std::min<std::uint32_t>(1'000'000u, record.progress_ppm + spread_delta);
                     if (record.progress_ppm >= 1'000'000u) {
                         record.unlocked = true;
+                        bool is_world_first = true;
+                        for (const auto& other_rec : world.grand_strategy.technologys()) {
+                            if (other_rec.key_hash == record.key_hash && other_rec.country != country && other_rec.unlocked) {
+                                is_world_first = false;
+                                break;
+                            }
+                        }
+                        if (is_world_first) {
+                            world.countries.add_prestige(country, 5.0);
+                        }
                         if (def.on_researched.has_value()) {
                             (void)vm_.execute_if(*def.on_researched, world, ScopeRef::country(country));
                         }

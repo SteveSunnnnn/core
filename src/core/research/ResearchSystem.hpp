@@ -50,6 +50,8 @@ struct ResearchTickStats {
     std::uint32_t countries_with_research = 0u;
     std::uint32_t stalled_countries = 0u;
     std::uint32_t completed_technologies = 0u;
+    std::uint32_t eureka_breakthroughs = 0u;
+    std::uint32_t world_first_discoveries = 0u;
     std::uint32_t tech_spread_events = 0u;
 };
 
