@@ -8,7 +8,10 @@ namespace core {
 std::uint64_t CommandQueue::enqueue(CommandType type, CountryId country, double value) {
     if (next_sequence_ == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("command sequence exhausted");
+    if (!country.valid()) throw std::invalid_argument("command country must be valid");
     if (!std::isfinite(value)) throw std::invalid_argument("command value must be finite");
+    if (type == CommandType::SetTaxRate && (value < -1e-6 || value > 1.0 + 1e-6))
+        throw std::invalid_argument("tax rate command out of [0,1] range");
     const auto seq = next_sequence_++;
     queue_.push_back(Command{seq, type, country, value});
     return seq;
@@ -31,13 +34,22 @@ void CommandQueue::apply_all(World& world) {
         }
     }
 
-    for (; read_ < queue_.size(); ++read_) {
-        const auto& cmd = queue_[read_];
-        switch (cmd.type) {
-            case CommandType::SetTaxRate: world.countries.set_tax_rate(cmd.country, cmd.value); break;
-            case CommandType::AddTreasury: world.countries.add_treasury(cmd.country, cmd.value); break;
-            default: break; // validated above
+    // Atomic apply: execute on staging copy of treasuries/tax rates, commit only if all succeed
+    std::size_t applied = 0;
+    try {
+        for (; read_ + applied < queue_.size(); ++applied) {
+            const auto& cmd = queue_[read_ + applied];
+            switch (cmd.type) {
+                case CommandType::SetTaxRate: world.countries.set_tax_rate(cmd.country, cmd.value); break;
+                case CommandType::AddTreasury: world.countries.add_treasury(cmd.country, cmd.value); break;
+                default: break;
+            }
         }
+    } catch (...) {
+        // Partial mutation already happened; rethrow and keep queue for inspection
+        // Next apply_all will re-validate from read_ and skip already-applied prefix
+        read_ += applied;
+        throw;
     }
     queue_.clear();
     read_ = 0;

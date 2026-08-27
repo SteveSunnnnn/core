@@ -32,7 +32,7 @@ static void test_allocate_release_cycle() {
 static void test_generation_increment() {
     SlotPool pool;
     auto h1 = pool.allocate();
-    assert(h1.generation == 0);
+    assert(h1.generation == 1);
     auto idx = h1.index;
 
     pool.release(h1);
@@ -41,7 +41,7 @@ static void test_generation_increment() {
     // Re-allocate — should get same index but different generation
     auto h2 = pool.allocate();
     assert(h2.index == idx);
-    assert(h2.generation == 1);
+    assert(h2.generation == 2);
     assert(pool.is_alive(h2));
     assert(!pool.is_alive(h1));  // old handle is stale
 
@@ -113,14 +113,15 @@ static void test_compaction_map() {
 
 static void test_soa_column_compaction() {
     SlotPool pool;
-    for (int i = 0; i < 5; ++i) (void)pool.allocate();
+    std::vector<SlotHandle> handles;
+    for (int i = 0; i < 5; ++i) handles.push_back(pool.allocate());
 
     // Values: {10, 20, 30, 40, 50}
     std::vector<int> col = {10, 20, 30, 40, 50};
 
     // Release slots 1 and 3 (values 20 and 40)
-    pool.release({1, 0});
-    pool.release({3, 0});
+    pool.release(handles[1]);
+    pool.release(handles[3]);
 
     auto map = build_compaction_map(pool);
     assert(map.compacted_size == 3);

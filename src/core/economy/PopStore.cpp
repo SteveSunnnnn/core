@@ -107,9 +107,27 @@ PopId PopStore::create(PopInit init) {
 
 void PopStore::destroy(PopId id) {
     const auto i = index(id);
+    // Validate generation via SlotPool to prevent stale-handle destroy
+    const SlotHandle h{static_cast<std::uint32_t>(i), slot_pool_.generations()[i]};
+    if (!slot_pool_.is_alive(h)) throw std::out_of_range("destroy of dead PopId");
     hot_.population[i] = 0;
     hot_.employed[i] = 0;
-    slot_pool_.release(SlotHandle{static_cast<std::uint32_t>(i), slot_pool_.generations()[i]});
+    hot_.markets[i] = MarketId{};
+    hot_.employers[i] = BuildingId{};
+    hot_.need_profiles[i] = NeedProfileId{};
+    hot_.income_milli[i] = 0;
+    hot_.cash_milli[i] = 0;
+    hot_.sol_milli[i] = 0;
+    cold_.provinces[i] = ProvinceId{};
+    cold_.cultures[i] = CultureId{};
+    cold_.religions[i] = ReligionId{};
+    cold_.professions[i] = ProfessionId{};
+    cold_.interest_groups[i] = InterestGroupId{};
+    cold_.literacy_permyriad[i] = 0;
+    cold_.qualification_permyriad[i] = 0;
+    cold_.wealth_milli[i] = 0;
+    cold_.political_strength_milli[i] = 0;
+    slot_pool_.release(h);
     ++market_membership_revision_;
     ++province_membership_revision_;
 }
@@ -146,6 +164,12 @@ CompactionMap PopStore::compact() {
 std::size_t PopStore::index(PopId id) const {
     const auto i = static_cast<std::size_t>(id.value());
     if (!id.valid() || i >= size()) throw std::out_of_range("invalid PopId");
+    // Generation check: stale handles must not access recycled slots
+    const SlotHandle h{static_cast<std::uint32_t>(i), 0};
+    // We cannot know generation from PopId (PopId is raw index only in this engine);
+    // validate liveness via bitmap to prevent use-after-free of destroyed slots.
+    if (!slot_pool_.is_index_alive(static_cast<std::uint32_t>(i))) throw std::out_of_range("dead PopId");
+    (void)h;
     return i;
 }
 
@@ -186,7 +210,10 @@ void PopStore::set_employer(PopId id, BuildingId value) { hot_.employers[index(i
 void PopStore::set_employed(PopId id, PopulationCount value) { hot_.employed[index(id)] = value; }
 void PopStore::set_income(PopId id, EconomyAmount value) { hot_.income_milli[index(id)] = value; }
 void PopStore::set_cash(PopId id, EconomyAmount value) { hot_.cash_milli[index(id)] = value; }
-void PopStore::add_cash(PopId id, EconomyAmount delta) { hot_.cash_milli[index(id)] += delta; }
+void PopStore::add_cash(PopId id, EconomyAmount delta) {
+    const auto i = index(id);
+    hot_.cash_milli[i] = saturating_add(hot_.cash_milli[i], delta);
+}
 void PopStore::set_standard_of_living_milli(PopId id, std::int32_t value) { hot_.sol_milli[index(id)] = value; }
 void PopStore::set_culture(PopId id, CultureId value) { cold_.cultures[index(id)] = value; }
 void PopStore::set_religion(PopId id, ReligionId value) { cold_.religions[index(id)] = value; }
@@ -202,6 +229,11 @@ std::uint64_t PopStore::checksum() const noexcept {
     const auto n = size();
     h.add(n);
     for (std::size_t i = 0; i < n; ++i) {
+        if (!slot_pool_.is_index_alive(static_cast<std::uint32_t>(i))) {
+            // Tombstone: hash zero sentinel so reuse does not retain stale data
+            h.add(std::uint32_t{0});
+            continue;
+        }
         const PopId id{static_cast<PopId::rep_type>(i)};
         h.add(market(id).value());
         h.add(province(id).value());
@@ -221,6 +253,8 @@ std::uint64_t PopStore::checksum() const noexcept {
         h.add(wealth_milli(id));
         h.add(political_strength_milli(id));
     }
+    // Include liveness bitmap so stale index resurrection is OOS-visible
+    for (auto w : slot_pool_.bitmap()) h.add(w);
     return h.value();
 }
 

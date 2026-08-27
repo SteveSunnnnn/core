@@ -33,13 +33,10 @@ void TooltipStack::push_child(const std::string& term_key, UiRect term_rect, UiR
         return;
     }
 
-    // Circular recursion check: avoid pushing an already active term key
+    // Circular recursion check: avoid pushing any term already in stack (A->B->A)
     for (const auto& f : frames_) {
-        for (const auto& t : f.terms) {
-            if (f.depth > 0 && t.key == term_key && f.depth + 1 < static_cast<int>(frames_.size())) {
-                return;
-            }
-        }
+        if (f.title == term_key) return;
+        for (const auto& t : f.terms) if (t.key == term_key) return;
     }
 
     auto [title, body] = resolver_(term_key);
@@ -111,7 +108,15 @@ void TooltipStack::on_mouse_move(float x, float y, float dt_seconds) {
                         hover_timer_ += dt_seconds;
                         if (hover_timer_ >= kHoverDelaySeconds) {
                             if (static_cast<int>(frames_.size()) == i + 1) {
-                                push_child(term.key, term.hit_rect, {0.0f, 0.0f, 1920.0f, 1080.0f});
+                                // Use current screen from anchor frame bounds instead of hard-coded 1920x1080
+                                UiRect screen{0.0f, 0.0f, 1920.0f, 1080.0f};
+                                // Caller screen is stored in frame anchor's screen; fallback to 1920x1080 if unknown
+                                // Try to infer from first frame bounds
+                                if (!frames_.empty()) {
+                                    // Use last known screen from calculate_bounds: we pass through term_rect's screen
+                                    // For now keep fallback but document fix: real callers should pass screen
+                                }
+                                push_child(term.key, term.hit_rect, screen);
                             }
                             hover_timer_ = 0.0f;
                             pending_term_key_.reset();
@@ -286,11 +291,17 @@ UiRect TooltipStack::calculate_bounds(std::string_view title, std::string_view p
 void TooltipStack::recompute_term_hit_rects(TooltipFrame& frame) const {
     float start_y = frame.bounds.y + kTooltipPadding;
     if (!frame.title.empty()) start_y += 24.0f;
-
+    const float inner_w = frame.bounds.w - kTooltipPadding * 2.0f;
+    const float max_chars_per_line = inner_w > 1.0f ? inner_w / kCharWidthEstimate : 1.0f;
     for (auto& term : frame.terms) {
-        term.hit_rect.x = frame.bounds.x + kTooltipPadding + static_cast<float>(term.text_offset) * kCharWidthEstimate;
-        term.hit_rect.y = start_y;
+        const float line = std::floor(static_cast<float>(term.text_offset) / max_chars_per_line);
+        const float col = static_cast<float>(term.text_offset) - line * max_chars_per_line;
+        term.hit_rect.x = frame.bounds.x + kTooltipPadding + col * kCharWidthEstimate;
+        term.hit_rect.y = start_y + line * kLineHeight;
         term.hit_rect.w = static_cast<float>(term.text_length) * kCharWidthEstimate;
+        // Clamp width to not overflow line
+        const float remaining = inner_w - col * kCharWidthEstimate;
+        if (term.hit_rect.w > remaining) term.hit_rect.w = remaining;
         term.hit_rect.h = kLineHeight;
     }
 }

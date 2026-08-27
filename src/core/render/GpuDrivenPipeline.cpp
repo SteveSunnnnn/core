@@ -88,22 +88,23 @@ GpuCullingOutput GpuCullingPipeline::cull_and_generate_draws(
     const float cam_y = static_cast<float>(camera.center.y);
     const float cam_z = static_cast<float>(camera.altitude_m);
 
-    const float far_lod_dist_sq = config.far_lod_dist * config.far_lod_dist;
-    const float near_lod_dist_sq = config.near_lod_dist * config.near_lod_dist;
-    const float med_lod_dist_sq = config.med_lod_dist * config.med_lod_dist;
+    const double far_lod_dist_sq_d = double(config.far_lod_dist) * double(config.far_lod_dist);
+    const double near_lod_dist_sq_d = double(config.near_lod_dist) * double(config.near_lod_dist);
+    const double med_lod_dist_sq_d = double(config.med_lod_dist) * double(config.med_lod_dist);
 
     for (const auto& inst : instances) {
         const float world_x = static_cast<float>(chunk_origin_x) + static_cast<float>(inst.local_x_m);
         const float world_y = static_cast<float>(chunk_origin_y) + static_cast<float>(inst.local_y_m);
-        const float world_z = static_cast<float>(inst.local_z_half_m) * 0.5f;
+        // inst.local_z_half_m is already half-height; do not halve again (fixes half-buried objects)
+        const float world_z = static_cast<float>(inst.local_z_half_m);
 
-        const float dx = world_x - cam_x;
-        const float dy = world_y - cam_y;
-        const float dz = world_z - cam_z;
-        const float dist_sq = dx * dx + dy * dy + dz * dz;
+        const double dx = double(world_x) - double(cam_x);
+        const double dy = double(world_y) - double(cam_y);
+        const double dz = double(world_z) - double(cam_z);
+        const double dist_sq_d = dx * dx + dy * dy + dz * dz;
 
-        // Distance Cull (Squared distance avoids sqrt on culled items)
-        if (config.distance_culling_enabled && dist_sq > far_lod_dist_sq) {
+        // Distance Cull (use double precision to avoid float jitter)
+        if (config.distance_culling_enabled && dist_sq_d > far_lod_dist_sq_d) {
             ++output.total_culled_instances;
             continue;
         }
@@ -115,10 +116,11 @@ GpuCullingOutput GpuCullingPipeline::cull_and_generate_draws(
             continue;
         }
 
-        // LOD Assignment via squared distance comparison
-        if (dist_sq < near_lod_dist_sq) {
+        // LOD Assignment via squared distance (use double for precision)
+        const double dist_sq_for_lod = dist_sq_d;
+        if (dist_sq_for_lod < near_lod_dist_sq_d) {
             output.visible_instances_lod0.push_back(inst);
-        } else if (dist_sq < med_lod_dist_sq) {
+        } else if (dist_sq_for_lod < med_lod_dist_sq_d) {
             output.visible_instances_lod1.push_back(inst);
         } else {
             output.visible_instances_lod2.push_back(inst);

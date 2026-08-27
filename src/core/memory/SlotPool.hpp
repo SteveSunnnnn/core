@@ -44,7 +44,8 @@ public:
             set_alive_bit(idx, true);
         } else {
             idx = static_cast<std::uint32_t>(generations_.size());
-            generations_.push_back(0);
+            // Start generations at 1 to reserve 0 as never-valid and avoid wrap collision with initial 0 handle
+            generations_.push_back(1);
             ensure_bitmap_capacity(idx + 1);
             set_alive_bit(idx, true);
         }
@@ -59,9 +60,12 @@ public:
         if (generations_[handle.index] != handle.generation) return;
 
         set_alive_bit(handle.index, false);
-        // Bump generation (wrap at 0xFFFFFFFE, reserve 0xFFFFFFFF as invalid sentinel)
+        // Bump generation, skip 0 and 0xFFFFFFFF (invalid sentinel) to avoid ABA after wrap
         auto& gen = generations_[handle.index];
-        gen = (gen < 0xFFFFFFFEu) ? gen + 1u : 0u;
+        std::uint32_t next = gen + 1u;
+        if (next == 0u || next == 0xFFFFFFFFu) next = 1u;
+        if (next == 0xFFFFFFFEu) next = 1u; // keep below sentinel range, wrap to 1
+        gen = next;
         free_list_.push_back(handle.index);
         if (alive_count_ > 0) --alive_count_;
     }

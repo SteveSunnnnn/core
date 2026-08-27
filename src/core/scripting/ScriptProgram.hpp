@@ -75,9 +75,26 @@ struct ScopeSelector {
     ScriptStableKey saved_name = 0;
 };
 
-enum class ScopeIteratorMode : std::uint8_t { Any, Every, Random };
+// Generic iterator vocabulary: ordered/limit/order_by are engine-level
+// primitives, not Vic3-specific content. Ordering is driven by a scripted
+// value so any domain (economy, politics, warfare) can reuse the same
+// deterministic traversal without hard-coding domain keys.
+enum class ScopeIteratorMode : std::uint8_t { Any, Every, Random, Ordered };
 enum class ScopeIteratorSource : std::uint8_t { Children, Collection };
 enum class ScriptComparison : std::uint8_t { Equal, NotEqual, Above, AtLeast, Below, AtMost };
+
+struct ScopeIteratorConfig {
+    // Deterministic ordered traversal (stable tie-break). limit/order_by
+    // are generic; content supplies the ordering scripted value.
+    bool ordered = false;
+    bool has_limit = false;
+    bool has_order_by = false;
+    std::uint32_t limit = 0;                 // 0 = no truncation
+    std::uint32_t offset = 0;                // pagination offset
+    bool descending = false;
+    SymbolId order_by_value{};               // scripted_value name
+    ScriptStableKey order_by_key = 0;
+};
 
 enum class ScopedConditionKind : std::uint8_t {
     Trigger,
@@ -99,6 +116,7 @@ struct CompiledScopedCondition {
     ScopeType iterator_target = ScopeType::None;
     ScopeIteratorMode iterator_mode = ScopeIteratorMode::Any;
     ScopeIteratorSource iterator_source = ScopeIteratorSource::Children;
+    ScopeIteratorConfig iterator_config{};
     ScriptComparison comparison = ScriptComparison::Equal;
     SymbolId script_name{};
     ScriptStableKey binding_name = 0;
@@ -133,6 +151,7 @@ struct CompiledScopedEffect {
     ScopeType iterator_target = ScopeType::None;
     ScopeIteratorMode iterator_mode = ScopeIteratorMode::Every;
     ScopeIteratorSource iterator_source = ScopeIteratorSource::Children;
+    ScopeIteratorConfig iterator_config{};
     SymbolId script_name{};
     ScriptStableKey binding_name = 0;
     ScriptStableKey collection_name = 0;
@@ -185,7 +204,28 @@ enum class ValueSource : std::uint8_t {
     MarketDemand,
     StatePopulation,
     ProvincePopulation,
-    RuntimeArgument
+    RuntimeArgument,
+    // Generic expression bytecode sources: content composes arithmetic/
+    // conditional values without engine hard-coding domain formulas.
+    Constant,
+    VariableRef,
+    ScriptedValueRef
+};
+
+enum class ScriptValueOp : std::uint8_t {
+    PushConst, PushVariable, PushScriptedValue,
+    Add, Sub, Mul, Div, Neg,
+    Eq, Ne, Lt, Le, Gt, Ge,
+    And, Or, Not, If,
+    Max, Min, Clamp
+};
+
+struct ScriptValueBytecode {
+    std::vector<ScriptValueOp> ops;
+    std::vector<double> const_pool;
+    std::vector<ScriptStableKey> var_keys; // for PushVariable
+    // Deterministic evaluation: no heap allocation per eval, integer
+    // fast-path preserved for simple source*mul+add programs.
 };
 
 struct ScriptedValueProgram {
@@ -197,6 +237,10 @@ struct ScriptedValueProgram {
     CompiledScriptArgument runtime_source{};
     std::vector<ScriptParameterDefinition> parameters;
     std::uint32_t source_line = 0u;
+    // Generic bytecode: when non-empty, VM evaluates bytecode instead of
+    // legacy source*mul+add. Keeps old programs working unchanged.
+    ScriptValueBytecode bytecode{};
+    bool uses_bytecode = false;
 };
 
 struct CompiledHistoryPatch {

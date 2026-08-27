@@ -59,6 +59,24 @@ public:
     }
     [[nodiscard]] std::size_t immutable_bytes() const noexcept;
 
+public:
+    // Generic schema registration: engine provides storage/mechanics,
+    // content provides keys/rules/thresholds. This is the extension point
+    // for future economy/politics/diplomacy/warfare definition categories
+    // without hard-coding Vic3-specific tables into C++.
+    enum class DefinitionMergePolicy : std::uint8_t { Replace, Patch, Extend, Remove };
+    struct GenericDefinitionSchema {
+        std::string category; // stable key e.g. "building", "law_group", "goods"
+        DefinitionMergePolicy default_policy = DefinitionMergePolicy::Replace;
+        // Validator receives parsed object; returns false + diagnostic on error.
+        std::function<bool(const class ScriptParseResult& parsed,
+                           std::vector<ScriptCompileDiagnostic>& diagnostics)> ingest;
+        std::function<std::size_t()> immutable_bytes;
+    };
+    void register_schema(GenericDefinitionSchema schema);
+    [[nodiscard]] std::span<const GenericDefinitionSchema> generic_schemas() const noexcept { return generic_schemas_; }
+    [[nodiscard]] bool has_schema(std::string_view category) const noexcept;
+
 private:
     SymbolTable& symbols_;
     const ScriptRegistry& registry_;
@@ -72,6 +90,7 @@ private:
     std::vector<CountryDefinition> countries_;
     std::unordered_map<std::uint32_t, std::uint32_t> country_lookup_;
     std::unordered_map<std::uint32_t, CountryId> runtime_country_lookup_;
+    std::vector<GenericDefinitionSchema> generic_schemas_;
     SymbolId sym_country_{};
     SymbolId sym_population_{};
     SymbolId sym_gdp_{};

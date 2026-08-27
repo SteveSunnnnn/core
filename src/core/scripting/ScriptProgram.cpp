@@ -564,6 +564,9 @@ bool ScriptCompiler::parse_iterator(std::string_view text, ScopeIteratorMode& mo
     } else if (lower.starts_with("random_")) {
         mode = ScopeIteratorMode::Random;
         suffix = std::string_view{lower}.substr(7u);
+    } else if (lower.starts_with("ordered_")) {
+        mode = ScopeIteratorMode::Ordered;
+        suffix = std::string_view{lower}.substr(8u);
     } else {
         return false;
     }
@@ -609,7 +612,10 @@ ScopeType ScriptCompiler::value_source_scope(ValueSource source) const noexcept 
         case ValueSource::MarketDemand: return ScopeType::Market;
         case ValueSource::StatePopulation: return ScopeType::State;
         case ValueSource::ProvincePopulation: return ScopeType::Province;
-        case ValueSource::RuntimeArgument: return ScopeType::None;
+        case ValueSource::RuntimeArgument:
+        case ValueSource::Constant:
+        case ValueSource::VariableRef:
+        case ValueSource::ScriptedValueRef: return ScopeType::None;
     }
     return ScopeType::None;
 }
@@ -1104,7 +1110,24 @@ bool ScriptCompiler::compile_scoped_condition_node(const ScriptNode& node, Compi
         out.kind = ScopedConditionKind::Iterator;
         out.iterator_mode = iterator_mode;
         out.iterator_target = iterator_target;
-        return compile_scoped_condition_block(node, {iterator_target, true}, root_scope, out.children, diagnostics);
+        // Parse generic iterator config (limit/order_by/offset) if present as direct children
+        ScopeIteratorConfig cfg{};
+        if (iterator_mode == ScopeIteratorMode::Ordered) cfg.ordered = true;
+        // Extract limit/order_by from block's direct children before recursing
+        // We keep original node but filter config keys for child compilation
+        ScriptNode filtered = node;
+        filtered.children.clear();
+        for (auto &child : node.children) {
+            const auto clower = ascii_lower(symbols_.text(child.key));
+            if (clower == "limit" && child.kind == ScriptValueKind::Number) { cfg.has_limit=true; cfg.limit=static_cast<std::uint32_t>(child.number); cfg.ordered=true; continue; }
+            if (clower == "offset" && child.kind == ScriptValueKind::Number) { cfg.offset=static_cast<std::uint32_t>(child.number); continue; }
+            if (clower == "order_by" && child.kind == ScriptValueKind::Symbol) { cfg.has_order_by=true; cfg.order_by_value=child.symbol; cfg.order_by_key=script_stable_key(symbols_.text(child.symbol)); cfg.ordered=true; continue; }
+            if (clower == "descending" && child.kind == ScriptValueKind::Symbol) { const auto v=ascii_lower(symbols_.text(child.symbol)); cfg.descending=(v=="yes"||v=="true"); continue; }
+            filtered.children.push_back(child);
+        }
+        out.iterator_config = cfg;
+        if (cfg.ordered) out.iterator_mode = ScopeIteratorMode::Ordered;
+        return compile_scoped_condition_block(filtered, {iterator_target, true}, root_scope, out.children, diagnostics);
     }
 
     const auto id = registry_.find_trigger(text);
@@ -1325,7 +1348,21 @@ bool ScriptCompiler::compile_scoped_effect_node(const ScriptNode& node, CompileS
         out.kind = ScopedEffectKind::Iterator;
         out.iterator_mode = iterator_mode;
         out.iterator_target = iterator_target;
-        return compile_scoped_effect_block(node, {iterator_target, true}, root_scope, out.children, diagnostics);
+        ScopeIteratorConfig cfg{};
+        if (iterator_mode == ScopeIteratorMode::Ordered) cfg.ordered = true;
+        ScriptNode filtered = node;
+        filtered.children.clear();
+        for (auto &child : node.children) {
+            const auto clower = ascii_lower(symbols_.text(child.key));
+            if (clower == "limit" && child.kind == ScriptValueKind::Number) { cfg.has_limit=true; cfg.limit=static_cast<std::uint32_t>(child.number); cfg.ordered=true; continue; }
+            if (clower == "offset" && child.kind == ScriptValueKind::Number) { cfg.offset=static_cast<std::uint32_t>(child.number); continue; }
+            if (clower == "order_by" && child.kind == ScriptValueKind::Symbol) { cfg.has_order_by=true; cfg.order_by_value=child.symbol; cfg.order_by_key=script_stable_key(symbols_.text(child.symbol)); cfg.ordered=true; continue; }
+            if (clower == "descending" && child.kind == ScriptValueKind::Symbol) { const auto v=ascii_lower(symbols_.text(child.symbol)); cfg.descending=(v=="yes"||v=="true"); continue; }
+            filtered.children.push_back(child);
+        }
+        out.iterator_config = cfg;
+        if (cfg.ordered) out.iterator_mode = ScopeIteratorMode::Ordered;
+        return compile_scoped_effect_block(filtered, {iterator_target, true}, root_scope, out.children, diagnostics);
     }
 
     const auto id = registry_.find_effect(text);
@@ -1830,7 +1867,7 @@ bool ScriptVm::evaluate_scoped_node(const CompiledScopedCondition& node, const W
                                                        values.size(), node.collection_name);
                 return evaluate_value(values[index]);
             }
-            const auto candidates = ScopeResolver::children(world, context.current, node.iterator_target);
+            auto candidates = ScopeResolver::children(world, context.current, node.iterator_target);
             if (node.iterator_mode == ScopeIteratorMode::Any) {
                 for (const auto candidate : candidates) {
                     if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
@@ -1846,6 +1883,36 @@ bool ScriptVm::evaluate_scoped_node(const CompiledScopedCondition& node, const W
                     if (!evaluate_scoped_nodes(node.children, world, context, depth + 1u)) return false;
                 }
                 return true;
+            }
+            if (node.iterator_mode == ScopeIteratorMode::Ordered) {
+                if (candidates.empty()) return false;
+                // Sort by scripted value if order_by present, else stable by id
+                std::vector<std::pair<double, ScopeRef>> scored;
+                scored.reserve(candidates.size());
+                for (auto c : candidates) {
+                    double score = static_cast<double>(c.raw_id);
+                    if (node.iterator_config.has_order_by && programs_ != nullptr) {
+                        if (auto *sv = programs_->find_value(node.iterator_config.order_by_value)) {
+                            ScriptExecutionContext tmp = context;
+                            tmp.current = c;
+                            tmp.begin_execution();
+                            try { score = evaluate_value_internal(*sv, world, tmp, depth+1u); } catch(...) { score = 0; }
+                        }
+                    }
+                    scored.emplace_back(score, c);
+                }
+                std::sort(scored.begin(), scored.end(), [&](auto &a, auto &b){
+                    if (a.first != b.first) return node.iterator_config.descending ? a.first > b.first : a.first < b.first;
+                    return a.second.raw_id < b.second.raw_id;
+                });
+                std::size_t offset = std::min<std::size_t>(node.iterator_config.offset, scored.size());
+                std::size_t limit = node.iterator_config.has_limit ? std::min<std::size_t>(node.iterator_config.limit, scored.size()-offset) : scored.size()-offset;
+                for (std::size_t i=offset; i<offset+limit; ++i) {
+                    if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
+                    ScopeEnterGuard guard{context, scored[i].second};
+                    if (evaluate_scoped_nodes(node.children, world, context, depth + 1u)) return true;
+                }
+                return false;
             }
             if (candidates.empty()) return false;
             if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
@@ -1956,11 +2023,40 @@ void ScriptVm::apply_scoped_node(const CompiledScopedEffect& node, World& world,
                 apply_value(values[index]);
                 return;
             }
-            const auto candidates = ScopeResolver::children(world, context.current, node.iterator_target);
+            auto candidates = ScopeResolver::children(world, context.current, node.iterator_target);
             if (node.iterator_mode == ScopeIteratorMode::Every) {
                 for (const auto candidate : candidates) {
                     if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
                     ScopeEnterGuard guard{context, candidate};
+                    apply_scoped_nodes(node.children, world, context, depth + 1u);
+                }
+                return;
+            }
+            if (node.iterator_mode == ScopeIteratorMode::Ordered) {
+                if (candidates.empty()) return;
+                std::vector<std::pair<double, ScopeRef>> scored;
+                scored.reserve(candidates.size());
+                for (auto c : candidates) {
+                    double score = static_cast<double>(c.raw_id);
+                    if (node.iterator_config.has_order_by && programs_ != nullptr) {
+                        if (auto *sv = programs_->find_value(node.iterator_config.order_by_value)) {
+                            ScriptExecutionContext tmp = context;
+                            tmp.current = c;
+                            tmp.begin_execution();
+                            try { score = evaluate_value_internal(*sv, world, tmp, depth+1u); } catch(...) { score = 0; }
+                        }
+                    }
+                    scored.emplace_back(score, c);
+                }
+                std::sort(scored.begin(), scored.end(), [&](auto &a, auto &b){
+                    if (a.first != b.first) return node.iterator_config.descending ? a.first > b.first : a.first < b.first;
+                    return a.second.raw_id < b.second.raw_id;
+                });
+                std::size_t offset = std::min<std::size_t>(node.iterator_config.offset, scored.size());
+                std::size_t limit = node.iterator_config.has_limit ? std::min<std::size_t>(node.iterator_config.limit, scored.size()-offset) : scored.size()-offset;
+                for (std::size_t i=offset; i<offset+limit; ++i) {
+                    if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
+                    ScopeEnterGuard guard{context, scored[i].second};
                     apply_scoped_nodes(node.children, world, context, depth + 1u);
                 }
                 return;
@@ -2039,8 +2135,8 @@ double ScriptVm::evaluate_value(SymbolId name, const World& world,
 }
 
 double ScriptVm::evaluate_value_internal(const ScriptedValueProgram& program, const World& world,
-                                         ScriptExecutionContext& context,
-                                         std::uint32_t depth) const {
+                                          ScriptExecutionContext& context,
+                                          std::uint32_t depth) const {
     if (depth > kMaxScriptDepth) throw std::runtime_error("CoreScript maximum call depth exceeded");
     if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
     const auto scope = context.current;
@@ -2048,6 +2144,42 @@ double ScriptVm::evaluate_value_internal(const ScriptedValueProgram& program, co
     if (!ScopeResolver::valid(world, scope)) throw std::runtime_error("invalid scripted value scope");
     if (!prepare_value_invocation(program, world, context))
         throw std::runtime_error("scripted value typed arguments do not match signature");
+    if (program.uses_bytecode && !program.bytecode.ops.empty()) {
+        std::vector<double> stack;
+        stack.reserve(program.bytecode.ops.size());
+        for (size_t i=0;i<program.bytecode.ops.size();++i){
+            auto op = program.bytecode.ops[i];
+            switch(op){
+                case ScriptValueOp::PushConst: {
+                    double c = i < program.bytecode.const_pool.size() ? program.bytecode.const_pool[i % program.bytecode.const_pool.size()] : 0;
+                    // Alternative: push next const
+                    if (!program.bytecode.const_pool.empty()) {
+                        // pop not needed
+                    }
+                    stack.push_back(c);
+                    break;
+                }
+                case ScriptValueOp::PushVariable: {
+                    ScriptStableKey k = program.bytecode.var_keys.empty()?0:program.bytecode.var_keys[0];
+                    auto v = context.variable(k);
+                    stack.push_back(v.valid()&&v.kind==ScriptArgumentKind::Number?v.number:0);
+                    break;
+                }
+                case ScriptValueOp::Add: { if(stack.size()>=2){double b=stack.back();stack.pop_back();double a=stack.back();stack.back()=a+b;} break; }
+                case ScriptValueOp::Sub: { if(stack.size()>=2){double b=stack.back();stack.pop_back();double a=stack.back();stack.back()=a-b;} break; }
+                case ScriptValueOp::Mul: { if(stack.size()>=2){double b=stack.back();stack.pop_back();double a=stack.back();stack.back()=a*b;} break; }
+                case ScriptValueOp::Div: { if(stack.size()>=2){double b=stack.back();stack.pop_back();double a=stack.back();stack.back()= b!=0? a/b:0;} break; }
+                case ScriptValueOp::Neg: { if(!stack.empty()) stack.back()=-stack.back(); break; }
+                case ScriptValueOp::Max: { if(stack.size()>=2){double b=stack.back();stack.pop_back();double a=stack.back();stack.back()=std::max(a,b);} break; }
+                case ScriptValueOp::Min: { if(stack.size()>=2){double b=stack.back();stack.pop_back();double a=stack.back();stack.back()=std::min(a,b);} break; }
+                default: break;
+            }
+            if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
+        }
+        double result = stack.empty()?0:stack.back();
+        if (!std::isfinite(result)) throw std::range_error("scripted value bytecode result non-finite");
+        return result;
+    }
     double value = 0.0;
     switch (program.source) {
         case ValueSource::Population: value = world.countries.population(CountryId{scope.raw_id}); break;
@@ -2098,6 +2230,10 @@ double ScriptVm::evaluate_value_internal(const ScriptedValueProgram& program, co
             else throw std::runtime_error("scripted value source is not numeric");
             break;
         }
+        case ValueSource::Constant:
+        case ValueSource::VariableRef:
+        case ValueSource::ScriptedValueRef:
+            break;
     }
     const auto result = value * program.multiply + program.add;
     if (!std::isfinite(result)) throw std::range_error("scripted value result is non-finite");

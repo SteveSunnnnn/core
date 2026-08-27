@@ -22,7 +22,27 @@ struct InstitutionRecord { CountryId country{}; std::uint64_t key_hash=0; std::u
 struct CompanyRecord { CountryId country{}; std::uint64_t key_hash=0; EconomyAmount cash_milli=0; std::uint32_t productivity_ppm=1'000'000; bool active=true; };
 struct TradeRouteRecord { MarketId source{}; MarketId destination{}; GoodId good{}; EconomyAmount quantity_milli=0; std::uint16_t level=1; bool active=true; };
 struct OwnershipStakeRecord { CountryId owner_country{}; CompanyId owner_company{}; BuildingId building{}; std::uint32_t share_ppm=0; };
-struct TreatyRecord { CountryId first{}; CountryId second{}; TreatyKind kind=TreatyKind::Custom; std::uint64_t article_hash=0; bool active=true; };
+struct TreatyRecord {
+    CountryId first{}; CountryId second{}; TreatyKind kind=TreatyKind::Custom; std::uint64_t article_hash=0; bool active=true;
+    // Extended treaty content: multilateral + timed + obligations (all data-driven, hashes refer to external script definitions)
+    std::uint64_t treaty_key_hash=0; // stable content key (e.g. script_stable_key("treaty.custom_union"))
+    std::uint64_t start_tick=0; std::uint64_t expiry_tick=0; // 0 = indefinite, else must be > start
+    std::int32_t obligation_milli=0; // generic obligation value (reparations, subsidy) in milli, 0 = none
+    bool is_multilateral=false;
+};
+// Per-treaty articles: a treaty can carry multiple typed articles (trade, access, etc.)
+struct TreatyArticleRecord {
+    TreatyId treaty{};
+    TreatyKind kind=TreatyKind::Custom;
+    std::uint64_t article_hash=0; // specific content key within treaty
+    std::uint64_t payload_hash=0; // obligation payload (e.g. state transfer, market open)
+    bool active=true;
+};
+struct TreatyParticipantRecord {
+    TreatyId treaty{};
+    CountryId country{};
+    std::uint8_t role=0; // 0 member, 1 leader/guarantor
+};
 struct ArmyRecord { CountryId country{}; StateId location{}; std::uint32_t manpower=0; std::uint32_t organization_ppm=1'000'000; };
 enum class NavalMission : std::uint8_t {
 
@@ -228,6 +248,8 @@ public:
     CORE_GS_ADD(trade_route, TradeRouteId, TradeRouteRecord)
     CORE_GS_ADD(ownership_stake, StrongId<struct OwnershipStakeTag>, OwnershipStakeRecord)
     CORE_GS_ADD(treaty, TreatyId, TreatyRecord)
+    CORE_GS_ADD(treaty_article, TreatyArticleId, TreatyArticleRecord)
+    CORE_GS_ADD(treaty_participant, TreatyParticipantId, TreatyParticipantRecord)
     CORE_GS_ADD(army, ArmyId, ArmyRecord)
     CORE_GS_ADD(navy, NavyId, NavyRecord)
     CORE_GS_ADD(migration_flow, MigrationFlowId, MigrationFlowRecord)
@@ -273,8 +295,16 @@ public:
     [[nodiscard]] std::int32_t relation_milli(CountryId first, CountryId second) const noexcept;
     void adjust_relation(CountryId first, CountryId second, std::int32_t delta_milli);
     [[nodiscard]] bool has_active_treaty(CountryId first, CountryId second, TreatyKind kind) const noexcept;
+    [[nodiscard]] bool has_active_treaty_article(TreatyId treaty, TreatyKind kind) const noexcept;
     TreatyId create_treaty(CountryId first, CountryId second, TreatyKind kind, std::uint64_t article_hash = 0);
+    TreatyId create_treaty_ex(CountryId first, CountryId second, TreatyKind kind, std::uint64_t article_hash,
+                              std::uint64_t start_tick, std::uint64_t expiry_tick, std::int32_t obligation_milli, std::uint64_t treaty_key_hash);
+    TreatyArticleId add_treaty_article(TreatyId treaty, TreatyKind kind, std::uint64_t article_hash, std::uint64_t payload_hash);
+    TreatyParticipantId add_treaty_participant(TreatyId treaty, CountryId country, std::uint8_t role = 0);
+    [[nodiscard]] std::span<const TreatyArticleRecord> treaty_articles(TreatyId treaty) const noexcept;
+    [[nodiscard]] std::span<const TreatyParticipantRecord> treaty_participants(TreatyId treaty) const noexcept;
     bool break_treaty(TreatyId treaty);
+    void expire_treaties(std::uint64_t current_tick);
 
     void add_investment_pool_funds(CountryId country, EconomyAmount amount_milli);
     void add_investment_pool_funds(InvestmentPoolId pool, EconomyAmount amount_milli);
@@ -348,6 +378,10 @@ private:
     std::vector<TradeRouteRecord> trade_routes_;
     std::vector<OwnershipStakeRecord> ownership_stakes_;
     std::vector<TreatyRecord> treatys_;
+    std::vector<TreatyArticleRecord> treaty_articles_;
+    std::vector<TreatyParticipantRecord> treaty_participants_;
+    mutable std::vector<TreatyArticleRecord> treaty_articles_scratch_;
+    mutable std::vector<TreatyParticipantRecord> treaty_participants_scratch_;
     std::vector<ArmyRecord> armys_;
     std::vector<NavyRecord> navys_;
     std::vector<MigrationFlowRecord> migration_flows_;

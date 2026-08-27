@@ -22,6 +22,15 @@ struct MonetaryBalanceSheet {
     EconomyAmount total_milli = 0;
 };
 
+// Material closed-loop snapshot: totals across all markets/goods.
+struct MaterialBalanceSheet {
+    EconomyAmount total_supply_milli = 0;
+    EconomyAmount total_demand_milli = 0;
+    EconomyAmount total_inventory_milli = 0;
+    EconomyAmount total_shortage_milli = 0;
+    EconomyAmount net_material_milli = 0; // supply+inventory - demand - shortage
+};
+
 struct EconomyTickProfile {
     std::chrono::nanoseconds employment{};
     std::chrono::nanoseconds production{};
@@ -37,6 +46,19 @@ struct EconomyTickProfile {
     EconomyAmount central_issuance_milli = 0;
     EconomyAmount currency_revaluation_milli = 0;
     EconomyAmount unexplained_monetary_delta_milli = 0;
+    // Material closed-loop: goods are created by production, removed by
+    // fulfilled demand (consumption + intermediate input draws) and destroyed
+    // only by an explicit, accounted spoilage sink (the storage-cap overflow).
+    // Identity (world totals, trade nets to zero across markets):
+    //   dInventory == produced - fulfilled - spoilage
+    // so unexplained_material_delta_milli must be ~0 for a closed loop.
+    MaterialBalanceSheet material_before{};
+    MaterialBalanceSheet material_after{};
+    EconomyAmount produced_milli = 0;   // sum of this tick's supply
+    EconomyAmount demanded_milli = 0;   // sum of this tick's demand
+    EconomyAmount fulfilled_milli = 0;  // sum of min(available, demand)
+    EconomyAmount spoilage_milli = 0;   // storage-cap overflow sink
+    EconomyAmount unexplained_material_delta_milli = 0;
 };
 
 class EconomySystem {
@@ -66,6 +88,7 @@ public:
     void rebuild_indices(const World& world);
     void run_weekly(World& world, JobSystem& jobs, EconomyTickProfile* profile = nullptr);
     [[nodiscard]] static MonetaryBalanceSheet monetary_balance_sheet(const World& world) noexcept;
+    [[nodiscard]] static MaterialBalanceSheet material_balance_sheet(const World& world) noexcept;
     [[nodiscard]] const MarketEntityIndex& index() const noexcept { return index_; }
     [[nodiscard]] std::size_t scratch_memory_bytes() const noexcept;
 
@@ -86,6 +109,12 @@ private:
     // Spends country investment pools on expanding the best-utilized,
     // best-performing buildings so pool funds re-enter the real economy.
     JobDispatchStats construction(World& world);
+    // Deterministic single-market sub-partition helper: when the world has
+    // only 1-3 markets the market-level grain cannot saturate cores.
+    // This splits the entity range by stable ID hash (not worker ID) so the
+    // result is identical for 1 vs N workers. Exposed for testing.
+    static std::vector<std::pair<std::size_t,std::size_t>> deterministic_subpartitions(
+        std::size_t count, std::size_t desired_shards) noexcept;
 
     const EconomyDefinitions& definitions_;
     MarketEntityIndex index_;
@@ -117,6 +146,18 @@ private:
     // serially against investment pools and treasuries after the parallel pass.
     std::vector<EconomyAmount> market_loan_demand_milli_;
     std::vector<EconomyAmount> building_loan_demand_milli_;
+    // Material-flow accumulators captured during the price-clearing phase so the
+    // closed-loop identity can be verified against the persisted inventory.
+    EconomyAmount produced_milli_ = 0;
+    EconomyAmount demanded_milli_ = 0;
+    EconomyAmount fulfilled_milli_ = 0;
+    EconomyAmount spoilage_milli_ = 0;
+    // Per-market scratch for parallel accumulation (each market written by
+    // exactly one thread — no contention).  Summed after parallel_for.
+    std::vector<EconomyAmount> market_produced_scratch_;
+    std::vector<EconomyAmount> market_demanded_scratch_;
+    std::vector<EconomyAmount> market_fulfilled_scratch_;
+    std::vector<EconomyAmount> market_spoilage_scratch_;
     // Actual per-building throughput chosen in production after input
     // shortages. Settlement consumes this exact value rather than recreating
     // an unconstrained theoretical production plan.

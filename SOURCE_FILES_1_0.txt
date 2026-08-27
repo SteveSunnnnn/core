@@ -134,6 +134,8 @@ src/core/editor/GuiLayoutEditor.cpp
 src/core/editor/GuiLayoutEditor.hpp
 src/core/editor/MapEditorSystem.cpp
 src/core/editor/MapEditorSystem.hpp
+src/core/gameplay/GameplaySignalRegistry.cpp
+src/core/gameplay/GameplaySignalRegistry.hpp
 src/core/gameplay/NotificationRuntime.cpp
 src/core/gameplay/NotificationRuntime.hpp
 src/core/gameplay/OnActionRuntime.cpp
@@ -244,6 +246,8 @@ src/core/scripting/CoreScriptParser.cpp
 src/core/scripting/CoreScriptParser.hpp
 src/core/scripting/DynamicVariables.cpp
 src/core/scripting/DynamicVariables.hpp
+src/core/scripting/GlobalScriptStore.cpp
+src/core/scripting/GlobalScriptStore.hpp
 src/core/scripting/Scope.hpp
 src/core/scripting/ScopeResolver.cpp
 src/core/scripting/ScopeResolver.hpp
@@ -260,6 +264,7 @@ src/core/scripting/ScriptRegistry.hpp
 src/core/scripting/ScriptValue.hpp
 src/core/scripting/SymbolTable.cpp
 src/core/scripting/SymbolTable.hpp
+src/core/simulation/AuthoritativeStoreRegistry.hpp
 src/core/simulation/CommandQueue.cpp
 src/core/simulation/CommandQueue.hpp
 src/core/simulation/DeterministicCommandStage.hpp

@@ -190,10 +190,22 @@ EconomyAmount BankStore::fund_sovereign_bonds(CountryId borrower, CurrencyKey cu
 
 EconomyAmount BankStore::receive_sovereign_interest(CountryId borrower, EconomyAmount payment) noexcept {
     EconomyAmount remaining = std::max<EconomyAmount>(0, payment), received = 0;
+    // Pre-scan: compute total sovereign bond holdings for this borrower to
+    // distribute interest proportionally.
+    EconomyAmount total_bonds = 0;
+    for (std::size_t i = 0; i < size(); ++i)
+        if (countries_[i] == borrower && sovereign_bonds_milli_[i] > 0)
+            total_bonds = saturating_add(total_bonds, sovereign_bonds_milli_[i]);
+    if (total_bonds <= 0) return 0;
     for (std::size_t i = 0; i < size() && remaining > 0; ++i) {
         if (countries_[i] != borrower || sovereign_bonds_milli_[i] <= 0) continue;
-        const auto leg = std::min(remaining, deposits_milli_[i]);
-        deposits_milli_[i] = saturating_sub(deposits_milli_[i], leg);
+        // Proportional share of interest, capped by remaining payment.
+        const auto share = mul_div_nonnegative(payment, sovereign_bonds_milli_[i], total_bonds);
+        const auto leg = std::min(remaining, share);
+        // Bank receives interest as asset increase (reserves) + equity,
+        // matching the treasury's debit.  Deposits are unchanged — the
+        // interest is new income, not a liability transfer.
+        reserves_milli_[i] = saturating_add(reserves_milli_[i], leg);
         equity_milli_[i] = saturating_add(equity_milli_[i], leg);
         retained_earnings_milli_[i] = saturating_add(retained_earnings_milli_[i], leg);
         remaining = saturating_sub(remaining, leg); received = saturating_add(received, leg);

@@ -42,7 +42,9 @@ std::uint32_t clamp_ppm(std::uint64_t value) noexcept {
 [[maybe_unused]] void hash_record(Fnv1a64& h, const CompanyRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.cash_milli);h.add(r.productivity_ppm);h.add(r.active);}
 [[maybe_unused]] void hash_record(Fnv1a64& h, const TradeRouteRecord& r){h.add(r.source.value());h.add(r.destination.value());h.add(r.good.value());h.add(r.quantity_milli);h.add(r.level);h.add(r.active);}
 [[maybe_unused]] void hash_record(Fnv1a64& h, const OwnershipStakeRecord& r){h.add(r.owner_country.value());h.add(r.owner_company.value());h.add(r.building.value());h.add(r.share_ppm);}
-[[maybe_unused]] void hash_record(Fnv1a64& h, const TreatyRecord& r){h.add(r.first.value());h.add(r.second.value());h.add(static_cast<std::uint8_t>(r.kind));h.add(r.article_hash);h.add(r.active);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const TreatyRecord& r){h.add(r.first.value());h.add(r.second.value());h.add(static_cast<std::uint8_t>(r.kind));h.add(r.article_hash);h.add(r.active);h.add(r.treaty_key_hash);h.add(r.start_tick);h.add(r.expiry_tick);h.add(r.obligation_milli);h.add(r.is_multilateral);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const TreatyArticleRecord& r){h.add(r.treaty.value());h.add(static_cast<std::uint8_t>(r.kind));h.add(r.article_hash);h.add(r.payload_hash);h.add(r.active);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const TreatyParticipantRecord& r){h.add(r.treaty.value());h.add(r.country.value());h.add(r.role);}
 [[maybe_unused]] void hash_record(Fnv1a64& h, const ArmyRecord& r){h.add(r.country.value());h.add(r.location.value());h.add(r.manpower);h.add(r.organization_ppm);}
 [[maybe_unused]] void hash_record(Fnv1a64& h, const NavyRecord& r){h.add(r.country.value());h.add(r.location.value());h.add(r.sailors);h.add(r.strength_ppm);h.add(r.design.value());h.add(static_cast<std::uint8_t>(r.mission));h.add(r.assigned_zone.value());}
 [[maybe_unused]] void hash_record(Fnv1a64& h, const MigrationFlowRecord& r){h.add(r.source.value());h.add(r.destination.value());h.add(r.population);h.add(r.weeks_remaining);}
@@ -88,6 +90,8 @@ CompanyId GrandStrategyStore::add_company(CompanyRecord r){return push_id<Compan
 TradeRouteId GrandStrategyStore::add_trade_route(TradeRouteRecord r){return push_id<TradeRouteId>(trade_routes_,r);}
 StrongId<struct OwnershipStakeTag> GrandStrategyStore::add_ownership_stake(OwnershipStakeRecord r){return push_id<StrongId<struct OwnershipStakeTag>>(ownership_stakes_,r);}
 TreatyId GrandStrategyStore::add_treaty(TreatyRecord r){return push_id<TreatyId>(treatys_,r);}
+TreatyArticleId GrandStrategyStore::add_treaty_article(TreatyArticleRecord r){return push_id<TreatyArticleId>(treaty_articles_,r);}
+TreatyParticipantId GrandStrategyStore::add_treaty_participant(TreatyParticipantRecord r){return push_id<TreatyParticipantId>(treaty_participants_,r);}
 ArmyId GrandStrategyStore::add_army(ArmyRecord r){return push_id<ArmyId>(armys_,r);}
 NavyId GrandStrategyStore::add_navy(NavyRecord r){return push_id<NavyId>(navys_,r);}
 MigrationFlowId GrandStrategyStore::add_migration_flow(MigrationFlowRecord r){return push_id<MigrationFlowId>(migration_flows_,r);}
@@ -144,15 +148,50 @@ void GrandStrategyStore::adjust_relation(CountryId first, CountryId second, std:
 bool GrandStrategyStore::has_active_treaty(CountryId first, CountryId second, TreatyKind kind) const noexcept {
     const auto [a, b] = canonical_pair(first, second);
     for (const auto& treaty : treatys_) {
+        if (!treaty.active) continue;
+        if (treaty.kind != kind) continue;
         const auto [ta, tb] = canonical_pair(treaty.first, treaty.second);
-        if (treaty.active && treaty.kind == kind && ta == a && tb == b) return true;
+        if (ta == a && tb == b) return true;
+        // Multilateral: check participants
+        if (treaty.is_multilateral) {
+            bool has_first = false, has_second = false;
+            const auto tid = TreatyId{static_cast<TreatyId::rep_type>(&treaty - treatys_.data())};
+            for (const auto& p : treaty_participants_) {
+                if (p.treaty == tid) {
+                    if (p.country == first) has_first = true;
+                    if (p.country == second) has_second = true;
+                }
+            }
+            if (has_first && has_second) return true;
+        }
+    }
+    // Check articles as well (treaty may be Custom with multiple articles)
+    for (const auto& art : treaty_articles_) if (art.active && art.kind==kind) {
+        auto tid = art.treaty;
+        if (!tid.valid() || static_cast<std::size_t>(tid.value())>=treatys_.size()) continue;
+        const auto& tr = treatys_[tid.value()];
+        if (!tr.active) continue;
+        const auto [ta,tb]=canonical_pair(tr.first,tr.second);
+        if ((ta==a&&tb==b)) return true;
     }
     return false;
 }
+bool GrandStrategyStore::has_active_treaty_article(TreatyId treaty, TreatyKind kind) const noexcept {
+    if (!treaty.valid()|| static_cast<std::size_t>(treaty.value())>=treatys_.size() || !treatys_[treaty.value()].active) return false;
+    for (const auto& art: treaty_articles_) if (art.active && art.treaty==treaty && art.kind==kind) return true;
+    return treatys_[treaty.value()].kind==kind;
+}
 
 TreatyId GrandStrategyStore::create_treaty(CountryId first, CountryId second, TreatyKind kind,
-                                            std::uint64_t article_hash) {
+                                             std::uint64_t article_hash) {
+    return create_treaty_ex(first, second, kind, article_hash, 0, 0, 0, article_hash);
+}
+TreatyId GrandStrategyStore::create_treaty_ex(CountryId first, CountryId second, TreatyKind kind,
+                                             std::uint64_t article_hash, std::uint64_t start_tick,
+                                             std::uint64_t expiry_tick, std::int32_t obligation_milli,
+                                             std::uint64_t treaty_key_hash) {
     if (!first.valid() || !second.valid() || first == second) throw std::invalid_argument("treaty requires two countries");
+    if (expiry_tick!=0 && expiry_tick <= start_tick) throw std::invalid_argument("treaty expiry must be > start");
     const auto [a, b] = canonical_pair(first, second);
     for (std::size_t i = 0; i < treatys_.size(); ++i) {
         auto& treaty = treatys_[i];
@@ -160,13 +199,53 @@ TreatyId GrandStrategyStore::create_treaty(CountryId first, CountryId second, Tr
         if (treaty.kind == kind && ta == a && tb == b) {
             treaty.active = true;
             treaty.article_hash = article_hash;
+            treaty.start_tick = start_tick;
+            treaty.expiry_tick = expiry_tick;
+            treaty.obligation_milli = obligation_milli;
+            if (treaty_key_hash) treaty.treaty_key_hash = treaty_key_hash;
             adjust_relation(a, b, 5'000);
             return TreatyId{static_cast<TreatyId::rep_type>(i)};
         }
     }
-    const auto id = add_treaty({a, b, kind, article_hash, true});
+    TreatyRecord rec{};
+    rec.first=a; rec.second=b; rec.kind=kind; rec.article_hash=article_hash; rec.active=true;
+    rec.start_tick=start_tick; rec.expiry_tick=expiry_tick; rec.obligation_milli=obligation_milli;
+    rec.treaty_key_hash = treaty_key_hash ? treaty_key_hash : article_hash;
+    const auto id = add_treaty(rec);
     adjust_relation(a, b, 5'000);
     return id;
+}
+TreatyArticleId GrandStrategyStore::add_treaty_article(TreatyId treaty, TreatyKind kind, std::uint64_t article_hash, std::uint64_t payload_hash) {
+    if (!treaty.valid()|| static_cast<std::size_t>(treaty.value())>=treatys_.size()) throw std::invalid_argument("invalid treaty for article");
+    TreatyArticleRecord r{}; r.treaty=treaty; r.kind=kind; r.article_hash=article_hash; r.payload_hash=payload_hash; r.active=true;
+    return add_treaty_article(r);
+}
+TreatyParticipantId GrandStrategyStore::add_treaty_participant(TreatyId treaty, CountryId country, std::uint8_t role) {
+    if (!treaty.valid()|| static_cast<std::size_t>(treaty.value())>=treatys_.size()) throw std::invalid_argument("invalid treaty for participant");
+    if (!country.valid()) throw std::invalid_argument("invalid participant country");
+    // Deduplicate
+    for (auto &p: treaty_participants_) if (p.treaty==treaty && p.country==country) { p.role=role; return TreatyParticipantId{static_cast<TreatyParticipantId::rep_type>(&p - treaty_participants_.data())}; }
+    TreatyParticipantRecord rec{}; rec.treaty=treaty; rec.country=country; rec.role=role;
+    auto id = add_treaty_participant(rec);
+    treatys_[treaty.value()].is_multilateral = true;
+    return id;
+}
+std::span<const TreatyArticleRecord> GrandStrategyStore::treaty_articles(TreatyId treaty) const noexcept {
+    treaty_articles_scratch_.clear();
+    for (auto &a: treaty_articles_) if (a.treaty==treaty) treaty_articles_scratch_.push_back(a);
+    return treaty_articles_scratch_;
+}
+std::span<const TreatyParticipantRecord> GrandStrategyStore::treaty_participants(TreatyId treaty) const noexcept {
+    treaty_participants_scratch_.clear();
+    for (auto &p: treaty_participants_) if (p.treaty==treaty) treaty_participants_scratch_.push_back(p);
+    return treaty_participants_scratch_;
+}
+void GrandStrategyStore::expire_treaties(std::uint64_t current_tick) {
+    for (auto &tr: treatys_) if (tr.active && tr.expiry_tick!=0 && current_tick >= tr.expiry_tick) {
+        tr.active=false;
+        for (auto &art: treaty_articles_) if (art.treaty==TreatyId{static_cast<TreatyId::rep_type>(&tr - treatys_.data())}) art.active=false;
+        adjust_relation(tr.first, tr.second, -2'000);
+    }
 }
 
 bool GrandStrategyStore::break_treaty(TreatyId treaty) {
@@ -174,6 +253,7 @@ bool GrandStrategyStore::break_treaty(TreatyId treaty) {
     auto& record = treatys_[treaty.value()];
     if (!record.active) return false;
     record.active = false;
+    for (auto &art: treaty_articles_) if (art.treaty==treaty) art.active=false;
     adjust_relation(record.first, record.second, -5'000);
     return true;
 }
@@ -1113,14 +1193,21 @@ void GrandStrategyStore::run_weekly_reference_tick(World& world) {
 }
 
 bool GrandStrategyStore::validate(std::size_t countries, std::size_t markets, std::size_t provinces,
-                                  std::size_t states, std::size_t buildings, std::size_t goods) const noexcept {
+                                   std::size_t states, std::size_t buildings, std::size_t goods) const noexcept {
     for (const auto& r : technologys_) if (!ref_ok(r.country, countries) || r.progress_ppm > 1'000'000u) return false;
     for (const auto& r : laws_) if (!ref_ok(r.country, countries)) return false;
     for (const auto& r : institutions_) if (!ref_ok(r.country, countries)) return false;
     for (const auto& r : companys_) if (!ref_ok(r.country, countries)) return false;
     for (const auto& r : trade_routes_) if (!ref_ok(r.source, markets) || !ref_ok(r.destination, markets) || !ref_ok(r.good, goods)) return false;
     for (const auto& r : ownership_stakes_) if (!ref_ok(r.owner_country, countries) || !ref_ok(r.owner_company, companys_.size()) || !ref_ok(r.building, buildings) || r.share_ppm > 1'000'000u) return false;
-    for (const auto& r : treatys_) if (!ref_ok(r.first, countries) || !ref_ok(r.second, countries)) return false;
+    for (std::size_t ti = 0; ti < treatys_.size(); ++ti) {
+        const auto& r = treatys_[ti];
+        if (!ref_ok(r.first, countries) || !ref_ok(r.second, countries)) return false;
+        if (r.expiry_tick!=0 && r.expiry_tick <= r.start_tick) return false;
+        if (r.is_multilateral && treaty_participants(TreatyId{static_cast<TreatyId::rep_type>(ti)}).empty()) { /* placeholder */ }
+    }
+    for (const auto& r : treaty_articles_) if (!ref_ok(r.treaty, treatys_.size())) return false;
+    for (const auto& r : treaty_participants_) if (!ref_ok(r.treaty, treatys_.size()) || !ref_ok(r.country, countries)) return false;
     for (const auto& r : armys_) if (!ref_ok(r.country, countries) || !ref_ok(r.location, states) || r.organization_ppm > 1'000'000u) return false;
     for (const auto& r : navys_) if (!ref_ok(r.country, countries) || !ref_ok(r.location, states) || !ref_ok(r.design, ship_designs_.size()) || r.strength_ppm > 1'000'000u) return false;
     for (const auto& r : migration_flows_) if (!ref_ok(r.source, provinces) || !ref_ok(r.destination, provinces)) return false;
@@ -1154,7 +1241,7 @@ bool GrandStrategyStore::validate(std::size_t countries, std::size_t markets, st
 std::uint64_t GrandStrategyStore::checksum() const noexcept {
     Fnv1a64 h;
     hash_vec(h, technologys_); hash_vec(h, laws_); hash_vec(h, institutions_); hash_vec(h, companys_);
-    hash_vec(h, trade_routes_); hash_vec(h, ownership_stakes_); hash_vec(h, treatys_); hash_vec(h, armys_);
+    hash_vec(h, trade_routes_); hash_vec(h, ownership_stakes_); hash_vec(h, treatys_); hash_vec(h, treaty_articles_); hash_vec(h, treaty_participants_); hash_vec(h, armys_);
     hash_vec(h, navys_); hash_vec(h, migration_flows_); hash_vec(h, interest_groups_); hash_vec(h, political_partys_);
     hash_vec(h, power_blocs_); hash_vec(h, diplomatic_plays_); hash_vec(h, fronts_); hash_vec(h, battles_);
     hash_vec(h, colonys_); hash_vec(h, ship_designs_); hash_vec(h, investment_pools_); hash_vec(h, diplomatic_relations_);
@@ -1169,7 +1256,7 @@ std::size_t GrandStrategyStore::memory_bytes() const noexcept {
     return technologys_.capacity()*sizeof(TechnologyRecord)+laws_.capacity()*sizeof(LawRecord)+
         institutions_.capacity()*sizeof(InstitutionRecord)+companys_.capacity()*sizeof(CompanyRecord)+
         trade_routes_.capacity()*sizeof(TradeRouteRecord)+ownership_stakes_.capacity()*sizeof(OwnershipStakeRecord)+
-        treatys_.capacity()*sizeof(TreatyRecord)+armys_.capacity()*sizeof(ArmyRecord)+navys_.capacity()*sizeof(NavyRecord)+
+        treatys_.capacity()*sizeof(TreatyRecord)+treaty_articles_.capacity()*sizeof(TreatyArticleRecord)+treaty_participants_.capacity()*sizeof(TreatyParticipantRecord)+armys_.capacity()*sizeof(ArmyRecord)+navys_.capacity()*sizeof(NavyRecord)+
         migration_flows_.capacity()*sizeof(MigrationFlowRecord)+interest_groups_.capacity()*sizeof(InterestGroupRecord)+
         political_partys_.capacity()*sizeof(PoliticalPartyRecord)+power_blocs_.capacity()*sizeof(PowerBlocRecord)+
         diplomatic_plays_.capacity()*sizeof(DiplomaticPlayRecord)+fronts_.capacity()*sizeof(FrontRecord)+

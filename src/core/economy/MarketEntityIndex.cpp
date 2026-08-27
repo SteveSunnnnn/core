@@ -14,10 +14,12 @@ void MarketEntityIndex::rebuild(std::size_t market_count, const PopStore& pops_s
     pop_offsets_.assign(market_count + 1u, 0u);
     building_offsets_.assign(market_count + 1u, 0u);
     for (std::size_t i=0;i<pops_store.size();++i) {
+        if (!pops_store.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         const auto m = checked_market(pops_store.markets()[i], market_count);
         ++pop_offsets_[m+1u];
     }
     for (std::size_t i=0;i<buildings_store.size();++i) {
+        if (!buildings_store.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         const auto m = checked_market(buildings_store.markets()[i], market_count);
         ++building_offsets_[m+1u];
     }
@@ -25,13 +27,21 @@ void MarketEntityIndex::rebuild(std::size_t market_count, const PopStore& pops_s
     for (std::size_t i=1;i<building_offsets_.size();++i) building_offsets_[i] += building_offsets_[i-1u];
     pop_ids_.resize(pops_store.size());
     building_ids_.resize(buildings_store.size());
+    // Count alive first to size correctly
+    std::size_t alive_pops = 0, alive_buildings = 0;
+    for (std::size_t i=0;i<pops_store.size();++i) if (pops_store.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) ++alive_pops;
+    for (std::size_t i=0;i<buildings_store.size();++i) if (buildings_store.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) ++alive_buildings;
+    pop_ids_.resize(alive_pops);
+    building_ids_.resize(alive_buildings);
     auto pop_cursor = pop_offsets_;
     auto building_cursor = building_offsets_;
     for (std::size_t i=0;i<pops_store.size();++i) {
+        if (!pops_store.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         const auto m = static_cast<std::size_t>(pops_store.markets()[i].value());
         pop_ids_[pop_cursor[m]++] = PopId{static_cast<PopId::rep_type>(i)};
     }
     for (std::size_t i=0;i<buildings_store.size();++i) {
+        if (!buildings_store.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         const auto m = static_cast<std::size_t>(buildings_store.markets()[i].value());
         building_ids_[building_cursor[m]++] = BuildingId{static_cast<BuildingId::rep_type>(i)};
     }

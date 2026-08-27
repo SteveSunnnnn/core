@@ -218,11 +218,17 @@ JobDispatchStats ConstructionStore::tick_weekly(World& world) {
                 }
             }
 
-            // If funded, advance progress
-            p.progress_points += allocated_points;
-            p.paid_cost_milli = saturating_add(p.paid_cost_milli, funded);
-            p.weekly_progress_ppm = static_cast<std::uint32_t>(
-                mul_div_nonnegative(allocated_points, 1'000'000, p.total_points_required));
+            // If funded, advance progress proportionally to actual funding
+            const auto actual_points = (funded >= weekly_cost || weekly_cost <= 0)
+                ? allocated_points
+                : static_cast<std::uint32_t>(
+                    mul_div_nonnegative(allocated_points, funded, weekly_cost));
+            if (actual_points > 0) {
+                p.progress_points += actual_points;
+                p.paid_cost_milli = saturating_add(p.paid_cost_milli, funded);
+                p.weekly_progress_ppm = static_cast<std::uint32_t>(
+                    mul_div_nonnegative(actual_points, 1'000'000, p.total_points_required));
+            }
             remaining_capacity -= allocated_points;
 
             // If project is complete, execute transformation

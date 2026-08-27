@@ -44,6 +44,7 @@ add_library(core_runtime
     src/core/scripting/ScriptMemoizer.cpp
     src/core/scripting/ScopeResolver.cpp
     src/core/scripting/DynamicVariables.cpp
+    src/core/scripting/GlobalScriptStore.cpp
     src/core/gameplay/ScriptedGameplay.cpp
 
     src/core/ai/UtilityAi.cpp
@@ -56,6 +57,7 @@ add_library(core_runtime
     src/core/gameplay/NotificationRuntime.cpp
     src/core/content/OnActionContent.cpp
     src/core/gameplay/OnActionRuntime.cpp
+    src/core/gameplay/GameplaySignalRegistry.cpp
     src/core/content/ContentLoader.cpp
     src/core/content/LocalizationDatabase.cpp
     src/core/render/RenderSnapshot.cpp

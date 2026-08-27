@@ -726,6 +726,68 @@ static void test_raw_material_shortage_zero_throughput() {
     assert(world.markets.supply(MarketId{0}, tools) > 0);
 }
 
+static void test_material_closed_loop_conservation() {
+    // Material loop: goods are created only by production, removed only by
+    // fulfilled demand (POP consumption + intermediate input draws), and the
+    // only physical sink is the explicit storage-cap spoilage. Every other
+    // unit must be accounted for, so the world inventory identity must hold
+    // exactly across many weeks and across worker counts.
+    auto f = make_fixture(3u, 8u, 120u, 100u);
+    for (std::size_t i = 0; i < f.world.pops.size(); ++i) {
+        f.world.pops.set_cash(PopId{static_cast<PopId::rep_type>(i)}, 5'000);
+    }
+    // Seed some starting inventory so the storage cap / spoilage path is exercised.
+    for (std::size_t m = 0; m < f.world.markets.size(); ++m) {
+        const MarketId market{static_cast<MarketId::rep_type>(m)};
+        f.world.markets.inventory_row(market)[f.grain.value()] = 9'000'000;
+        f.world.markets.inventory_row(market)[f.coal.value()] = 9'000'000;
+    }
+
+    EconomySystem economy{f.definitions};
+    economy.rebuild_indices(f.world);
+
+    // Smoke + closure over a long horizon with real parallelism.
+    {
+        JobSystem jobs{4u};
+        EconomyTickProfile profile;
+        for (int w = 0; w < 24; ++w) {
+            economy.run_weekly(f.world, jobs, &profile);
+            // No physical stock may go negative: the loop neither mints nor
+            // borrows goods from nothing.
+            for (std::size_t m = 0; m < f.world.markets.size(); ++m) {
+                const MarketId market{static_cast<MarketId::rep_type>(m)};
+                for (std::size_t g = 0; g < f.definitions.good_count(); ++g) {
+                    const GoodId good{static_cast<GoodId::rep_type>(g)};
+                    assert(f.world.markets.inventory(market, good) >= 0);
+                    assert(f.world.markets.shortage(market, good) >= 0);
+                }
+            }
+            // World-level material conservation identity.
+            assert(std::abs(profile.unexplained_material_delta_milli) <= 1);
+            // Spoilage is the ONLY sink and is non-negative.
+            assert(profile.spoilage_milli >= 0);
+        }
+    }
+
+    // Determinism: material closure must hold identically across worker counts.
+    World serial_world = f.world;
+    World parallel_world = f.world;
+    EconomySystem serial_economy{f.definitions};
+    EconomySystem parallel_economy{f.definitions};
+    serial_economy.rebuild_indices(serial_world);
+    parallel_economy.rebuild_indices(parallel_world);
+    JobSystem serial_jobs{0u};
+    JobSystem parallel_jobs{4u};
+    EconomyTickProfile serial_profile, parallel_profile;
+    for (int w = 0; w < 12; ++w) {
+        serial_economy.run_weekly(serial_world, serial_jobs, &serial_profile);
+        parallel_economy.run_weekly(parallel_world, parallel_jobs, &parallel_profile);
+        assert(std::abs(serial_profile.unexplained_material_delta_milli) <= 1);
+        assert(std::abs(parallel_profile.unexplained_material_delta_milli) <= 1);
+    }
+    assert(serial_world.checksum() == parallel_world.checksum());
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -748,6 +810,7 @@ int main() {
     test_construction_queue_and_pm_gradual_transition();
     test_realistic_gradual_transitions_and_governance();
     test_raw_material_shortage_zero_throughput();
+    test_material_closed_loop_conservation();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }

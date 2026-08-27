@@ -23,6 +23,7 @@ using Clock = std::chrono::steady_clock;
 MonetaryBalanceSheet EconomySystem::monetary_balance_sheet(const World& world) noexcept {
     MonetaryBalanceSheet sheet;
     for (std::size_t i = 0; i < world.pops.size(); ++i) {
+        if (!world.pops.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         const PopId pop{static_cast<PopId::rep_type>(i)};
         const auto market = world.pops.market(pop);
         const auto currency = market.valid() && market.value() < world.markets.size()
@@ -31,6 +32,7 @@ MonetaryBalanceSheet EconomySystem::monetary_balance_sheet(const World& world) n
             world.currencies.convert(world.pops.cash(pop), currency, default_currency_key));
     }
     for (std::size_t i = 0; i < world.buildings.size(); ++i) {
+        if (!world.buildings.slot_pool().is_index_alive(static_cast<std::uint32_t>(i))) continue;
         const BuildingId building{static_cast<BuildingId::rep_type>(i)};
         const auto market = world.buildings.market(building);
         const auto currency = market.valid() && market.value() < world.markets.size()
@@ -83,6 +85,26 @@ MonetaryBalanceSheet EconomySystem::monetary_balance_sheet(const World& world) n
     return sheet;
 }
 
+MaterialBalanceSheet EconomySystem::material_balance_sheet(const World& world) noexcept {
+    MaterialBalanceSheet m{};
+    for (std::size_t mi = 0; mi < world.markets.size(); ++mi) {
+        const MarketId market{static_cast<MarketId::rep_type>(mi)};
+        for (std::size_t gi = 0; gi < world.markets.good_count(); ++gi) {
+            const GoodId good{static_cast<GoodId::rep_type>(gi)};
+            m.total_supply_milli = saturating_add(m.total_supply_milli, world.markets.supply(market, good));
+            m.total_demand_milli = saturating_add(m.total_demand_milli, world.markets.demand(market, good));
+            m.total_inventory_milli = saturating_add(m.total_inventory_milli, world.markets.inventory(market, good));
+            m.total_shortage_milli = saturating_add(m.total_shortage_milli, world.markets.shortage(market, good));
+        }
+    }
+    // Closed-loop invariant: available = supply+inventory, wanted = demand,
+    // fulfilled = min(available,wanted), inventory' = available-fulfilled, shortage' = wanted-fulfilled
+    // so inventory - shortage should be stable modulo trade/price pressure caps
+    m.net_material_milli = saturating_add(saturating_sub(m.total_supply_milli, m.total_demand_milli),
+                                          saturating_sub(m.total_inventory_milli, m.total_shortage_milli));
+    return m;
+}
+
 void EconomySystem::rebuild_indices(const World& world) {
     index_.rebuild(world.markets.size(), world.pops, world.buildings);
     ensure_market_scratch(world.markets.size());
@@ -94,6 +116,10 @@ void EconomySystem::ensure_market_scratch(std::size_t markets) {
     if (market_gdp_milli_.size() != markets) market_gdp_milli_.assign(markets, 0);
     if (market_population_.size() != markets) market_population_.assign(markets, 0u);
     if (market_loan_demand_milli_.size() != markets) market_loan_demand_milli_.assign(markets, 0);
+    if (market_produced_scratch_.size() != markets) market_produced_scratch_.assign(markets, 0);
+    if (market_demanded_scratch_.size() != markets) market_demanded_scratch_.assign(markets, 0);
+    if (market_fulfilled_scratch_.size() != markets) market_fulfilled_scratch_.assign(markets, 0);
+    if (market_spoilage_scratch_.size() != markets) market_spoilage_scratch_.assign(markets, 0);
     const std::size_t profile_cells = markets * definitions_.need_profile_count();
     if (profile_population_.size() != profile_cells) profile_population_.assign(profile_cells, 0u);
     if (profile_basket_cost_milli_.size() != profile_cells) profile_basket_cost_milli_.assign(profile_cells, 0);
@@ -128,6 +154,10 @@ std::size_t EconomySystem::scratch_memory_bytes() const noexcept {
         + market_loan_demand_milli_.capacity() * sizeof(EconomyAmount)
         + building_loan_demand_milli_.capacity() * sizeof(EconomyAmount)
         + building_throughput_ppm_.capacity() * sizeof(std::int32_t)
+        + market_produced_scratch_.capacity() * sizeof(EconomyAmount)
+        + market_demanded_scratch_.capacity() * sizeof(EconomyAmount)
+        + market_fulfilled_scratch_.capacity() * sizeof(EconomyAmount)
+        + market_spoilage_scratch_.capacity() * sizeof(EconomyAmount)
         + pop_hot_.capacity() * sizeof(PopHotRow)
         + pop_hot_offsets_.capacity() * sizeof(std::uint32_t);
 }
@@ -211,7 +241,10 @@ JobDispatchStats EconomySystem::employment(World& world, JobSystem& jobs) {
                 // Competitive labor market: rank this market's buildings by
                 // wage offer (descending, id-ascending tie break).
                 const auto market_buildings = index_.buildings(market);
-                std::vector<std::size_t> order;
+                // Hoisted to thread-local scratch: avoids one heap allocation
+                // per market per weekly tick in this parallel hot loop.
+                static thread_local std::vector<std::size_t> order;
+                order.clear();
                 order.reserve(market_buildings.size());
                 for (const auto b : market_buildings) order.push_back(static_cast<std::size_t>(b.value()));
                 std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
@@ -293,6 +326,8 @@ JobDispatchStats EconomySystem::production(World& world, JobSystem& jobs) {
     const auto type_defs = definitions_.building_types();
     const auto input_flows = definitions_.input_flows();
     const auto output_flows = definitions_.output_flows();
+    // Use market-level grain; for single-market world, shard by stable building ID
+    // to keep determinism across worker counts (future: shard inside market)
     return jobs.parallel_for(world.markets.size(), 4u,
         [&](JobContext&, std::size_t, std::size_t begin, std::size_t end) {
             for (std::size_t mi = begin; mi < end; ++mi) {
@@ -480,13 +515,14 @@ JobDispatchStats EconomySystem::trade(World& world) {
 
         if (imp_cur != exp_cur) world.currencies.record_fx_flow(imp_cur, exp_cur, exp_invoice);
         if (imp_country.valid() && exp_country.valid() && imp_country != exp_country) {
-            // BOP and reserve accounts use the global numeraire, never a mix
-            // of the two invoice currencies.
             const auto numeraire_value = world.currencies.convert(exp_invoice, exp_cur, default_currency_key);
             world.countries.add_balance_of_payments_milli(imp_country, -numeraire_value);
             world.countries.add_balance_of_payments_milli(exp_country, numeraire_value);
-            if (imp_cur != exp_cur)
+            // Closed-loop foreign reserves: importer loses reserves, exporter gains them (FX settlement)
+            if (imp_cur != exp_cur) {
                 world.countries.add_foreign_reserves_milli(exp_country, numeraire_value);
+                world.countries.add_foreign_reserves_milli(imp_country, -numeraire_value);
+            }
         }
         return shipped;
     };
@@ -562,7 +598,11 @@ JobDispatchStats EconomySystem::trade(World& world) {
 }
 
 JobDispatchStats EconomySystem::update_prices(World& world, JobSystem& jobs) {
-    return jobs.parallel_for(world.markets.size(), 4u,
+    std::fill(market_produced_scratch_.begin(), market_produced_scratch_.end(), EconomyAmount{0});
+    std::fill(market_demanded_scratch_.begin(), market_demanded_scratch_.end(), EconomyAmount{0});
+    std::fill(market_fulfilled_scratch_.begin(), market_fulfilled_scratch_.end(), EconomyAmount{0});
+    std::fill(market_spoilage_scratch_.begin(), market_spoilage_scratch_.end(), EconomyAmount{0});
+    const auto stats = jobs.parallel_for(world.markets.size(), 4u,
         [&](JobContext&, std::size_t, std::size_t begin, std::size_t end) {
             for (std::size_t mi = begin; mi < end; ++mi) {
                 const MarketId market{static_cast<MarketId::rep_type>(mi)};
@@ -575,6 +615,11 @@ JobDispatchStats EconomySystem::update_prices(World& world, JobSystem& jobs) {
                     market_fulfillment_ppm_.data() + mi * prices.size(), prices.size()};
                 auto sales = std::span<std::int64_t>{
                     market_sales_ppm_.data() + mi * prices.size(), prices.size()};
+                // Per-market material-flow sums feed the world-level closed-loop
+                // audit. Trade (which runs before this phase) only shifts
+                // inventory between markets, so these sums net to zero across
+                // markets and the world identity stays exact.
+                EconomyAmount produced = 0, demanded = 0, fulfilled = 0, spoilage = 0;
                 for (std::size_t gi = 0; gi < prices.size(); ++gi) {
                     const auto base = base_price_milli_[gi];
                     // Market clearing: demand is matched against this tick's
@@ -582,12 +627,19 @@ JobDispatchStats EconomySystem::update_prices(World& world, JobSystem& jobs) {
                     // the unsold surplus becomes next tick's inventory.
                     const EconomyAmount available = saturating_add(supply[gi], inventory[gi]);
                     const EconomyAmount wanted = demand[gi];
-                    const EconomyAmount fulfilled = std::min(available, wanted);
+                    const EconomyAmount f = std::min(available, wanted);
                     const EconomyAmount liquidity = std::max<EconomyAmount>({supply[gi], wanted, 1000});
-                    inventory[gi] = std::min(saturating_sub(available, fulfilled), mul_div_nonnegative(liquidity, 4, 1));
-                    shortage[gi] = saturating_sub(wanted, fulfilled);
+                    const EconomyAmount surplus = saturating_sub(available, f);
+                    const EconomyAmount cap = mul_div_nonnegative(liquidity, 4, 1);
+                    const EconomyAmount kept = std::min(surplus, cap);
+                    // The storage-cap overflow is the only legitimate physical
+                    // sink: goods produced/stored but beyond capacity spoil. It
+                    // is now measured explicitly instead of silently vanishing.
+                    spoilage = saturating_add(spoilage, saturating_sub(surplus, kept));
+                    inventory[gi] = kept;
+                    shortage[gi] = saturating_sub(wanted, f);
                     fulfillment[gi] = wanted > 0
-                        ? std::min(mul_div_nonnegative(fulfilled, ppm_scale, wanted), ppm_scale)
+                        ? std::min(mul_div_nonnegative(f, ppm_scale, wanted), ppm_scale)
                         : ppm_scale;
                     const EconomyAmount current_output_sold = std::min(supply[gi], wanted);
                     sales[gi] = supply[gi] > 0
@@ -604,9 +656,28 @@ JobDispatchStats EconomySystem::update_prices(World& world, JobSystem& jobs) {
                     if (step == 0) step = delta > 0 ? 1 : (delta < 0 ? -1 : 0);
                     prices[gi] = saturating_add(prices[gi], step);
                     prices[gi] = std::clamp<EconomyPrice>(prices[gi], std::max<EconomyPrice>(1, base / 5), mul_div_nonnegative(base, 5, 1));
+                    // Accumulate physical flows for the closed-loop identity.
+                    produced = saturating_add(produced, supply[gi]);
+                    demanded = saturating_add(demanded, wanted);
+                    fulfilled = saturating_add(fulfilled, f);
                 }
+                // Per-market scratch — each market written by exactly one
+                // thread (disjoint range), so no atomic needed.
+                market_produced_scratch_[mi] = produced;
+                market_demanded_scratch_[mi] = demanded;
+                market_fulfilled_scratch_[mi] = fulfilled;
+                market_spoilage_scratch_[mi] = spoilage;
             }
         });
+    // Sequential reduction — safe, no contention.
+    produced_milli_ = 0; demanded_milli_ = 0; fulfilled_milli_ = 0; spoilage_milli_ = 0;
+    for (std::size_t mi = 0; mi < world.markets.size(); ++mi) {
+        produced_milli_ = saturating_add(produced_milli_, market_produced_scratch_[mi]);
+        demanded_milli_ = saturating_add(demanded_milli_, market_demanded_scratch_[mi]);
+        fulfilled_milli_ = saturating_add(fulfilled_milli_, market_fulfilled_scratch_[mi]);
+        spoilage_milli_ = saturating_add(spoilage_milli_, market_spoilage_scratch_[mi]);
+    }
+    return stats;
 }
 
 JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
@@ -789,7 +860,10 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
                     row.cash_milli = saturating_sub(row.cash_milli, consumption_payment);
                     clearing_delta = saturating_add(clearing_delta, consumption_payment);
 
-                    // CLOSED-LOOP: Multi-tax deductions from POP cash into national treasury
+                    // CLOSED-LOOP: Multi-tax deductions from POP cash into national treasury.
+                    // Compute resistance-adjusted tax BEFORE deducting from cash so
+                    // only the amount the treasury actually receives is removed from
+                    // the POP — the difference stays in the real economy.
                     const EconomyAmount income_tax = mul_div_nonnegative(
                         row.income_milli, tax_policy.income_tax_ppm, ppm_scale);
                     const EconomyAmount per_capita_tax = mul_div_nonnegative(
@@ -801,11 +875,10 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
                     const EconomyAmount total_tax = saturating_add(
                         saturating_add(income_tax, per_capita_tax), consumption_tax);
                     // Can only pay tax from available cash
-                    const EconomyAmount actual_tax = std::min(total_tax, std::max<EconomyAmount>(0, row.cash_milli));
-                    row.cash_milli = saturating_sub(row.cash_milli, actual_tax);
+                    const EconomyAmount max_tax = std::min(total_tax, std::max<EconomyAmount>(0, row.cash_milli));
 
                     // State resistance reduces local effective tax collection
-                    EconomyAmount effective_tax = actual_tax;
+                    EconomyAmount effective_tax = max_tax;
                     if (row.province_r16 != 0xFFFFu) {
                         const ProvinceId prov{row.province_r16};
                         if (prov.valid() && prov.value() < world.geography.province_count()) {
@@ -814,11 +887,14 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
                                 const auto res_ppm = world.geography.state_resistance_ppm(st);
                                 if (res_ppm > 0) {
                                     const auto tax_eff_ppm = ppm_scale - mul_div_nonnegative(res_ppm, 750'000u, ppm_scale);
-                                    effective_tax = mul_div_nonnegative(actual_tax, tax_eff_ppm, ppm_scale);
+                                    effective_tax = mul_div_nonnegative(max_tax, tax_eff_ppm, ppm_scale);
                                 }
                             }
                         }
                     }
+                    // Only deduct what the treasury actually collects —
+                    // resistance portion stays with the POP (bribe/informal economy).
+                    row.cash_milli = saturating_sub(row.cash_milli, effective_tax);
                     tax_total = saturating_add(tax_total, effective_tax);
 
                     // Continuous Qualification accumulation:
@@ -829,7 +905,7 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
                     // 3. REALISTIC STANDARD OF LIVING (EMA SMOOTHING):
                     // Quality of life has inertia (assets, savings, long-term conditions)
                     // and drops under rationing: unfulfilled needs are not bought.
-                    const EconomyAmount disposable = saturating_sub(row.income_milli, actual_tax);
+                    const EconomyAmount disposable = saturating_sub(row.income_milli, effective_tax);
                     std::int64_t target_sol = basket > 0 ? signed_ratio_ppm(disposable, basket) / 100 : 0;
                     target_sol = mul_div_nonnegative(std::max<std::int64_t>(target_sol, 0), profile_fulfillment, ppm_scale);
                     const auto clamped_target = static_cast<std::int32_t>(std::clamp<std::int64_t>(target_sol, 0, 100'000));
@@ -1021,6 +1097,23 @@ JobDispatchStats EconomySystem::construction(World& world) {
     return JobDispatchStats{};
 }
 
+std::vector<std::pair<std::size_t,std::size_t>> EconomySystem::deterministic_subpartitions(
+    std::size_t count, std::size_t desired_shards) noexcept {
+    if (count == 0 || desired_shards <= 1) return {{0, count}};
+    const std::size_t shards = std::min(desired_shards, count);
+    std::vector<std::pair<std::size_t,std::size_t>> out;
+    out.reserve(shards);
+    const std::size_t base = count / shards;
+    const std::size_t rem = count % shards;
+    std::size_t cursor = 0;
+    for (std::size_t i = 0; i < shards; ++i) {
+        const std::size_t sz = base + (i < rem ? 1 : 0);
+        out.emplace_back(cursor, cursor + sz);
+        cursor += sz;
+    }
+    return out;
+}
+
 void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile* profile) {
     if (index_.market_count() != world.markets.size() || !index_.current_for(world.pops, world.buildings)) rebuild_indices(world);
     if (building_remaining_.size() != world.buildings.size()) building_remaining_.assign(world.buildings.size(), 0u);
@@ -1029,7 +1122,9 @@ void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile
     if (building_loan_demand_milli_.size() != world.buildings.size())
         building_loan_demand_milli_.assign(world.buildings.size(), 0);
     const auto total_begin=Clock::now();
+    produced_milli_ = 0; demanded_milli_ = 0; fulfilled_milli_ = 0; spoilage_milli_ = 0;
     if(profile) profile->money_before=monetary_balance_sheet(world);
+    if(profile) profile->material_before=material_balance_sheet(world);
     std::size_t workers_used=1u;
     auto run_phase=[&](auto&& fn, std::chrono::nanoseconds* out){
         const auto begin=Clock::now();
@@ -1046,6 +1141,21 @@ void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile
     run_phase([&]{return consumption(world,jobs);},profile?&profile->consumption:nullptr);
     run_phase([&]{return trade(world);},nullptr);
     run_phase([&]{return update_prices(world,jobs);},profile?&profile->prices:nullptr);
+    if(profile){
+        profile->material_after=material_balance_sheet(world);
+        // Material closed-loop audit (world totals; trade nets to zero across markets):
+        //   dInventory == produced - fulfilled - spoilage
+        const EconomyAmount d_inventory = saturating_sub(
+            profile->material_after.total_inventory_milli,
+            profile->material_before.total_inventory_milli);
+        const EconomyAmount consumed = saturating_sub(
+            saturating_sub(produced_milli_, fulfilled_milli_), spoilage_milli_);
+        profile->produced_milli = produced_milli_;
+        profile->demanded_milli = demanded_milli_;
+        profile->fulfilled_milli = fulfilled_milli_;
+        profile->spoilage_milli = spoilage_milli_;
+        profile->unexplained_material_delta_milli = saturating_sub(d_inventory, consumed);
+    }
     run_phase([&]{return settlement(world,jobs);},profile?&profile->settlement:nullptr);
     // Commit gathered POP cash before FX revaluation diagnostics so the
     // numeraire change is measured on the actual post-settlement balances.

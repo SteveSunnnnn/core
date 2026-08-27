@@ -36,6 +36,14 @@ public:
                                                    std::uint64_t counter = 0u) noexcept {
         if (min_val >= max_val) return min_val;
         const auto range = max_val - min_val + 1u;
+        // Lemire unbiased rejection sampling to avoid modulo bias
+        const __uint128_t threshold = (__uint128_t(1) << 64) % range;
+        for (std::uint64_t attempt = 0; attempt < 4; ++attempt) {
+            const std::uint64_t v = keyed_u64(base_seed, stream_key, counter + attempt * 0x9E3779B97F4A7C15ull);
+            const __uint128_t m = __uint128_t(v) * __uint128_t(range);
+            const std::uint64_t lo = std::uint64_t(m);
+            if (lo >= threshold) return min_val + std::uint64_t(m >> 64);
+        }
         return min_val + (keyed_u64(base_seed, stream_key, counter) % range);
     }
 
@@ -60,12 +68,26 @@ public:
     [[nodiscard]] std::uint64_t next_u64(std::uint64_t min_val, std::uint64_t max_val) noexcept {
         if (min_val >= max_val) return min_val;
         const auto range = max_val - min_val + 1u;
+        const __uint128_t threshold = (__uint128_t(1) << 64) % range;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            const std::uint64_t v = next_u64();
+            const __uint128_t m = __uint128_t(v) * __uint128_t(range);
+            const std::uint64_t lo = std::uint64_t(m);
+            if (lo >= threshold) return min_val + std::uint64_t(m >> 64);
+        }
         return min_val + (next_u64() % range);
     }
 
     [[nodiscard]] std::int64_t next_i64(std::int64_t min_val, std::int64_t max_val) noexcept {
         if (min_val >= max_val) return min_val;
         const auto range = static_cast<std::uint64_t>(max_val - min_val) + 1u;
+        const __uint128_t threshold = (__uint128_t(1) << 64) % range;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            const std::uint64_t v = next_u64();
+            const __uint128_t m = __uint128_t(v) * __uint128_t(range);
+            const std::uint64_t lo = std::uint64_t(m);
+            if (lo >= threshold) return min_val + static_cast<std::int64_t>(std::uint64_t(m >> 64));
+        }
         return min_val + static_cast<std::int64_t>(next_u64() % range);
     }
 

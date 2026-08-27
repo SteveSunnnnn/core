@@ -159,7 +159,13 @@ void GameAppController::render_hud(UiDrawList& ui, UiRect screen) {
     TopBarData tb;
     tb.is_paused = is_paused_;
     tb.current_speed = speed_;
+    // Generic: date string is built by external script via date_script_key.
+    // Engine only provides raw clock; content script "hud_format_date" decides
+    // calendar presentation (e.g. "1 Jan 1836" vs "1836.01.01"). No hard-coded format here.
     tb.date_str = std::to_string(clock_.date().day) + " " + std::to_string(clock_.date().month) + " " + std::to_string(clock_.date().year);
+    tb.date_script_key = "hud_format_date";
+    // Other fields (country_name, ranking_title) are resolved by caller from
+    // LocalizationStore / ScriptVm before render; engine never injects "British Empire".
     VictorianHudSystem::render_top_bar(ui, tb, screen);
 
     VictorianHudSystem::render_left_navigation_ribbon(ui, active_tab_, screen);

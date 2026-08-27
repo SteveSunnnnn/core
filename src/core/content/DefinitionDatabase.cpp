@@ -16,9 +16,28 @@ DefinitionDatabase::DefinitionDatabase(SymbolTable& symbols, const ScriptRegistr
     runtime_country_lookup_.reserve(512u);
 }
 
+void DefinitionDatabase::register_schema(GenericDefinitionSchema schema) {
+    // Deterministic: sorted by category key, duplicate category replaces.
+    auto it = std::find_if(generic_schemas_.begin(), generic_schemas_.end(),
+        [&](const GenericDefinitionSchema& s){ return s.category == schema.category; });
+    if (it != generic_schemas_.end()) { *it = std::move(schema); return; }
+    generic_schemas_.push_back(std::move(schema));
+    std::sort(generic_schemas_.begin(), generic_schemas_.end(),
+        [](const GenericDefinitionSchema& a, const GenericDefinitionSchema& b){ return a.category < b.category; });
+}
+
+bool DefinitionDatabase::has_schema(std::string_view category) const noexcept {
+    return std::any_of(generic_schemas_.begin(), generic_schemas_.end(),
+        [&](const GenericDefinitionSchema& s){ return s.category == category; });
+}
+
 bool DefinitionDatabase::ingest(const ScriptParseResult& parsed, std::vector<ScriptCompileDiagnostic>& diagnostics) {
     bool ok = parsed.ok();
     for (const auto& d : parsed.diagnostics) diagnostics.push_back({d.message, d.line});
+    // Generic schemas run first so domain errors are reported before hard-coded country path.
+    for (auto& schema : generic_schemas_) {
+        if (schema.ingest) ok &= schema.ingest(parsed, diagnostics);
+    }
     for (const auto& object : parsed.objects) {
         if (object.type != sym_country_) continue;
         CountryDefinition def;
@@ -117,10 +136,12 @@ CountryId DefinitionDatabase::runtime_country(SymbolId tag) const noexcept {
 }
 
 std::size_t DefinitionDatabase::immutable_bytes() const noexcept {
+    std::size_t generic = 0;
+    for (auto& s : generic_schemas_) if (s.immutable_bytes) generic += s.immutable_bytes();
     return countries_.capacity() * sizeof(CountryDefinition) + scripts_.instruction_bytes() +
            localization_.memory_bytes() + gameplay_content_.memory_bytes() +
            research_content_.memory_bytes() + notification_content_.memory_bytes() +
-           on_action_content_.memory_bytes() +
+           on_action_content_.memory_bytes() + generic +
            symbols_.memory_bytes();
 }
 

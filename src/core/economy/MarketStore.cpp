@@ -5,21 +5,56 @@
 namespace core {
 
 void MarketStore::resize(std::size_t market_count, const EconomyDefinitions& definitions) {
+    const std::size_t old_markets = owners_.size();
+    const std::size_t old_goods = good_count_;
     good_count_ = definitions.good_count();
-    owners_.assign(market_count, CountryId{});
+    owners_.resize(market_count, CountryId{});
     settlement_accounts_.resize(market_count);
-    currency_keys_.assign(market_count, default_currency_key);
-    clearing_cash_.assign(market_count, 0);
-    prices_.resize(market_count * good_count_);
-    supply_.assign(market_count * good_count_, 0);
-    demand_.assign(market_count * good_count_, 0);
-    inventory_.assign(market_count * good_count_, 0);
-    shortage_.assign(market_count * good_count_, 0);
-    for (std::size_t market = 0; market < market_count; ++market) {
+    currency_keys_.resize(market_count, default_currency_key);
+    clearing_cash_.resize(market_count, 0);
+    // Preserve existing prices/supply/demand/inventory/shortage for existing markets/goods.
+    // Only initialize new cells to base/detault to keep material/money closed across resizes.
+    const bool goods_changed = (old_goods != good_count_);
+    if (goods_changed || old_markets != market_count) {
+        std::vector<EconomyPrice> new_prices(market_count * good_count_, 0);
+        std::vector<EconomyAmount> new_supply(market_count * good_count_, 0);
+        std::vector<EconomyAmount> new_demand(market_count * good_count_, 0);
+        std::vector<EconomyAmount> new_inventory(market_count * good_count_, 0);
+        std::vector<EconomyAmount> new_shortage(market_count * good_count_, 0);
+        for (std::size_t m = 0; m < std::min(old_markets, market_count); ++m) {
+            for (std::size_t g = 0; g < std::min(old_goods, good_count_); ++g) {
+                const std::size_t old_idx = m * old_goods + g;
+                const std::size_t new_idx = m * good_count_ + g;
+                if (old_idx < prices_.size()) new_prices[new_idx] = prices_[old_idx];
+                if (old_idx < supply_.size()) new_supply[new_idx] = supply_[old_idx];
+                if (old_idx < demand_.size()) new_demand[new_idx] = demand_[old_idx];
+                if (old_idx < inventory_.size()) new_inventory[new_idx] = inventory_[old_idx];
+                if (old_idx < shortage_.size()) new_shortage[new_idx] = shortage_[old_idx];
+            }
+        }
+        prices_ = std::move(new_prices);
+        supply_ = std::move(new_supply);
+        demand_ = std::move(new_demand);
+        inventory_ = std::move(new_inventory);
+        shortage_ = std::move(new_shortage);
+    } else {
+        prices_.resize(market_count * good_count_);
+        supply_.assign(market_count * good_count_, 0);
+        demand_.assign(market_count * good_count_, 0);
+    }
+    for (std::size_t market = old_markets; market < market_count; ++market) {
         settlement_accounts_[market] = market_settlement_account_id(
             MarketId{static_cast<MarketId::rep_type>(market)});
+        currency_keys_[market] = default_currency_key;
+        clearing_cash_[market] = 0;
+    }
+    for (std::size_t market = 0; market < market_count; ++market) {
         for (std::size_t good = 0; good < good_count_; ++good) {
-            prices_[market * good_count_ + good] = definitions.good(GoodId{static_cast<GoodId::rep_type>(good)}).base_price_milli;
+            const std::size_t idx = market * good_count_ + good;
+            // Only init base price for newly created cells (was 0)
+            if (prices_[idx] == 0) {
+                prices_[idx] = definitions.good(GoodId{static_cast<GoodId::rep_type>(good)}).base_price_milli;
+            }
         }
     }
 }

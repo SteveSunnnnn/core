@@ -21,8 +21,18 @@ enum class ActiveHudTab : std::uint8_t {
 };
 
 struct TopBarData {
-    std::string country_name = "British Empire";
-    std::string ranking_title = "Great Power (#1)";
+    // Generic engine: no hard-coded nation/era. All display strings are
+    // resolved outside the engine via LocalizationStore keys or scripted
+    // values. Engine only renders what external content provides.
+    // Example external script: localization key "COUNTRY_NAME_GBR" -> "British Empire",
+    // or scripted_value "topbar_country_name" evaluated per Country scope.
+    std::string country_name = "";                 // resolved display string (from script/localization)
+    std::string country_name_loc_key = "COUNTRY_NAME"; // fallback localization key
+    std::string ranking_title = "";                // resolved display string
+    std::string ranking_title_loc_key = "RANKING_TITLE";
+    std::string ranking_title_script_key = "hud_ranking_title"; // optional scripted_value name
+    std::string country_name_script_key = "hud_country_name";
+    std::string date_script_key = "hud_format_date"; // external script builds date string from GameClock
     std::int64_t gold_reserves = 850000;
     std::int64_t weekly_balance = 14200;
     std::vector<float> balance_history{8200.0f, 9500.0f, 11100.0f, 10800.0f, 12800.0f, 14200.0f};
@@ -32,17 +42,29 @@ struct TopBarData {
     std::int32_t diplomacy_usage = 280;
     std::int32_t authority_capacity = 500;
     std::int32_t authority_usage = 390;
-    std::string date_str = "1 Jan 1836";
+    std::string date_str = "";                     // resolved display string (from script/localization)
+    std::string date_loc_key = "DATE_FORMAT";
     std::uint8_t current_speed = 1;
     bool is_paused = true;
 };
 
 struct ProvinceInspectorData {
     ProvinceId province{};
-    std::string name = "London";
-    std::string state_name = "Home Counties";
-    std::string country_name = "Great Britain";
-    std::string terrain_type = "Plains";
+    // Generic: engine never hard-codes a map location. Content provides
+    // province/state/country names via World bootstrap + localization keys
+    // or scripted_value (e.g. "province_name", "state_name").
+    std::string name = "";                         // resolved, from GeographyStore + LocalizationStore
+    std::string name_loc_key = "PROVINCE_NAME";
+    std::string name_script_key = "hud_province_name";
+    std::string state_name = "";                   // resolved
+    std::string state_name_loc_key = "STATE_NAME";
+    std::string state_name_script_key = "hud_state_name";
+    std::string country_name = "";                 // resolved
+    std::string country_name_loc_key = "COUNTRY_NAME";
+    std::string country_name_script_key = "hud_country_name";
+    std::string terrain_type = "";                 // resolved
+    std::string terrain_type_loc_key = "TERRAIN_PLAINS";
+    std::string terrain_type_script_key = "hud_terrain_name";
     std::int64_t total_pop = 1850000;
     std::int32_t arable_land = 45;
     float average_wage = 9.8f;
@@ -65,8 +87,16 @@ struct EventChoice {
 
 struct EventModalState {
     uint64_t event_id = 0;
-    std::string title = "The Imperial Coronation";
-    std::string description = "The grand royal procession ascends toward Westminster Abbey amid roaring applause of industrial barons and cheering crowds.";
+    // Generic: title/description are localization keys or scripted content.
+    // External scripts (events/*.core) define e.g. event "coronation.1"
+    // with title_loc = "event.coronation.1.title" and desc_loc, engine
+    // only resolves keys via LocalizationStore / ScriptExecutionContext.
+    std::string title = "";                        // resolved display string
+    std::string title_loc_key = "EVENT_TITLE";     // localization key
+    std::string title_script_key = "event_title";
+    std::string description = "";                  // resolved display string
+    std::string description_loc_key = "EVENT_DESC";
+    std::string description_script_key = "event_desc";
     std::vector<EventChoice> choices;
     bool is_open = false;
 };

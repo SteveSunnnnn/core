@@ -75,9 +75,18 @@ BuildingId BuildingStore::create(BuildingInit init) {
 
 void BuildingStore::destroy(BuildingId id) {
     const auto i = index(id);
+    const SlotHandle h{static_cast<std::uint32_t>(i), slot_pool_.generations()[i]};
+    if (!slot_pool_.is_alive(h)) throw std::out_of_range("destroy of dead BuildingId");
     hot_.levels[i] = 0;
     hot_.employees[i] = 0;
-    slot_pool_.release(SlotHandle{static_cast<std::uint32_t>(i), slot_pool_.generations()[i]});
+    hot_.markets[i] = MarketId{};
+    hot_.types[i] = BuildingTypeId{};
+    hot_.production_methods[i] = ProductionMethodId{};
+    hot_.wage_offer_milli[i] = 0;
+    hot_.cash_milli[i] = 0;
+    hot_.last_profit_milli[i] = 0;
+    cold_.provinces[i] = ProvinceId{};
+    slot_pool_.release(h);
     ++market_membership_revision_;
     ++province_membership_revision_;
 }
@@ -106,6 +115,7 @@ CompactionMap BuildingStore::compact() {
 std::size_t BuildingStore::index(BuildingId id) const {
     const auto i = static_cast<std::size_t>(id.value());
     if (!id.valid() || i >= size()) throw std::out_of_range("invalid BuildingId");
+    if (!slot_pool_.is_index_alive(static_cast<std::uint32_t>(i))) throw std::out_of_range("dead BuildingId");
     return i;
 }
 
@@ -137,7 +147,10 @@ void BuildingStore::set_level(BuildingId id, std::uint16_t value) { hot_.levels[
 void BuildingStore::set_production_method(BuildingId id, ProductionMethodId value) { hot_.production_methods[index(id)] = value; }
 void BuildingStore::set_employees(BuildingId id, PopulationCount value) { hot_.employees[index(id)] = value; }
 void BuildingStore::set_wage_offer(BuildingId id, EconomyPrice value) { hot_.wage_offer_milli[index(id)] = value; }
-void BuildingStore::add_cash(BuildingId id, EconomyAmount delta) { hot_.cash_milli[index(id)] += delta; }
+void BuildingStore::add_cash(BuildingId id, EconomyAmount delta) {
+    const auto i = index(id);
+    hot_.cash_milli[i] = saturating_add(hot_.cash_milli[i], delta);
+}
 void BuildingStore::set_last_profit(BuildingId id, EconomyAmount value) { hot_.last_profit_milli[index(id)] = value; }
 
 std::uint64_t BuildingStore::checksum() const noexcept {
@@ -145,6 +158,7 @@ std::uint64_t BuildingStore::checksum() const noexcept {
     const auto n = size();
     h.add(n);
     for (std::size_t i = 0; i < n; ++i) {
+        if (!slot_pool_.is_index_alive(static_cast<std::uint32_t>(i))) { h.add(std::uint32_t{0}); continue; }
         const BuildingId id{static_cast<BuildingId::rep_type>(i)};
         h.add(market(id).value());
         h.add(province(id).value());
@@ -156,6 +170,7 @@ std::uint64_t BuildingStore::checksum() const noexcept {
         h.add(cash(id));
         h.add(last_profit(id));
     }
+    for (auto w : slot_pool_.bitmap()) h.add(w);
     return h.value();
 }
 

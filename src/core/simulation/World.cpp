@@ -244,7 +244,9 @@ EconomyAmount CountryStore::borrowing_capacity_milli(CountryId id) const {
     const auto i = idx(id);
     if (is_in_default(id)) return 0;
     const double gdp_val = i < gdp_.size() ? gdp_[i] : 0.0;
-    const auto gdp_milli = static_cast<EconomyAmount>(gdp_val * 1000.0);
+    // Clamp gdp double before cast to avoid UB on >1e18
+    const double gdp_clamped = std::clamp(gdp_val, 0.0, 9e15);
+    const auto gdp_milli = static_cast<EconomyAmount>(std::llround(gdp_clamped * 1000.0));
     const auto rating = credit_rating(id);
     std::int64_t max_mult_ppm = 2'500'000; // 2.5x GDP for AAA
     switch (rating) {
@@ -311,7 +313,8 @@ void CountryStore::evaluate_credit_rating(CountryId id) {
         return;
     }
     const double gdp_val = i < gdp_.size() ? gdp_[i] : 0.0;
-    const auto gdp_milli = std::max<EconomyAmount>(1000, static_cast<EconomyAmount>(gdp_val * 1000.0));
+    const double gdp_clamped2 = std::clamp(gdp_val, 0.0, 9e15);
+    const auto gdp_milli = std::max<EconomyAmount>(1000, static_cast<EconomyAmount>(std::llround(gdp_clamped2 * 1000.0)));
     const auto debt_ratio_ppm = mul_div_nonnegative(debt, ppm_scale, gdp_milli);
 
     if (debt_ratio_ppm < 300'000) {
