@@ -1,5 +1,13 @@
 # Changelog
 
+## Core 1.0 Development — Foreign Exchange (FX) & Multi-Currency International Trade — 2026-08-27
+- Implemented `CurrencyStore` (`src/core/economy/CurrencyStore.cpp`) with support for registered currencies, floating/fixed/gold-standard exchange rate pegs, and overflow-safe fixed-point conversions.
+- Unlocked multi-currency international trade in `EconomySystem::trade`, evaluating cross-currency price arbitrage against transport bands, clearing trade invoices at fair midpoints, and recording bilateral FX demand.
+- Added country-level primary currency designations, foreign exchange reserves, and balance-of-payments tracking in `CountryStore`.
+- Implemented deterministic weekly floating exchange rate formation driven by net international trade surplus and deficit pressures with bounded volatility clamps.
+- Extended atomic save serialization with the `FX01` extension section in `SaveGame.cpp` while preserving backward compatibility for legacy and pre-FX saves.
+- Added comprehensive unit and regression tests in `tests/economy_tests.cpp` covering currency conversion, cross-currency trade arbitrage, FX reserve accumulation, and exchange rate appreciation.
+
 ## Core 1.0 Development — Retained UI Runtime & Pin Updates — 2026-08-27
 - Implemented `src/core/ui/ScriptedGuiRuntime.cpp` and wired it into `core_runtime`, completing the retained UI state machine.
 - Added comprehensive unit tests for `ScriptedGuiRuntime` in `tests/scripted_gui_tests.cpp` covering data provider bindings, virtualized list/grid viewports, chart downsampling, and dirty diff generation.

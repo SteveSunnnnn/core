@@ -14,12 +14,13 @@ Audit date: 2026-08-27. Product version remains **1.0.0**.
 - Modifier graphs evaluate deep dependency chains iteratively; a 50,000-node regression prevents stack-recursive evaluation from returning.
 - Economy content ingestion rejects empty/duplicate definition keys, invalid `GoodId` references, non-positive flows, and offset/ID capacity overflow before mutating tables.
 - `ScriptedGuiRuntime` retained UI subsystem evaluates typed bindings, virtualized collection lists/grids, chart downsampling, and generational dirty diffs with zero provider memory leaks.
+- Multi-currency Foreign Exchange (FX) subsystem (`CurrencyStore`) is fully verified, enabling cross-currency trade arbitrage, country foreign reserves, balance-of-payments tracking, and deterministic floating exchange rate updates with `FX01` atomic save persistence.
 
 ## Release benchmark snapshot
 
 Machine-specific numbers; use only as a regression baseline.
 
-- Economy: 128 markets, 32 goods, 30,000 buildings, 300,000 POPs; 16 job slots; weekly tick average 8.775 ms, p95 10.598 ms; checksum `0xfd54306d9f59ecd7`.
+- Economy: 128 markets, 32 goods, 30,000 buildings, 300,000 POPs; 16 job slots; weekly tick average 8.078 ms, p95 8.679 ms; checksum `0x9f4fb4c2cef1d50`.
 - Living map: 8,000 provinces, 300,000 POPs, 30,000 buildings; steady update average 0.313 ms; checksum `0x027e1768e9202909`.
 - Dense 5M-row kernel: 2.864 ms serial, 1.117 ms parallel, identical reduction result.
 - 50,000-node dirty modifier chain recompute: 0.658 ms.
@@ -35,7 +36,7 @@ These are not test regressions introduced by the audit; they are boundaries of t
 
 - Market clearing is a first closed-loop settlement layer, not yet a full commercial-bank/central-bank ledger. Unfunded building credit is represented by a clearing-account debit rather than a persistent loan contract with principal, interest, maturity, and default state.
 - Country treasury is still stored as binary64 for save compatibility and adapted to fixed-point milli-units at the economy boundary. A future internal finance schema should make the fixed-point treasury account authoritative.
-- Cross-currency trade is intentionally withheld until a balanced FX counterparty/reserve model exists. Same-currency trade settles cash, but the automatic arbitrage scan remains worst-case `O(goods * markets^2)`.
+- Multi-currency goods trade and FX clearing are now active via `CurrencyStore`, with balanced legs, national foreign reserves, and floating exchange rates. Further monetary expansion can add full commercial banking (interest-bearing debt contracts) and central bank monetary policy controls.
 - Economy work is partitioned primarily by market. A very large single world market cannot use all cores without deterministic entity sub-partitioning.
 - Economic definition keys are now unique and validated, but persistent saves still rely on dense definition IDs plus the content fingerprint rather than stable-key remapping for definition reorder migrations.
 - `src/core/ui/ScriptedGuiRuntime.cpp` retained UI runtime is now fully implemented, wired into `core_runtime`, and verified in the automated test suite.

@@ -21,6 +21,7 @@ add_library(core_runtime
     src/core/economy/PopStore.cpp
     src/core/economy/MarketEntityIndex.cpp
     src/core/economy/EconomySystem.cpp
+    src/core/economy/CurrencyStore.cpp
     src/core/living/ProvinceEntityIndex.cpp
     src/core/living/LivingMapSystem.cpp
     src/core/living/LivingMapStreamingPlanner.cpp

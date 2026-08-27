@@ -249,6 +249,85 @@ static void test_money_closed_loop_conservation() {
     assert(f.world.countries.treasury(CountryId{0u}) >= final_treasury);
 }
 
+static void test_currency_store_basics() {
+    CurrencyStore store;
+    const CurrencyKey gbp = economy_stable_key("currency.gbp");
+    const CurrencyKey usd = economy_stable_key("currency.usd");
+    const CurrencyKey gold = economy_stable_key("currency.gold");
+
+    store.register_currency(gbp, "British Pound", CurrencyPegMode::Floating, 1'000'000);
+    store.register_currency(usd, "US Dollar", CurrencyPegMode::Floating, 500'000);
+    store.register_currency(gold, "Gold Franc", CurrencyPegMode::GoldStandard, 2'000'000);
+
+    assert(store.contains(gbp));
+    assert(store.contains(usd));
+    assert(store.contains(gold));
+    assert(store.exchange_rate_ppm(gbp) == 1'000'000);
+    assert(store.exchange_rate_ppm(usd) == 500'000);
+    assert(store.exchange_rate_ppm(gold) == 2'000'000);
+
+    // 100 GBP @ 1.0 = 200 USD @ 0.5
+    assert(store.convert(100'000, gbp, usd) == 200'000);
+    // 200 USD @ 0.5 = 100 GBP @ 1.0
+    assert(store.convert(200'000, usd, gbp) == 100'000);
+
+    // Price conversions
+    assert(store.convert_price(1000, gbp, usd) == 2000);
+    assert(store.convert_price(2000, usd, gbp) == 1000);
+}
+
+static void test_cross_currency_trade_and_fx_market() {
+    auto f = make_fixture(2u, 4u, 40u, 100u);
+    const CurrencyKey gbp = economy_stable_key("currency.gbp");
+    const CurrencyKey usd = economy_stable_key("currency.usd");
+
+    f.world.currencies.register_currency(gbp, "British Pound", CurrencyPegMode::Floating, 1'000'000);
+    f.world.currencies.register_currency(usd, "US Dollar", CurrencyPegMode::Floating, 1'000'000);
+
+    const MarketId m0{0u};
+    const MarketId m1{1u};
+    const CountryId c0{0u};
+    const CountryId c1{1u};
+
+    f.world.markets.set_currency_key(m0, gbp);
+    f.world.markets.set_currency_key(m1, usd);
+    f.world.countries.set_primary_currency(c0, gbp);
+    f.world.countries.set_primary_currency(c1, usd);
+
+    // Give POPs initial cash
+    for (std::size_t i = 0; i < f.world.pops.size(); ++i) {
+        f.world.pops.set_cash(PopId{static_cast<PopId::rep_type>(i)}, 10'000);
+    }
+
+    // Set Market 0 to have excess grain inventory and Market 1 to have high grain shortage
+    f.world.markets.inventory_row(m0)[f.grain.value()] = 50'000;
+    f.world.markets.price_row(m0)[f.grain.value()] = 500;  // Cheap in m0
+
+    f.world.markets.shortage_row(m1)[f.grain.value()] = 30'000;
+    f.world.markets.price_row(m1)[f.grain.value()] = 2000; // Expensive in m1
+
+    EconomySystem economy{f.definitions};
+    economy.rebuild_indices(f.world);
+    JobSystem jobs{0u};
+
+    const auto initial_gbp_rate = f.world.currencies.exchange_rate_ppm(gbp);
+    const auto initial_c0_reserves = f.world.countries.foreign_reserves_milli(c0);
+
+    economy.run_weekly(f.world, jobs);
+
+    // Cross-currency trade should have shipped goods from m0 to m1
+    assert(f.world.markets.inventory_row(m0)[f.grain.value()] < 50'000);
+    assert(f.world.markets.inventory_row(m1)[f.grain.value()] > 0);
+
+    // Exporter market m0 and country c0 received revenue and accumulated foreign exchange
+    assert(f.world.countries.foreign_reserves_milli(c0) > initial_c0_reserves);
+    assert(f.world.countries.balance_of_payments_milli(c0) > 0);
+    assert(f.world.countries.balance_of_payments_milli(c1) < 0);
+
+    // Exporter currency (GBP) experienced trade surplus demand and appreciated
+    assert(f.world.currencies.exchange_rate_ppm(gbp) >= initial_gbp_rate);
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -259,6 +338,8 @@ int main() {
     test_economy_is_deterministic_across_worker_counts();
     test_pop_storage_is_compact();
     test_money_closed_loop_conservation();
+    test_currency_store_basics();
+    test_cross_currency_trade_and_fx_market();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }

@@ -110,6 +110,8 @@ src/core/content/VirtualFileSystem.cpp
 src/core/content/VirtualFileSystem.hpp
 src/core/economy/BuildingStore.cpp
 src/core/economy/BuildingStore.hpp
+src/core/economy/CurrencyStore.cpp
+src/core/economy/CurrencyStore.hpp
 src/core/economy/EconomicTypes.hpp
 src/core/economy/EconomyDefinitions.cpp
 src/core/economy/EconomyDefinitions.hpp

@@ -32,6 +32,7 @@ constexpr std::uint32_t notification_section_tag = 0x3146544eu; // "NTF1" in lit
 constexpr std::uint32_t gameplay_context_section_tag = 0x31544347u; // "GCT1" in little endian.
 constexpr std::uint32_t on_action_section_tag = 0x31414e4fu; // "ONA1" in little endian.
 constexpr std::uint32_t market_monetary_section_tag = 0x314e4f4du; // "MON1" in little endian.
+constexpr std::uint32_t fx_section_tag = 0x31305846u; // "FX01" in little endian.
 constexpr std::uint32_t max_context_bindings = 65'536u;
 constexpr std::uint32_t max_context_collections = 4'096u;
 constexpr std::uint32_t max_context_values = 1'000'000u;
@@ -217,6 +218,38 @@ std::uint64_t legacy_market_checksum_v4_pre_mon1(const MarketStore& markets) noe
         const MarketId market{static_cast<MarketId::rep_type>(mi)};
         for (const auto value : markets.shortage_row(market)) h.add(value);
     }
+    return h.value();
+}
+
+std::uint64_t legacy_country_checksum_pre_fx(const CountryStore& countries) noexcept {
+    Fnv1a64 h;
+    const auto n = countries.size();
+    h.add(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const CountryId id{static_cast<CountryId::rep_type>(i)};
+        h.add(countries.tag(id));
+        h.add(countries.population(id));
+        h.add(countries.gdp(id));
+        h.add(countries.treasury(id));
+        h.add(countries.tax_rate(id));
+        const auto& tp = countries.tax_policy(id);
+        h.add(tp.income_tax_ppm);
+        h.add(tp.consumption_tax_ppm);
+        h.add(tp.land_tax_ppm);
+        h.add(tp.per_capita_tax_ppm);
+        h.add(tp.dividends_tax_ppm);
+    }
+    return h.value();
+}
+
+std::uint64_t legacy_world_checksum_v4_pre_fx(const World& world) noexcept {
+    Fnv1a64 h;
+    h.add(legacy_country_checksum_pre_fx(world.countries));
+    h.add(world.markets.checksum());
+    h.add(world.buildings.checksum());
+    h.add(world.pops.checksum());
+    h.add(world.geography.checksum());
+    h.add(world.grand_strategy.checksum());
     return h.value();
 }
 
@@ -851,6 +884,62 @@ DecodedMarketMonetaryState decode_market_monetary_section(Reader& r,
     return decoded;
 }
 
+struct DecodedFxState {
+    bool present = false;
+};
+
+void encode_fx_section(Writer& w, const CurrencyStore& currencies, const CountryStore& countries) {
+    w.u32(fx_section_tag);
+    w.u32(static_cast<std::uint32_t>(currencies.size()));
+    for (const auto& c : currencies.currencies()) {
+        w.u64(c.key);
+        w.string(c.name);
+        w.u8(static_cast<std::uint8_t>(c.peg_mode));
+        w.i64(c.exchange_rate_ppm);
+        w.i64(c.target_rate_ppm);
+    }
+    w.u32(static_cast<std::uint32_t>(countries.size()));
+    for (std::size_t i = 0; i < countries.size(); ++i) {
+        const CountryId id{static_cast<CountryId::rep_type>(i)};
+        w.u64(countries.primary_currency(id));
+        w.i64(countries.foreign_reserves_milli(id));
+        w.i64(countries.balance_of_payments_milli(id));
+    }
+}
+
+DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountryStore& countries) {
+    DecodedFxState decoded;
+    decoded.present = true;
+    if (r.u32() != fx_section_tag)
+        throw std::runtime_error("invalid fx extension tag");
+    const auto cur_count = r.count(1024u);
+    currencies.clear();
+    for (std::uint32_t i = 0; i < cur_count; ++i) {
+        const auto key = r.u64();
+        const auto name = r.string();
+        const auto peg = static_cast<CurrencyPegMode>(r.u8());
+        const auto rate = r.i64();
+        const auto target = r.i64();
+        (void)target;
+        currencies.register_currency(key, name, peg, rate);
+        currencies.set_exchange_rate_ppm(key, rate);
+        currencies.set_peg_mode(key, peg);
+    }
+    const auto country_count = r.count(static_cast<std::uint32_t>(countries.size()));
+    if (country_count != countries.size())
+        throw std::runtime_error("country count mismatch in fx extension");
+    for (std::size_t i = 0; i < country_count; ++i) {
+        const CountryId id{static_cast<CountryId::rep_type>(i)};
+        const auto primary_cur = r.u64();
+        const auto reserves = r.i64();
+        const auto bop = r.i64();
+        countries.set_primary_currency(id, primary_cur);
+        countries.set_foreign_reserves_milli(id, reserves);
+        countries.set_balance_of_payments_milli(id, bop);
+    }
+    return decoded;
+}
+
 void encode_on_action_section(Writer& w, const OnActionRuntime& on_actions) {
     w.u32(on_action_section_tag);
     w.u64(on_actions.next_invocation_id());
@@ -1040,6 +1129,7 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     // Keeping it tagged and last preserves the read-only migration paths for
     // earlier v4 payloads and for the synthetic v3 compatibility fixture.
     encode_market_monetary_section(p, world.markets);
+    encode_fx_section(p, world.currencies, world.countries);
 
     const auto checksum=world.checksum();
     const auto runtime_state_checksum = has_on_action_section
@@ -1053,6 +1143,7 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     Writer out; out.raw(magic,sizeof(magic));out.u32(version);out.u64(content_hash);out.u64(world_pack_hash);out.u64(checksum);out.u64(runtime_state_checksum);out.u64(static_cast<std::uint64_t>(p.out.size()));out.u64(payload_hash);out.raw(p.out.data(),p.out.size());
     return {{version,content_hash,world_pack_hash,checksum,runtime_state_checksum},std::move(out.out)};
 }
+
 
 SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& world,
                                       GameClock& clock, ScriptedGameplayRuntime& gameplay,
@@ -1123,6 +1214,7 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     DecodedNotificationState decoded_notifications;
     DecodedOnActionState decoded_on_actions;
     DecodedMarketMonetaryState decoded_market_monetary;
+    DecodedFxState decoded_fx;
     if (ver == legacy_version) {
         decode_grand_v1(p, decoded.grand_strategy);
     } else {
@@ -1147,6 +1239,11 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
                         throw std::runtime_error("duplicate market monetary extension");
                     decoded_market_monetary = decode_market_monetary_section(
                         p, decoded.markets);
+                } else if (tag == fx_section_tag) {
+                    if (decoded_fx.present)
+                        throw std::runtime_error("duplicate fx extension");
+                    decoded_fx = decode_fx_section(
+                        p, decoded.currencies, decoded.countries);
                 } else {
                     throw std::runtime_error("unknown extension section in Core save");
                 }
@@ -1174,11 +1271,9 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     bool world_checksum_matches = false;
     if (ver == legacy_version) {
         world_checksum_matches = legacy_world_checksum_v1(decoded) == expected_checksum;
-    } else if (decoded_market_monetary.present) {
-        // A present MON1 section is new authoritative state and must authenticate
-        // against the complete current World checksum. Never fall back to a
-        // legacy layout for a malformed or tampered MON1 payload.
-        world_checksum_matches = decoded.checksum() == expected_checksum;
+    } else if (decoded_fx.present || decoded_market_monetary.present) {
+        world_checksum_matches = decoded.checksum() == expected_checksum ||
+                                 legacy_world_checksum_v4_pre_fx(decoded) == expected_checksum;
     } else if (ver == runtime_v3_version) {
         world_checksum_matches =
             legacy_world_checksum_v3_pre_mon1(decoded) == expected_checksum ||
@@ -1186,6 +1281,7 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     } else {
         world_checksum_matches =
             legacy_world_checksum_v4_pre_mon1(decoded) == expected_checksum ||
+            legacy_world_checksum_v4_pre_fx(decoded) == expected_checksum ||
             decoded.checksum() == expected_checksum;
     }
     if (!world_checksum_matches)

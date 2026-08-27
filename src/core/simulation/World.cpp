@@ -32,6 +32,9 @@ void CountryStore::reserve(std::size_t count) {
     treasury_.reserve(count);
     tax_rate_.reserve(count);
     tax_policies_.reserve(count);
+    primary_currencies_.reserve(count);
+    foreign_reserves_milli_.reserve(count);
+    balance_of_payments_milli_.reserve(count);
 }
 
 CountryId CountryStore::create(CountryInit init) {
@@ -41,6 +44,9 @@ CountryId CountryStore::create(CountryInit init) {
     gdp_.push_back(nonnegative_finite(init.gdp, "gdp"));
     treasury_.push_back(finite_value(init.treasury, "treasury"));
     tax_rate_.push_back(tax_finite(init.tax_rate));
+    primary_currencies_.push_back(init.primary_currency != 0u ? init.primary_currency : default_currency_key);
+    foreign_reserves_milli_.push_back(init.foreign_reserves_milli);
+    balance_of_payments_milli_.push_back(0);
     // Default TaxPolicy: income_tax = tax_rate converted to PPM
     TaxPolicy default_policy;
     default_policy.income_tax_ppm = static_cast<std::int32_t>(std::clamp(init.tax_rate, 0.0, 1.0) * static_cast<double>(ppm_scale) + 0.5);
@@ -70,6 +76,36 @@ EconomyAmount CountryStore::treasury_milli(CountryId id) const {
 }
 double CountryStore::tax_rate(CountryId id) const { return tax_rate_[idx(id)]; }
 const TaxPolicy& CountryStore::tax_policy(CountryId id) const { return tax_policies_[idx(id)]; }
+
+CurrencyKey CountryStore::primary_currency(CountryId id) const {
+    const auto i = idx(id);
+    return i < primary_currencies_.size() ? primary_currencies_[i] : default_currency_key;
+}
+void CountryStore::set_primary_currency(CountryId id, CurrencyKey key) {
+    primary_currencies_[idx(id)] = (key != 0u ? key : default_currency_key);
+}
+EconomyAmount CountryStore::foreign_reserves_milli(CountryId id) const {
+    const auto i = idx(id);
+    return i < foreign_reserves_milli_.size() ? foreign_reserves_milli_[i] : 0;
+}
+void CountryStore::set_foreign_reserves_milli(CountryId id, EconomyAmount amount) {
+    foreign_reserves_milli_[idx(id)] = amount;
+}
+void CountryStore::add_foreign_reserves_milli(CountryId id, EconomyAmount delta) {
+    const auto i = idx(id);
+    foreign_reserves_milli_[i] = saturating_add(foreign_reserves_milli_[i], delta);
+}
+EconomyAmount CountryStore::balance_of_payments_milli(CountryId id) const {
+    const auto i = idx(id);
+    return i < balance_of_payments_milli_.size() ? balance_of_payments_milli_[i] : 0;
+}
+void CountryStore::set_balance_of_payments_milli(CountryId id, EconomyAmount amount) {
+    balance_of_payments_milli_[idx(id)] = amount;
+}
+void CountryStore::add_balance_of_payments_milli(CountryId id, EconomyAmount delta) {
+    const auto i = idx(id);
+    balance_of_payments_milli_[i] = saturating_add(balance_of_payments_milli_[i], delta);
+}
 
 void CountryStore::set_population(CountryId id, double value) { population_[idx(id)] = nonnegative_finite(value, "population"); }
 void CountryStore::set_gdp(CountryId id, double value) { gdp_[idx(id)] = nonnegative_finite(value, "gdp"); }
@@ -115,6 +151,9 @@ std::uint64_t CountryStore::checksum() const noexcept {
         h.add(tax_policies_[i].land_tax_ppm);
         h.add(tax_policies_[i].per_capita_tax_ppm);
         h.add(tax_policies_[i].dividends_tax_ppm);
+        h.add(i < primary_currencies_.size() ? primary_currencies_[i] : default_currency_key);
+        h.add(i < foreign_reserves_milli_.size() ? foreign_reserves_milli_[i] : 0);
+        h.add(i < balance_of_payments_milli_.size() ? balance_of_payments_milli_[i] : 0);
     }
     return h.value();
 }
@@ -127,6 +166,7 @@ std::uint64_t World::checksum() const noexcept {
     h.add(pops.checksum());
     h.add(geography.checksum());
     h.add(grand_strategy.checksum());
+    h.add(currencies.checksum());
     return h.value();
 }
 

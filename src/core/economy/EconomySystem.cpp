@@ -402,16 +402,23 @@ JobDispatchStats EconomySystem::trade(World& world) {
         // Transport band: trade only while the price gap covers shipping.
         const EconomyAmount transport_milli = std::max<EconomyAmount>(1, base / 10);
         for (const auto importer : trade_importers_) {
-                const MarketId imp{static_cast<MarketId::rep_type>(importer)};
-                for (std::size_t e = 0; e < trade_exporters_.size(); ++e) {
-                    const MarketId exp{static_cast<MarketId::rep_type>(trade_exporters_[e])};
-                    if (imp == exp) continue;
-                    // Cross-currency delivery requires an FX counterparty. It
-                    // is deliberately withheld until the currency layer can
-                    // create two balanced legs instead of converting nominal
-                    // balances by arithmetic alone.
-                    if (world.markets.currency_key(imp) != world.markets.currency_key(exp)) continue;
-                    if (saturating_sub(price_of(importer), price_of(trade_exporters_[e])) <= transport_milli) break;
+            const MarketId imp{static_cast<MarketId::rep_type>(importer)};
+            for (std::size_t e = 0; e < trade_exporters_.size(); ++e) {
+                const MarketId exp{static_cast<MarketId::rep_type>(trade_exporters_[e])};
+                if (imp == exp) continue;
+
+                const CurrencyKey imp_cur = world.markets.currency_key(imp);
+                const CurrencyKey exp_cur = world.markets.currency_key(exp);
+                const EconomyPrice raw_exp_price = price_of(trade_exporters_[e]);
+                const EconomyPrice raw_imp_price = price_of(importer);
+
+                // Convert exporter's price into importer's currency to verify transport profitability
+                const EconomyPrice exp_price_in_imp_cur = (imp_cur == exp_cur)
+                    ? raw_exp_price
+                    : world.currencies.convert_price(raw_exp_price, exp_cur, imp_cur);
+
+                if (saturating_sub(raw_imp_price, exp_price_in_imp_cur) <= transport_milli) break;
+
                 auto imp_shortage_row = world.markets.shortage_row(imp);
                 if (imp_shortage_row[gi] <= 0) break;
                 auto exp_inventory = world.markets.inventory_row(exp);
@@ -419,19 +426,47 @@ JobDispatchStats EconomySystem::trade(World& world) {
                 auto imp_shortage = imp_shortage_row;
                 const EconomyAmount shipped = std::min(exp_inventory[gi], imp_shortage[gi]);
                 if (shipped <= 0) continue;
+
                 exp_inventory[gi] = saturating_sub(exp_inventory[gi], shipped);
                 imp_inventory[gi] = saturating_add(imp_inventory[gi], shipped);
                 imp_shortage[gi] = saturating_sub(imp_shortage[gi], shipped);
-                // The invoice clears at the deterministic midpoint. Moving
-                // goods now always moves an equal amount of same-currency cash
-                // from the importing clearing account to the exporter.
-                const EconomyPrice export_price = price_of(trade_exporters_[e]);
-                const EconomyPrice import_price = price_of(importer);
-                const EconomyPrice invoice_price = saturating_add(
-                    export_price, saturating_sub(import_price, export_price) / 2);
-                const EconomyAmount invoice = money_for_quantity(shipped, invoice_price);
-                world.markets.add_clearing_cash(imp, -invoice);
-                world.markets.add_clearing_cash(exp, invoice);
+
+                // Multi-currency invoice clearance:
+                // Exporter receives invoice in exporter's local currency;
+                // Importer pays converted invoice in importer's local currency.
+                EconomyAmount exp_invoice = 0;
+                EconomyAmount imp_cost = 0;
+
+                if (imp_cur == exp_cur) {
+                    const EconomyPrice invoice_price = saturating_add(
+                        raw_exp_price, saturating_sub(raw_imp_price, raw_exp_price) / 2);
+                    exp_invoice = money_for_quantity(shipped, invoice_price);
+                    imp_cost = exp_invoice;
+                } else {
+                    const EconomyPrice imp_price_in_exp_cur =
+                        world.currencies.convert_price(raw_imp_price, imp_cur, exp_cur);
+                    const EconomyPrice exp_invoice_price = saturating_add(
+                        raw_exp_price, saturating_sub(imp_price_in_exp_cur, raw_exp_price) / 2);
+                    exp_invoice = money_for_quantity(shipped, exp_invoice_price);
+                    imp_cost = world.currencies.convert(exp_invoice, exp_cur, imp_cur);
+
+                    // Record bilateral FX demand: importer sells imp_cur to buy exp_cur
+                    world.currencies.record_fx_flow(imp_cur, exp_cur, exp_invoice);
+                }
+
+                world.markets.add_clearing_cash(imp, -imp_cost);
+                world.markets.add_clearing_cash(exp, exp_invoice);
+
+                // Track national-level Foreign Reserves and Balance of Payments
+                const CountryId imp_country = world.markets.owner(imp);
+                const CountryId exp_country = world.markets.owner(exp);
+                if (imp_country.valid() && exp_country.valid() && imp_country != exp_country) {
+                    if (imp_cur != exp_cur) {
+                        world.countries.add_balance_of_payments_milli(imp_country, -imp_cost);
+                        world.countries.add_balance_of_payments_milli(exp_country, exp_invoice);
+                        world.countries.add_foreign_reserves_milli(exp_country, exp_invoice);
+                    }
+                }
             }
         }
     }
@@ -847,6 +882,7 @@ void EconomySystem::run_weekly(World& world, JobSystem& jobs, EconomyTickProfile
     run_phase([&]{return trade(world);},nullptr);
     run_phase([&]{return update_prices(world,jobs);},profile?&profile->prices:nullptr);
     run_phase([&]{return settlement(world,jobs);},profile?&profile->settlement:nullptr);
+    world.currencies.update_exchange_rates();
     run_phase([&]{return construction(world);},nullptr);
     run_phase([&]{return scatter_pop_hot(world,jobs);},nullptr);
     if(profile){
