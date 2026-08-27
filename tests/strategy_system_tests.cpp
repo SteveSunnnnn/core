@@ -411,6 +411,55 @@ void test_naval_warfare_and_sea_zone_blockades() {
     assert(blockade_eff == 500'000u); // 5,000 * 100 = 500,000 PPM (50%)
 }
 
+void test_civilian_war_casualties_and_continuous_reinforcements() {
+    World world;
+    const auto countryA = world.countries.create({"QNG", 100'000.0, 100.0, 100'000.0, 0.2});
+    const auto countryB = world.countries.create({"TPT", 50'000.0, 100.0, 50'000.0, 0.2});
+    const MarketId market{0u};
+    const auto state = world.geography.create_state({"Jiangnan", countryA, market, ProvinceId{0u}});
+    const auto prov = world.geography.create_province({"Nanking", state, countryA, market, 0.0, 0.0, 1000});
+    world.geography.set_state_capital(state, prov);
+
+    // Create civilian POP in Jiangnan
+    PopInit pi{};
+    pi.market = market;
+    pi.province = prov;
+    pi.size = 100'000u;
+    const auto pop_id = world.pops.create(pi);
+    world.pops.set_standard_of_living_milli(pop_id, 12'000);
+    const auto initial_pop = world.pops.population(pop_id);
+    assert(initial_pop == 100'000u);
+
+    // Create Army for Country A with deficit (5,000 manpower out of 25,000 target)
+    const auto army = world.grand_strategy.add_army({countryA, state, 5'000u, 800'000u});
+    const auto initial_manpower = world.grand_strategy.armys()[army.value()].manpower;
+
+    // Start war and create front in Jiangnan
+    const auto play = world.grand_strategy.start_diplomatic_play(countryA, countryB, 0x1851u);
+    const auto front = world.grand_strategy.create_front_for_play(play, state);
+    assert(front.valid());
+
+    // Advance to war
+    for (int week = 0; week < 8; ++week) {
+        world.grand_strategy.run_weekly_reference_tick(world);
+    }
+    assert(world.grand_strategy.wars()[0].active);
+
+    // 1. Verify civilian population casualties in warzone (Taiping Rebellion depopulation realism)
+    const auto pop_during_war = world.pops.population(pop_id);
+    assert(pop_during_war < initial_pop); // Civilians perished / fled warzone
+    const auto sol_during_war = world.pops.standard_of_living_milli(pop_id);
+    assert(sol_during_war < 12'000); // Standard of living dropped due to devastation
+
+    // 2. Verify army continuous replenishment / recruitment from domestic POPs
+    const auto army_manpower_after = world.grand_strategy.armys()[army.value()].manpower;
+    assert(army_manpower_after > initial_manpower); // Army reinforced continuously from domestic recruits!
+
+    // 3. Verify military wages were paid from treasury
+    const auto treasury_after = world.countries.treasury_milli(countryA);
+    assert(treasury_after < 100'000LL * 1000LL);
+}
+
 } // namespace
 
 int main() {
@@ -425,6 +474,7 @@ int main() {
     test_multilateral_diplomatic_plays_and_sway();
     test_frontline_tactics_and_commanders();
     test_naval_warfare_and_sea_zone_blockades();
+    test_civilian_war_casualties_and_continuous_reinforcements();
     std::cout << "Core 1.0 strategy system tests: PASS\n";
     return 0;
 }

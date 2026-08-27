@@ -36,46 +36,46 @@ std::uint32_t clamp_ppm(std::uint64_t value) noexcept {
     return static_cast<std::uint32_t>(std::min<std::uint64_t>(value, 1'000'000u));
 }
 
-void hash_record(Fnv1a64& h, const TechnologyRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.progress_ppm);h.add(r.unlocked);}
-void hash_record(Fnv1a64& h, const LawRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.enacted);}
-void hash_record(Fnv1a64& h, const InstitutionRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.level);}
-void hash_record(Fnv1a64& h, const CompanyRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.cash_milli);h.add(r.productivity_ppm);h.add(r.active);}
-void hash_record(Fnv1a64& h, const TradeRouteRecord& r){h.add(r.source.value());h.add(r.destination.value());h.add(r.good.value());h.add(r.quantity_milli);h.add(r.level);h.add(r.active);}
-void hash_record(Fnv1a64& h, const OwnershipStakeRecord& r){h.add(r.owner_country.value());h.add(r.owner_company.value());h.add(r.building.value());h.add(r.share_ppm);}
-void hash_record(Fnv1a64& h, const TreatyRecord& r){h.add(r.first.value());h.add(r.second.value());h.add(static_cast<std::uint8_t>(r.kind));h.add(r.article_hash);h.add(r.active);}
-void hash_record(Fnv1a64& h, const ArmyRecord& r){h.add(r.country.value());h.add(r.location.value());h.add(r.manpower);h.add(r.organization_ppm);}
-void hash_record(Fnv1a64& h, const NavyRecord& r){h.add(r.country.value());h.add(r.location.value());h.add(r.sailors);h.add(r.strength_ppm);h.add(r.design.value());h.add(static_cast<std::uint8_t>(r.mission));h.add(r.assigned_zone.value());}
-void hash_record(Fnv1a64& h, const MigrationFlowRecord& r){h.add(r.source.value());h.add(r.destination.value());h.add(r.population);h.add(r.weeks_remaining);}
-void hash_record(Fnv1a64& h, const InterestGroupRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.clout_ppm);h.add(r.approval_milli);}
-void hash_record(Fnv1a64& h, const PoliticalPartyRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.support_ppm);}
-void hash_record(Fnv1a64& h, const PowerBlocRecord& r){h.add(r.leader.value());h.add(r.key_hash);h.add(r.cohesion_ppm);}
-void hash_record(Fnv1a64& h, const DiplomaticPlayRecord& r){h.add(r.initiator.value());h.add(r.target.value());h.add(static_cast<std::uint8_t>(r.phase));h.add(r.war_goal_hash);}
-void hash_record(Fnv1a64& h, const FrontRecord& r){h.add(r.first.value());h.add(r.second.value());h.add(r.state.value());h.add(r.progress_milli);}
-void hash_record(Fnv1a64& h, const BattleRecord& r){h.add(r.front.value());h.add(r.attackers);h.add(r.defenders);h.add(r.progress_milli);h.add(r.resolved);}
-void hash_record(Fnv1a64& h, const ColonyRecord& r){h.add(r.country.value());h.add(r.province.value());h.add(r.progress_ppm);}
-void hash_record(Fnv1a64& h, const ShipDesignRecord& r){h.add(r.country.value());h.add(r.hull_hash);h.add(r.modules_hash);h.add(r.combat_power_milli);h.add(r.build_cost_milli);}
-void hash_record(Fnv1a64& h, const InvestmentPoolRecord& r){h.add(r.country.value());h.add(r.cash_milli);h.add(r.weekly_contribution_milli);}
-void hash_record(Fnv1a64& h, const DiplomaticRelationRecord& r){h.add(r.first.value());h.add(r.second.value());h.add(r.relation_milli);h.add(r.trust_ppm);h.add(r.tension_ppm);}
-void hash_record(Fnv1a64& h, const DiplomaticPlayStateRecord& r){h.add(r.play.value());h.add(r.weeks_in_phase);h.add(r.escalation_ppm);}
-void hash_record(Fnv1a64& h, const GovernmentRecord& r){h.add(r.country.value());h.add(r.legitimacy_ppm);h.add(r.stability_milli);}
-void hash_record(Fnv1a64& h, const LawEnactmentRecord& r){h.add(r.country.value());h.add(r.law_hash);h.add(r.progress_ppm);h.add(r.support_ppm);h.add(r.active);h.add(r.passed);}
-void hash_record(Fnv1a64& h, const WarRecord& r){h.add(r.play.value());h.add(r.attacker.value());h.add(r.defender.value());h.add(r.war_score_milli);h.add(r.weeks);h.add(r.active);}
-void hash_record(Fnv1a64& h, const ParliamentRecord& r){h.add(r.country.value());h.add(r.power_distribution_law_hash);h.add(r.elections_enabled);h.add(static_cast<std::uint8_t>(r.migration_policy));h.add(r.election_interval_weeks);h.add(r.weeks_to_next_election);h.add(r.total_seats);h.add(r.ruling_party_seats);h.add(r.opposition_seats);h.add(r.ruling_party_hash);h.add(r.pop_vote_weight_ppm);h.add(r.ig_clout_weight_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const TechnologyRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.progress_ppm);h.add(r.unlocked);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const LawRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.enacted);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const InstitutionRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.level);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const CompanyRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.cash_milli);h.add(r.productivity_ppm);h.add(r.active);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const TradeRouteRecord& r){h.add(r.source.value());h.add(r.destination.value());h.add(r.good.value());h.add(r.quantity_milli);h.add(r.level);h.add(r.active);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const OwnershipStakeRecord& r){h.add(r.owner_country.value());h.add(r.owner_company.value());h.add(r.building.value());h.add(r.share_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const TreatyRecord& r){h.add(r.first.value());h.add(r.second.value());h.add(static_cast<std::uint8_t>(r.kind));h.add(r.article_hash);h.add(r.active);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const ArmyRecord& r){h.add(r.country.value());h.add(r.location.value());h.add(r.manpower);h.add(r.organization_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const NavyRecord& r){h.add(r.country.value());h.add(r.location.value());h.add(r.sailors);h.add(r.strength_ppm);h.add(r.design.value());h.add(static_cast<std::uint8_t>(r.mission));h.add(r.assigned_zone.value());}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const MigrationFlowRecord& r){h.add(r.source.value());h.add(r.destination.value());h.add(r.population);h.add(r.weeks_remaining);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const InterestGroupRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.clout_ppm);h.add(r.approval_milli);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const PoliticalPartyRecord& r){h.add(r.country.value());h.add(r.key_hash);h.add(r.support_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const PowerBlocRecord& r){h.add(r.leader.value());h.add(r.key_hash);h.add(r.cohesion_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const DiplomaticPlayRecord& r){h.add(r.initiator.value());h.add(r.target.value());h.add(static_cast<std::uint8_t>(r.phase));h.add(r.war_goal_hash);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const FrontRecord& r){h.add(r.first.value());h.add(r.second.value());h.add(r.state.value());h.add(r.progress_milli);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const BattleRecord& r){h.add(r.front.value());h.add(r.attackers);h.add(r.defenders);h.add(r.progress_milli);h.add(r.resolved);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const ColonyRecord& r){h.add(r.country.value());h.add(r.province.value());h.add(r.progress_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const ShipDesignRecord& r){h.add(r.country.value());h.add(r.hull_hash);h.add(r.modules_hash);h.add(r.combat_power_milli);h.add(r.build_cost_milli);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const InvestmentPoolRecord& r){h.add(r.country.value());h.add(r.cash_milli);h.add(r.weekly_contribution_milli);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const DiplomaticRelationRecord& r){h.add(r.first.value());h.add(r.second.value());h.add(r.relation_milli);h.add(r.trust_ppm);h.add(r.tension_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const DiplomaticPlayStateRecord& r){h.add(r.play.value());h.add(r.weeks_in_phase);h.add(r.escalation_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const GovernmentRecord& r){h.add(r.country.value());h.add(r.legitimacy_ppm);h.add(r.stability_milli);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const LawEnactmentRecord& r){h.add(r.country.value());h.add(r.law_hash);h.add(r.progress_ppm);h.add(r.support_ppm);h.add(r.active);h.add(r.passed);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const WarRecord& r){h.add(r.play.value());h.add(r.attacker.value());h.add(r.defender.value());h.add(r.war_score_milli);h.add(r.weeks);h.add(r.active);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const ParliamentRecord& r){h.add(r.country.value());h.add(r.power_distribution_law_hash);h.add(r.elections_enabled);h.add(static_cast<std::uint8_t>(r.migration_policy));h.add(r.election_interval_weeks);h.add(r.weeks_to_next_election);h.add(r.total_seats);h.add(r.ruling_party_seats);h.add(r.opposition_seats);h.add(r.ruling_party_hash);h.add(r.pop_vote_weight_ppm);h.add(r.ig_clout_weight_ppm);}
 
-void hash_record(Fnv1a64& h, const CulturalAcceptanceRecord& r){h.add(r.country.value());h.add(r.culture.value());h.add(static_cast<std::uint8_t>(r.level));}
-void hash_record(Fnv1a64& h, const DiplomaticSwayRecord& r){h.add(r.play.value());h.add(r.sponsor.value());h.add(r.target_country.value());h.add(static_cast<std::uint8_t>(r.offer_type));h.add(r.payload_hash);h.add(r.accepted);}
-void hash_record(Fnv1a64& h, const WarGoalRecord& r){h.add(r.play.value());h.add(r.holder.value());h.add(r.target.value());h.add(static_cast<std::uint8_t>(r.goal_type));h.add(r.state_target.value());h.add(r.primary);h.add(r.enforced);}
-void hash_record(Fnv1a64& h, const CommanderRecord& r){h.add(r.country.value());h.add(r.location.value());h.add(static_cast<std::uint8_t>(r.trait));h.add(r.skill_level);}
-void hash_record(Fnv1a64& h, const SeaZoneRecord& r){h.add(r.key_hash);h.add(r.controller.value());h.add(r.blockade_efficiency_ppm);}
-void hash_record(Fnv1a64& h, const NavalBattleRecord& r){h.add(r.zone.value());h.add(r.attacker_navy.value());h.add(r.defender_navy.value());h.add(r.progress_milli);h.add(r.resolved);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const CulturalAcceptanceRecord& r){h.add(r.country.value());h.add(r.culture.value());h.add(static_cast<std::uint8_t>(r.level));}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const DiplomaticSwayRecord& r){h.add(r.play.value());h.add(r.sponsor.value());h.add(r.target_country.value());h.add(static_cast<std::uint8_t>(r.offer_type));h.add(r.payload_hash);h.add(r.accepted);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const WarGoalRecord& r){h.add(r.play.value());h.add(r.holder.value());h.add(r.target.value());h.add(static_cast<std::uint8_t>(r.goal_type));h.add(r.state_target.value());h.add(r.primary);h.add(r.enforced);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const CommanderRecord& r){h.add(r.country.value());h.add(r.location.value());h.add(static_cast<std::uint8_t>(r.trait));h.add(r.skill_level);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const SeaZoneRecord& r){h.add(r.key_hash);h.add(r.controller.value());h.add(r.blockade_efficiency_ppm);}
+[[maybe_unused]] void hash_record(Fnv1a64& h, const NavalBattleRecord& r){h.add(r.zone.value());h.add(r.attacker_navy.value());h.add(r.defender_navy.value());h.add(r.progress_milli);h.add(r.resolved);}
 
 template<class T>
-void hash_vec(Fnv1a64& h, const std::vector<T>& values) {
+[[maybe_unused]] void hash_vec(Fnv1a64& h, const std::vector<T>& values) {
     h.add(values.size());
     for (const auto& record : values) hash_record(h, record);
 }
 
-std::uint64_t effective_force(const ArmyRecord& army) noexcept {
+[[maybe_unused]] std::uint64_t effective_force(const ArmyRecord& army) noexcept {
     return (static_cast<std::uint64_t>(army.manpower) * static_cast<std::uint64_t>(army.organization_ppm)) / 1'000'000u;
 }
 
@@ -778,7 +778,7 @@ void GrandStrategyStore::run_diplomacy_weekly() {
 }
 
 
-void GrandStrategyStore::run_warfare_weekly() {
+void GrandStrategyStore::run_warfare_weekly(World* world) {
     for (auto& army : armys_) {
         if (army.organization_ppm < 1'000'000u) {
             army.organization_ppm = std::min(1'000'000u, army.organization_ppm + 25'000u);
@@ -869,6 +869,30 @@ void GrandStrategyStore::run_warfare_weekly() {
                 const auto org_loss = static_cast<std::uint32_t>(std::min<std::uint64_t>(raw_org_loss, army.organization_ppm));
                 army.organization_ppm -= org_loss;
             }
+            // Civilian casualties & devastation in active warzones (Taiping Rebellion realism)
+            if (world != nullptr && (attacker_force > 0u || defender_force > 0u)) {
+                world->geography.add_state_resistance_ppm(front.state, 3'000);
+                const auto province_states = world->geography.province_states();
+                const auto pop_provinces = world->pops.provinces();
+                const auto pop_sizes = world->pops.populations();
+                const auto pop_sols = world->pops.sol_all();
+
+                for (std::size_t pi = 0; pi < world->pops.size(); ++pi) {
+                    if (pi < pop_provinces.size() && pop_provinces[pi].valid()) {
+                        const auto prov_id = pop_provinces[pi].value();
+                        if (prov_id < province_states.size() && province_states[prov_id] == front.state) {
+                            const auto cur_pop = pop_sizes[pi];
+                            const auto casualty = static_cast<PopulationCount>(std::max<std::uint64_t>(1u, static_cast<std::uint64_t>(cur_pop) * 15u / 10'000u));
+                            if (cur_pop > casualty) {
+                                world->pops.set_population(PopId{static_cast<PopId::rep_type>(pi)}, cur_pop - casualty);
+                            }
+                            if (pi < pop_sols.size() && pop_sols[pi] > 1'000) {
+                                world->pops.set_standard_of_living_milli(PopId{static_cast<PopId::rep_type>(pi)}, pop_sols[pi] - 80);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if (participating_fronts != 0u) {
@@ -883,6 +907,73 @@ void GrandStrategyStore::run_warfare_weekly() {
                 const auto loser = war.war_score_milli >= 0 ? war.defender : war.attacker;
                 enforce_peace_treaty(war.play, winner, loser);
             }
+        }
+    }
+}
+
+void GrandStrategyStore::run_military_weekly(World& world) {
+    const auto province_owners = world.geography.province_owners();
+    const auto pop_provinces = world.pops.provinces();
+    const auto pop_sizes = world.pops.populations();
+
+    for (auto& army : armys_) {
+        if (!army.country.valid()) continue;
+        const auto ci = static_cast<std::size_t>(army.country.value());
+        if (ci >= world.countries.size()) continue;
+
+        constexpr std::uint32_t target_manpower = 25'000u;
+        const auto treasury = world.countries.treasury_milli(army.country);
+        const bool solvent = !world.countries.is_in_default(army.country) && treasury > 0;
+
+        // 1. Military upkeep and wages (proportional to army manpower)
+        const auto wage_per_soldier_milli = 10LL;
+        const auto weekly_wage_cost = static_cast<EconomyAmount>(army.manpower) * wage_per_soldier_milli;
+        if (treasury >= weekly_wage_cost) {
+            world.countries.add_treasury_milli(army.country, -weekly_wage_cost);
+        } else {
+            army.organization_ppm = static_cast<std::uint32_t>(
+                (static_cast<std::uint64_t>(army.organization_ppm) * 920'000u) / 1'000'000u);
+            const auto deserters = static_cast<std::uint32_t>(static_cast<std::uint64_t>(army.manpower) * 25u / 10'000u);
+            if (army.manpower > deserters) army.manpower -= deserters;
+            continue;
+        }
+
+        // 2. Continuous Reinforcements & Enlistment Pipeline from domestic POPs
+        if (solvent && army.manpower < target_manpower) {
+            const auto deficit = target_manpower - army.manpower;
+            const auto max_recruits = std::min<std::uint32_t>(deficit, 400u);
+
+            PopulationCount recruits_gathered = 0;
+            for (std::size_t pi = 0; pi < world.pops.size() && recruits_gathered < max_recruits; ++pi) {
+                if (pi < pop_provinces.size() && pop_provinces[pi].valid()) {
+                    const auto prov_id = pop_provinces[pi].value();
+                    if (prov_id < province_owners.size() && province_owners[prov_id] == army.country) {
+                        const auto pop_size = pop_sizes[pi];
+                        if (pop_size > 50u) {
+                            const auto to_recruit = std::min<PopulationCount>(
+                                static_cast<PopulationCount>(max_recruits - recruits_gathered),
+                                static_cast<PopulationCount>(pop_size / 300u + 1u));
+                            world.pops.set_population(PopId{static_cast<PopId::rep_type>(pi)}, pop_size - to_recruit);
+                            recruits_gathered += to_recruit;
+                        }
+                    }
+                }
+            }
+
+            if (recruits_gathered > 0 && army.manpower > 0) {
+                const auto old_force = static_cast<std::uint64_t>(army.manpower) * army.organization_ppm;
+                const auto recruit_force = static_cast<std::uint64_t>(recruits_gathered) * 500'000u;
+                army.manpower += recruits_gathered;
+                army.organization_ppm = static_cast<std::uint32_t>((old_force + recruit_force) / army.manpower);
+            } else if (recruits_gathered > 0) {
+                army.manpower += recruits_gathered;
+                army.organization_ppm = 500'000u;
+            }
+        }
+
+        // 3. Training & Drilling Organization Recovery
+        if (solvent && army.organization_ppm < 1'000'000u) {
+            army.organization_ppm = std::min<std::uint32_t>(1'000'000u, army.organization_ppm + 20'000u);
         }
     }
 }
@@ -1010,8 +1101,9 @@ void GrandStrategyStore::run_weekly_reference_tick(World& world) {
     run_institutions_weekly(world);
     run_tech_spread_weekly(world);
     run_state_resistance_weekly(world);
+    run_military_weekly(world);
     run_diplomacy_weekly();
-    run_warfare_weekly();
+    run_warfare_weekly(&world);
     run_naval_weekly();
 }
 

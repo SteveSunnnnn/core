@@ -321,6 +321,7 @@ public:
     void update_migration_flows(World& world);
 
 
+    void run_military_weekly(World& world);
     void run_weekly_reference_tick();
     void run_weekly_reference_tick(World& world);
     [[nodiscard]] bool validate(std::size_t countries, std::size_t markets, std::size_t provinces,
@@ -335,7 +336,7 @@ private:
     ParliamentId ensure_parliament(CountryId country);
     void run_politics_weekly();
     void run_diplomacy_weekly();
-    void run_warfare_weekly();
+    void run_warfare_weekly(World* world = nullptr);
     void run_naval_weekly();
     [[nodiscard]] WarId war_for_play(DiplomaticPlayId play) const noexcept;
 
