@@ -318,6 +318,7 @@ public:
 
     [[nodiscard]] ProvinceAttraction calculate_province_attraction(const World& world, ProvinceId province, CultureId culture = CultureId{}) const noexcept;
     MigrationFlowId start_migration_flow(ProvinceId source, ProvinceId destination, PopulationCount population, std::uint16_t weeks = 4);
+    MigrationFlowId start_mass_migration(ProvinceId source, ProvinceId destination, PopulationCount population, std::uint16_t weeks = 8);
     void update_migration_flows(World& world);
 
 

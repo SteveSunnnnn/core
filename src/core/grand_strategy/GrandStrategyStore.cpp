@@ -538,6 +538,11 @@ MigrationFlowId GrandStrategyStore::start_migration_flow(ProvinceId source, Prov
     return add_migration_flow({source, destination, population, weeks});
 }
 
+MigrationFlowId GrandStrategyStore::start_mass_migration(ProvinceId source, ProvinceId destination,
+                                                       PopulationCount population, std::uint16_t weeks) {
+    return start_migration_flow(source, destination, population, weeks);
+}
+
 void GrandStrategyStore::update_migration_flows(World& world) {
     const auto pop_provinces = world.pops.provinces();
     for (auto& flow : migration_flows_) {
