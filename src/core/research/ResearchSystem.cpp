@@ -286,41 +286,70 @@ ResearchTickStats ResearchSystem::run_weekly(World& world) {
 
 void ResearchSystem::run_tech_spread_weekly(World& world) {
     if (!finalized_) return;
+    ++weekly_ticks_;
     const auto country_count = world.countries.size();
     for (std::size_t ci = 0; ci < country_count; ++ci) {
         const auto country = CountryId{static_cast<CountryId::rep_type>(ci)};
         for (const auto& def : definitions_) {
             if (completed(world, country, def.key_hash)) continue;
+            // Strict prerequisite check: CANNOT spread if prerequisites are missing!
             if (!prerequisites_complete(def, world, country)) continue;
+            // Era gating check: CANNOT spread if earlier eras are not unlocked!
+            if (!is_era_unlocked(world, country, def.era)) continue;
 
-            bool neighbor_has_tech = false;
+            CountryId best_donor{};
+            std::uint32_t best_chance_ppm = 0u;
+
             for (std::size_t ni = 0; ni < country_count; ++ni) {
                 if (ni == ci) continue;
                 const auto neighbor = CountryId{static_cast<CountryId::rep_type>(ni)};
-                if (completed(world, neighbor, def.key_hash)) {
-                    if (world.grand_strategy.relation_milli(country, neighbor) >= 0) {
-                        neighbor_has_tech = true;
-                        break;
-                    }
+                if (!completed(world, neighbor, def.key_hash)) continue;
+
+                const auto rel = world.grand_strategy.relation_milli(country, neighbor);
+                if (rel < -25'000) continue; // Closed borders / hostile relations block spread
+
+                std::uint32_t chance = rules_.tech_spread_base_chance_ppm;
+                if (rel >= 50'000) chance += 50'000u;
+                if (world.grand_strategy.has_active_treaty(country, neighbor, TreatyKind::TradeAgreement)) chance += 100'000u;
+                if (world.grand_strategy.has_active_treaty(country, neighbor, TreatyKind::Alliance)) chance += 75'000u;
+                if (world.grand_strategy.has_active_treaty(country, neighbor, TreatyKind::InvestmentRights)) chance += 50'000u;
+
+                if (chance > best_chance_ppm) {
+                    best_chance_ppm = chance;
+                    best_donor = neighbor;
                 }
             }
 
-            if (neighbor_has_tech) {
-                if (!queued(world, country, def.key_hash)) {
-                    (void)world.grand_strategy.add_technology({country, def.key_hash, 0u, false});
-                }
-                for (auto& record : world.grand_strategy.technologys_) {
-                    if (record.country == country && record.key_hash == def.key_hash && !record.unlocked) {
-                        const auto cost_denom = std::max<std::uint64_t>(1u, static_cast<std::uint64_t>(def.cost_milli) / 1'000u);
-                        const auto spread_delta = std::max<std::uint32_t>(100u, static_cast<std::uint32_t>((1'000'000ull * rules_.tech_spread_rate_ppm) / (cost_denom * 1'000'000ull)));
-                        record.progress_ppm = std::min<std::uint32_t>(1'000'000u, record.progress_ppm + spread_delta);
-                        if (record.progress_ppm >= 1'000'000u) {
-                            record.unlocked = true;
-                            if (def.on_researched.has_value()) {
-                                (void)vm_.execute_if(*def.on_researched, world, ScopeRef::country(country));
-                            }
+            if (!best_donor.valid() || best_chance_ppm == 0u) continue;
+
+            // Deterministic probabilistic roll
+            Fnv1a64 roll_hash;
+            roll_hash.add(weekly_ticks_);
+            roll_hash.add(static_cast<std::uint32_t>(country.value()));
+            roll_hash.add(def.key_hash);
+            roll_hash.add(static_cast<std::uint32_t>(best_donor.value()));
+            const auto roll = static_cast<std::uint32_t>(roll_hash.value() % 1'000'000u);
+
+            if (roll >= best_chance_ppm) {
+                // Roll failed this week -> slow, probabilistic propagation!
+                continue;
+            }
+
+            if (!queued(world, country, def.key_hash)) {
+                (void)world.grand_strategy.add_technology({country, def.key_hash, 0u, false});
+            }
+            for (auto& record : world.grand_strategy.technologys_) {
+                if (record.country == country && record.key_hash == def.key_hash && !record.unlocked) {
+                    const auto cost_denom = std::max<std::uint64_t>(1u, static_cast<std::uint64_t>(def.cost_milli) / 1'000u);
+                    const auto spread_delta = std::max<std::uint32_t>(10u, static_cast<std::uint32_t>((1'000'000ull * rules_.tech_spread_rate_ppm) / (cost_denom * 1'000'000ull)));
+                    record.progress_ppm = std::min<std::uint32_t>(1'000'000u, record.progress_ppm + spread_delta);
+                    if (record.progress_ppm >= 1'000'000u) {
+                        record.unlocked = true;
+                        if (def.on_researched.has_value()) {
+                            (void)vm_.execute_if(*def.on_researched, world, ScopeRef::country(country));
                         }
                     }
+                    break;
                 }
             }
         }

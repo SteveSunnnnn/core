@@ -916,19 +916,32 @@ void GrandStrategyStore::run_tech_spread_weekly(World& world) {
         if (tech.unlocked || !tech.country.valid()) continue;
 
         bool has_advanced_partner = false;
+        CountryId partner{};
         for (const auto& other_tech : technologys_) {
             if (other_tech.key_hash == tech.key_hash && other_tech.unlocked && other_tech.country.valid() && other_tech.country != tech.country) {
                 if (has_active_treaty(tech.country, other_tech.country, TreatyKind::TradeAgreement) ||
                     has_active_treaty(tech.country, other_tech.country, TreatyKind::Alliance) ||
-                    has_active_treaty(tech.country, other_tech.country, TreatyKind::InvestmentRights)) {
+                    has_active_treaty(tech.country, other_tech.country, TreatyKind::InvestmentRights) ||
+                    relation_milli(tech.country, other_tech.country) >= 25'000) {
                     has_advanced_partner = true;
+                    partner = other_tech.country;
                     break;
                 }
             }
         }
 
         if (has_advanced_partner) {
-            tech.progress_ppm = std::min<std::uint32_t>(1'000'000u, tech.progress_ppm + 300u);
+            // Probabilistic roll (e.g. 25% chance per week)
+            Fnv1a64 roll_hash;
+            roll_hash.add(static_cast<std::uint32_t>(tech.country.value()));
+            roll_hash.add(tech.key_hash);
+            roll_hash.add(static_cast<std::uint32_t>(partner.value()));
+            roll_hash.add(tech.progress_ppm);
+            const auto roll = static_cast<std::uint32_t>(roll_hash.value() % 1'000'000u);
+            if (roll >= 250'000u) continue;
+
+            // Slow, gradual progress (150 ppm)
+            tech.progress_ppm = std::min<std::uint32_t>(1'000'000u, tech.progress_ppm + 150u);
             if (tech.progress_ppm >= 1'000'000u) {
                 tech.unlocked = true;
             }

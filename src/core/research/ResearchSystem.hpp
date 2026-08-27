@@ -30,6 +30,7 @@ struct ResearchRules {
     std::uint32_t innovation_per_million_literate_population_milli = 1'000u;
     std::uint32_t max_innovation_milli = 1'000'000u;
     std::uint32_t tech_spread_rate_ppm = 100'000u;
+    std::uint32_t tech_spread_base_chance_ppm = 250'000u;
     std::uint32_t min_era_techs_required = 3u;
 };
 
@@ -103,6 +104,7 @@ private:
     std::vector<TechnologyDefinition> definitions_;
     std::unordered_map<std::uint64_t, std::uint32_t> definition_lookup_;
     std::vector<std::uint32_t> innovation_milli_;
+    std::uint64_t weekly_ticks_ = 0u;
     bool finalized_ = false;
 };
 

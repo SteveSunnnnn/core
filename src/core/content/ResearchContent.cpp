@@ -32,6 +32,8 @@ ResearchContentDatabase::ResearchContentDatabase(SymbolTable& symbols) : symbols
     sym_base_innovation_ = symbols_.intern("base_innovation_milli");
     sym_literate_innovation_ = symbols_.intern("innovation_per_million_literate_population_milli");
     sym_max_innovation_ = symbols_.intern("max_innovation_milli");
+    sym_tech_spread_rate_ = symbols_.intern("tech_spread_rate_ppm");
+    sym_tech_spread_base_chance_ = symbols_.intern("tech_spread_base_chance_ppm");
     technology_lookup_.reserve(512u);
 }
 
@@ -131,6 +133,12 @@ bool ResearchContentDatabase::parse_rules(const ScriptObject& object, ResearchRu
         } else if (field.key == sym_max_innovation_) {
             if (!parse_u32(field, value) || value == 0u) { diagnostics.push_back({"max innovation requires a positive integer", field.line}); ok = false; }
             else out.max_innovation_milli = value;
+        } else if (field.key == sym_tech_spread_rate_) {
+            if (!parse_u32(field, value)) { diagnostics.push_back({"tech spread rate requires an unsigned integer", field.line}); ok = false; }
+            else out.tech_spread_rate_ppm = value;
+        } else if (field.key == sym_tech_spread_base_chance_) {
+            if (!parse_u32(field, value)) { diagnostics.push_back({"tech spread base chance requires an unsigned integer", field.line}); ok = false; }
+            else out.tech_spread_base_chance_ppm = value;
         }
     }
     if (out.base_innovation_milli > out.max_innovation_milli ||

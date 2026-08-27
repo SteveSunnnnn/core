@@ -60,6 +60,8 @@ private:
     SymbolId sym_base_innovation_{};
     SymbolId sym_literate_innovation_{};
     SymbolId sym_max_innovation_{};
+    SymbolId sym_tech_spread_rate_{};
+    SymbolId sym_tech_spread_base_chance_{};
 
     ResearchRules rules_{};
     std::vector<TechnologyDefinitionSpec> technologies_;
