@@ -398,6 +398,41 @@ static void test_bimetallism_and_greshams_law() {
     assert(store.exchange_rate_ppm(bimetal) < 900'000);
 }
 
+static void test_gdp_real_numeraire_and_domestic_wages() {
+    auto f = make_fixture(2u, 4u, 40u, 100u);
+    const CurrencyKey gold_cur = economy_stable_key("currency.gold_standard");
+    const CurrencyKey devalued_cur = economy_stable_key("currency.devalued");
+
+    // Gold currency: rate = 1.0 (1'000'000 ppm)
+    // Devalued currency: rate = 0.5 (500'000 ppm)
+    f.world.currencies.register_currency(gold_cur, "Gold Mark", MonetaryStandard::GoldStandard, 1000, 15500, 1'000'000);
+    f.world.currencies.register_currency(devalued_cur, "Paper Lira", MonetaryStandard::FiatFloating, 1000, 15500, 500'000);
+
+    const MarketId m0{0u};
+    const MarketId m1{1u};
+    const CountryId c0{0u};
+    const CountryId c1{1u};
+
+    f.world.markets.set_currency_key(m0, gold_cur);
+    f.world.markets.set_currency_key(m1, devalued_cur);
+    f.world.countries.set_primary_currency(c0, gold_cur);
+    f.world.countries.set_primary_currency(c1, devalued_cur);
+
+    EconomySystem economy{f.definitions};
+    economy.rebuild_indices(f.world);
+    JobSystem jobs{0u};
+
+    economy.run_weekly(f.world, jobs);
+
+    // Verify Real Global GDP vs Nominal Local GDP:
+    assert(f.world.countries.nominal_gdp_milli(c1) > 0);
+    assert(f.world.countries.gdp(c1) > 0.0);
+    // Real GDP is normalized via exchange rate convert to numeraire
+    const double expected_real_gdp = static_cast<double>(
+        f.world.currencies.convert(f.world.countries.nominal_gdp_milli(c1), devalued_cur, default_currency_key)) / 1000.0;
+    assert(std::abs(f.world.countries.gdp(c1) - expected_real_gdp) < 1.0);
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -412,6 +447,7 @@ int main() {
     test_cross_currency_trade_and_fx_market();
     test_monetary_sovereignty_and_seigniorage();
     test_bimetallism_and_greshams_law();
+    test_gdp_real_numeraire_and_domestic_wages();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }

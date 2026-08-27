@@ -5,6 +5,8 @@
 - Implemented **Currency Zones (Monetary Unions)** and **Monetary Sovereignty**: The member country with highest prestige and power in a currency union dynamically holds monetary sovereignty, dictating metallic parity policy and harvesting seigniorage revenues into its national treasury.
 - Added country prestige (`prestige`, `power_score`) to `CountryStore` and integrated it into authoritative state checksums.
 - Enhanced `EconomySystem::trade` with multi-currency invoice clearing and Hume's Price-Specie Flow mechanism across international markets.
+- Guaranteed rigorous domestic vs foreign exchange settlement separation: POP wages, consumption, building retention, and taxation strictly clear in domestic local currency, while cross-zone trade clears in foreign exchange.
+- Standardized country GDP calculation to the global gold parity numeraire (`default_currency_key`), eliminating currency devaluation/inflation distortions in international Great Power rankings while retaining nominal local currency GDP for domestic fiscal accounting.
 - Updated `FX01` atomic save serialization to persist monetary standards, fine metal parities, zone leadership, and country prestige scores.
 - Added comprehensive unit and regression tests in `tests/economy_tests.cpp` covering metallic standard parities, Gresham's law ratio divergence, zone leadership election/transfer, and seigniorage distribution.
 

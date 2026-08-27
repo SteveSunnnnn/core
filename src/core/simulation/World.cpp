@@ -29,6 +29,7 @@ void CountryStore::reserve(std::size_t count) {
     tags_.reserve(count);
     population_.reserve(count);
     gdp_.reserve(count);
+    nominal_gdp_milli_.reserve(count);
     treasury_.reserve(count);
     tax_rate_.reserve(count);
     prestige_.reserve(count);
@@ -43,6 +44,7 @@ CountryId CountryStore::create(CountryInit init) {
     tags_.push_back(std::move(init.tag));
     population_.push_back(nonnegative_finite(init.population, "population"));
     gdp_.push_back(nonnegative_finite(init.gdp, "gdp"));
+    nominal_gdp_milli_.push_back(0);
     treasury_.push_back(finite_value(init.treasury, "treasury"));
     tax_rate_.push_back(tax_finite(init.tax_rate));
     prestige_.push_back(nonnegative_finite(init.prestige, "prestige"));
@@ -65,6 +67,16 @@ std::size_t CountryStore::idx(CountryId id) const {
 std::string_view CountryStore::tag(CountryId id) const { return tags_[idx(id)]; }
 double CountryStore::population(CountryId id) const { return population_[idx(id)]; }
 double CountryStore::gdp(CountryId id) const { return gdp_[idx(id)]; }
+double CountryStore::nominal_gdp(CountryId id) const {
+    const auto i = idx(id);
+    return i < nominal_gdp_milli_.size()
+        ? static_cast<double>(nominal_gdp_milli_[i]) / static_cast<double>(economy_scale)
+        : 0.0;
+}
+EconomyAmount CountryStore::nominal_gdp_milli(CountryId id) const {
+    const auto i = idx(id);
+    return i < nominal_gdp_milli_.size() ? nominal_gdp_milli_[i] : 0;
+}
 double CountryStore::treasury(CountryId id) const { return treasury_[idx(id)]; }
 EconomyAmount CountryStore::treasury_milli(CountryId id) const {
     const double value = treasury_[idx(id)];
@@ -130,6 +142,12 @@ double CountryStore::power_score(CountryId id) const {
 
 void CountryStore::set_population(CountryId id, double value) { population_[idx(id)] = nonnegative_finite(value, "population"); }
 void CountryStore::set_gdp(CountryId id, double value) { gdp_[idx(id)] = nonnegative_finite(value, "gdp"); }
+void CountryStore::set_nominal_gdp_milli(CountryId id, EconomyAmount amount_milli) {
+    const auto i = idx(id);
+    if (i < nominal_gdp_milli_.size()) {
+        nominal_gdp_milli_[i] = std::max<EconomyAmount>(0, amount_milli);
+    }
+}
 void CountryStore::set_treasury(CountryId id, double value) { treasury_[idx(id)] = finite_value(value, "treasury"); }
 void CountryStore::set_tax_rate(CountryId id, double value) {
     const auto i = idx(id);

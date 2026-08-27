@@ -87,6 +87,7 @@ private:
     std::vector<EconomyAmount> market_gdp_milli_;
     std::vector<std::uint64_t> market_population_;
     std::vector<EconomyAmount> country_gdp_milli_;
+    std::vector<EconomyAmount> country_nominal_gdp_milli_;
     std::vector<std::uint64_t> country_population_;
     std::vector<std::uint64_t> profile_population_;
     std::vector<EconomyAmount> profile_basket_cost_milli_;

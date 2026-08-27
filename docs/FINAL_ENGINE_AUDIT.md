@@ -15,12 +15,14 @@ Audit date: 2026-08-27. Product version remains **1.0.0**.
 - Economy content ingestion rejects empty/duplicate definition keys, invalid `GoodId` references, non-positive flows, and offset/ID capacity overflow before mutating tables.
 - `ScriptedGuiRuntime` retained UI subsystem evaluates typed bindings, virtualized collection lists/grids, chart downsampling, and generational dirty diffs with zero provider memory leaks.
 - Monetary Standards & Currency Zones (`CurrencyStore`): Gold Standard (with gold shipping points), Silver Standard, Bimetallism (with Gresham's Law ratio tracking), and Fiat Floating are fully implemented. Hegemonic monetary sovereignty is dynamically assigned to the highest-prestige power in each currency union, collecting seigniorage and governing zone parity.
+- Domestic vs Foreign Exchange Settlement: Domestic transactions (wages, POP consumption, taxes, corporate retention) strictly settle in local primary currency, while cross-zone trade clears in foreign exchange with balance-of-payments tracking.
+- Unified Real GDP Numeraire: Country GDP is normalized to global gold parity standard (`default_currency_key`) to eliminate inflation/currency devaluation distortions in international Great Power rankings, while domestic nominal GDP remains accessible for internal fiscal metrics.
 
 ## Release benchmark snapshot
 
 Machine-specific numbers; use only as a regression baseline.
 
-- Economy: 128 markets, 32 goods, 30,000 buildings, 300,000 POPs; 16 job slots; weekly tick average 8.352 ms, p95 9.019 ms; checksum `0x11a3606fb86cea77`.
+- Economy: 128 markets, 32 goods, 30,000 buildings, 300,000 POPs; 16 job slots; weekly tick average 8.049 ms, p95 8.582 ms; checksum `0x11a3606fb86cea77`.
 - Living map: 8,000 provinces, 300,000 POPs, 30,000 buildings; steady update average 0.303 ms; checksum `0x027e1768e9202909`.
 - Dense 5M-row kernel: 2.763 ms serial, 1.075 ms parallel, identical reduction result.
 - 50,000-node dirty modifier chain recompute: 0.389 ms.

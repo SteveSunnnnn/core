@@ -48,6 +48,8 @@ public:
     [[nodiscard]] std::string_view tag(CountryId id) const;
     [[nodiscard]] double population(CountryId id) const;
     [[nodiscard]] double gdp(CountryId id) const;
+    [[nodiscard]] double nominal_gdp(CountryId id) const;
+    [[nodiscard]] EconomyAmount nominal_gdp_milli(CountryId id) const;
     [[nodiscard]] double treasury(CountryId id) const;
     // Transitional fixed-point adapter for the economy settlement hot path.
     // Treasury remains binary64 for Core 1.0 save compatibility, but all
@@ -73,6 +75,7 @@ public:
 
     [[nodiscard]] std::span<const double> populations() const noexcept { return population_; }
     [[nodiscard]] std::span<const double> gdps() const noexcept { return gdp_; }
+    [[nodiscard]] std::span<const EconomyAmount> nominal_gdps() const noexcept { return nominal_gdp_milli_; }
     [[nodiscard]] std::span<const double> treasuries() const noexcept { return treasury_; }
     [[nodiscard]] std::span<const double> tax_rates() const noexcept { return tax_rate_; }
     [[nodiscard]] std::span<const double> prestiges() const noexcept { return prestige_; }
@@ -82,6 +85,7 @@ public:
 
     void set_population(CountryId id, double value);
     void set_gdp(CountryId id, double value);
+    void set_nominal_gdp_milli(CountryId id, EconomyAmount amount_milli);
     void set_treasury(CountryId id, double value);
     void set_tax_rate(CountryId id, double value);
     void set_tax_policy(CountryId id, TaxPolicy policy);
@@ -98,6 +102,7 @@ private:
     std::vector<std::string> tags_;
     std::vector<double> population_;
     std::vector<double> gdp_;
+    std::vector<EconomyAmount> nominal_gdp_milli_;
     std::vector<double> treasury_;
     std::vector<double> tax_rate_;
     std::vector<double> prestige_;

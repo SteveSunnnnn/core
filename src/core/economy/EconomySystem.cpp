@@ -82,6 +82,7 @@ std::size_t EconomySystem::scratch_memory_bytes() const noexcept {
         + market_gdp_milli_.capacity() * sizeof(EconomyAmount)
         + market_population_.capacity() * sizeof(std::uint64_t)
         + country_gdp_milli_.capacity() * sizeof(EconomyAmount)
+        + country_nominal_gdp_milli_.capacity() * sizeof(EconomyAmount)
         + country_population_.capacity() * sizeof(std::uint64_t)
         + profile_population_.capacity() * sizeof(std::uint64_t)
         + profile_basket_cost_milli_.capacity() * sizeof(EconomyAmount)
@@ -734,6 +735,8 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
         });
     if (country_gdp_milli_.size() != world.countries.size()) country_gdp_milli_.assign(world.countries.size(), 0);
     else std::fill(country_gdp_milli_.begin(), country_gdp_milli_.end(), EconomyAmount{0});
+    if (country_nominal_gdp_milli_.size() != world.countries.size()) country_nominal_gdp_milli_.assign(world.countries.size(), 0);
+    else std::fill(country_nominal_gdp_milli_.begin(), country_nominal_gdp_milli_.end(), EconomyAmount{0});
     if (country_population_.size() != world.countries.size()) country_population_.assign(world.countries.size(), 0u);
     else std::fill(country_population_.begin(), country_population_.end(), std::uint64_t{0});
     for (std::size_t mi = 0; mi < world.markets.size(); ++mi) {
@@ -742,7 +745,13 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
         if (!owner.valid()) continue;
         const auto ci = static_cast<std::size_t>(owner.value());
         if (ci >= world.countries.size()) continue;
-        country_gdp_milli_[ci] = saturating_add(country_gdp_milli_[ci], market_gdp_milli_[mi]);
+
+        // Convert local market value added into Global Real Numeraire (Gold Parity Standard):
+        const CurrencyKey market_cur = world.markets.currency_key(market);
+        const EconomyAmount gdp_in_numeraire = world.currencies.convert(
+            market_gdp_milli_[mi], market_cur, default_currency_key);
+        country_gdp_milli_[ci] = saturating_add(country_gdp_milli_[ci], gdp_in_numeraire);
+        country_nominal_gdp_milli_[ci] = saturating_add(country_nominal_gdp_milli_[ci], market_gdp_milli_[mi]);
         country_population_[ci] += market_population_[mi];
         // Credit settlement: every amount already credited to an overdrawn
         // building has an equal funding leg. Private pools and the treasury
@@ -777,6 +786,7 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
         const CountryId country{static_cast<CountryId::rep_type>(ci)};
         world.countries.set_population(country, static_cast<double>(country_population_[ci]));
         world.countries.set_gdp(country, static_cast<double>(country_gdp_milli_[ci]) / static_cast<double>(economy_scale));
+        world.countries.set_nominal_gdp_milli(country, country_nominal_gdp_milli_[ci]);
     }
     return stats;
 }
