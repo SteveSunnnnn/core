@@ -1,0 +1,14 @@
+#include "core/runtime/CoreEngine.hpp"
+#include "core/base/Hash.hpp"
+#include <stdexcept>
+namespace core {
+CoreEngine::CoreEngine(CoreEngineConfig config):config_(config),jobs_(config.background_threads),economy_(definitions_),scripts_(ScriptRegistry::make_builtin()),gameplay_(scripts_),on_actions_(scripts_),ai_(scripts_),research_(scripts_),notifications_(scripts_){}
+void CoreEngine::initialize_economy(){economy_.rebuild_indices(world_);}
+std::uint64_t CoreEngine::queue_command(CommandType type, CountryId country, double value){const auto sequence=commands_.enqueue(type,country,value);replay_.record(clock_.tick_index()+1u,type,country,value);return sequence;}
+void CoreEngine::advance_tick(EconomyTickProfile* profile){commands_.apply_all(world_);clock_.advance_tick();(void)on_actions_.dispatch_due(world_,gameplay_,clock_.tick_index());if(clock_.is_daily_boundary()){gameplay_.update(world_,clock_.tick_index());(void)notifications_.update(clock_.tick_index());}if(clock_.is_weekly_boundary()){economy_.run_weekly(world_,jobs_,profile);(void)research_.run_weekly(world_);world_.grand_strategy.run_weekly_reference_tick();(void)ai_.run_plans(world_,ScopeType::Country,4096u,clock_.tick_index());}if(clock_.is_yearly_boundary())replay_.checkpoint(clock_.tick_index(),engine_checksum());}
+void CoreEngine::advance_ticks(std::uint64_t count){for(std::uint64_t i=0;i<count;++i)advance_tick();}
+SaveGameBlob CoreEngine::make_save() const{return SaveGameCodec::encode(world_,clock_,gameplay_,ai_,notifications_,on_actions_,config_.content_hash,config_.world_pack_hash);}
+void CoreEngine::restore(std::span<const std::byte> save){SaveGameCodec::decode(save,world_,clock_,gameplay_,ai_,notifications_,on_actions_,definitions_,config_.content_hash,config_.world_pack_hash);economy_.rebuild_indices(world_);commands_.clear();replay_.clear();}
+bool CoreEngine::validate_world() const noexcept {if(!world_.geography.validate(world_.countries.size(),world_.markets.size()))return false;if(!world_.grand_strategy.validate(world_.countries.size(),world_.markets.size(),world_.geography.province_count(),world_.geography.state_count(),world_.buildings.size(),definitions_.good_count()))return false;if(!research_.validate_state(world_))return false;try{gameplay_.validate_state(gameplay_.instances(),gameplay_.log(),world_,clock_.tick_index(),gameplay_.next_instance_id());notifications_.validate_state(notifications_.instances(),notifications_.next_instance_id(),world_,clock_.tick_index());on_actions_.validate_state(on_actions_.queue(),on_actions_.next_invocation_id(),world_);}catch(...){return false;}return true;}
+std::uint64_t CoreEngine::engine_checksum() const noexcept {Fnv1a64 h;h.add(world_.checksum());h.add(gameplay_.checksum());h.add(ai_.checksum());h.add(clock_.checksum());h.add(notifications_.checksum());h.add(on_actions_.checksum());return h.value();}
+} // namespace core

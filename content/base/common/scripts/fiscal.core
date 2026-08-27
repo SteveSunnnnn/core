@@ -1,0 +1,18 @@
+script fiscal_relief {
+    scope = country
+    trigger = {
+        population_above = 1000000
+        treasury_above = 10
+    }
+    effect = {
+        add_treasury = 2
+        set_tax_rate = 0.18
+    }
+}
+
+scripted_value fiscal_capacity {
+    scope = country
+    source = treasury
+    multiply = 2
+    add = 1
+}

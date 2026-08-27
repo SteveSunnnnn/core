@@ -1,0 +1,247 @@
+#include "GuiLayoutEditor.hpp"
+#include <fstream>
+#include <sstream>
+#include <cmath>
+#include <algorithm>
+
+namespace core {
+
+std::uint64_t GuiLayoutEditor::add_widget(GuiWidgetDef def) {
+    def.id = next_id_++;
+    widgets_.push_back(std::move(def));
+    return widgets_.back().id;
+}
+
+void GuiLayoutEditor::remove_widget(std::uint64_t id) {
+    std::erase_if(widgets_, [id](const GuiWidgetDef& w) { return w.id == id; });
+    if (selected_id_ == id) {
+        selected_id_ = std::nullopt;
+    }
+}
+
+void GuiLayoutEditor::clear_widgets() {
+    widgets_.clear();
+    selected_id_ = std::nullopt;
+}
+
+void GuiLayoutEditor::select_widget(std::uint64_t id) {
+    deselect_all();
+    selected_id_ = id;
+    for (auto& w : widgets_) {
+        if (w.id == id) w.is_selected = true;
+    }
+}
+
+void GuiLayoutEditor::deselect_all() {
+    selected_id_ = std::nullopt;
+    for (auto& w : widgets_) {
+        w.is_selected = false;
+    }
+}
+
+std::optional<std::uint64_t> GuiLayoutEditor::selected_widget_id() const noexcept {
+    return selected_id_;
+}
+
+const GuiWidgetDef* GuiLayoutEditor::selected_widget() const noexcept {
+    if (!selected_id_) return nullptr;
+    for (const auto& w : widgets_) {
+        if (w.id == *selected_id_) return &w;
+    }
+    return nullptr;
+}
+
+std::optional<std::uint64_t> GuiLayoutEditor::widget_at(float x, float y) const {
+    for (auto it = widgets_.rbegin(); it != widgets_.rend(); ++it) {
+        if (x >= it->bounds.x && x <= it->bounds.x + it->bounds.w &&
+            y >= it->bounds.y && y <= it->bounds.y + it->bounds.h) {
+            return it->id;
+        }
+    }
+    return std::nullopt;
+}
+
+GuiDragMode GuiLayoutEditor::detect_drag_mode(const GuiWidgetDef& widget, float x, float y) const {
+    bool on_right = (x >= widget.bounds.x + widget.bounds.w - kHandleSize && x <= widget.bounds.x + widget.bounds.w);
+    bool on_bottom = (y >= widget.bounds.y + widget.bounds.h - kHandleSize && y <= widget.bounds.y + widget.bounds.h);
+    
+    if (on_right && on_bottom) return GuiDragMode::ResizeCorner;
+    if (on_right) return GuiDragMode::ResizeRight;
+    if (on_bottom) return GuiDragMode::ResizeBottom;
+    return GuiDragMode::Move;
+}
+
+void GuiLayoutEditor::on_mouse_down(float x, float y) {
+    auto id_opt = widget_at(x, y);
+    if (id_opt) {
+        select_widget(*id_opt);
+        auto* w = const_cast<GuiWidgetDef*>(selected_widget());
+        drag_mode_ = detect_drag_mode(*w, x, y);
+        drag_start_x_ = x;
+        drag_start_y_ = y;
+        drag_original_bounds_ = w->bounds;
+        is_dragging_ = true;
+    } else {
+        deselect_all();
+    }
+}
+
+void GuiLayoutEditor::on_mouse_drag(float x, float y) {
+    if (!is_dragging_ || !selected_id_) return;
+    auto* w = const_cast<GuiWidgetDef*>(selected_widget());
+    if (!w) return;
+
+    float dx = x - drag_start_x_;
+    float dy = y - drag_start_y_;
+    
+    auto guides = compute_guides(w->id);
+
+    if (drag_mode_ == GuiDragMode::Move) {
+        float new_x = drag_original_bounds_.x + dx;
+        float new_y = drag_original_bounds_.y + dy;
+        w->bounds.x = snap_to_guide(new_x, guides, true);
+        w->bounds.y = snap_to_guide(new_y, guides, false);
+    } else if (drag_mode_ == GuiDragMode::ResizeRight) {
+        float new_w = std::max(20.0f, drag_original_bounds_.w + dx);
+        w->bounds.w = snap_to_guide(w->bounds.x + new_w, guides, true) - w->bounds.x;
+    } else if (drag_mode_ == GuiDragMode::ResizeBottom) {
+        float new_h = std::max(20.0f, drag_original_bounds_.h + dy);
+        w->bounds.h = snap_to_guide(w->bounds.y + new_h, guides, false) - w->bounds.y;
+    } else if (drag_mode_ == GuiDragMode::ResizeCorner) {
+        float new_w = std::max(20.0f, drag_original_bounds_.w + dx);
+        float new_h = std::max(20.0f, drag_original_bounds_.h + dy);
+        w->bounds.w = snap_to_guide(w->bounds.x + new_w, guides, true) - w->bounds.x;
+        w->bounds.h = snap_to_guide(w->bounds.y + new_h, guides, false) - w->bounds.y;
+    }
+}
+
+void GuiLayoutEditor::on_mouse_up() {
+    is_dragging_ = false;
+    drag_mode_ = GuiDragMode::None;
+}
+
+void GuiLayoutEditor::on_mouse_move(float x, float y) {
+    for (auto& w : widgets_) {
+        w.is_hovered = (x >= w.bounds.x && x <= w.bounds.x + w.bounds.w &&
+                        y >= w.bounds.y && y <= w.bounds.y + w.bounds.h);
+    }
+}
+
+void GuiLayoutEditor::on_delete_key() {
+    if (selected_id_) {
+        remove_widget(*selected_id_);
+    }
+}
+
+void GuiLayoutEditor::render_widgets(UiDrawList& ui, UiRect /*screen*/) const {
+    for (const auto& w : widgets_) {
+        if (w.type == "panel") {
+            ui.wood_panel(w.bounds);
+        } else if (w.type == "button") {
+            ui.brass_button(w.bounds, w.label.empty() ? "Button" : w.label);
+        } else if (w.type == "parchment") {
+            ui.parchment_panel(w.bounds);
+        } else if (w.type == "progress_bar") {
+            ui.progress_bar(w.bounds, 0.65f);
+        } else {
+            ui.quad(w.bounds, 0x40d4af37u);
+            ui.text(w.label.empty() ? w.type : w.label, w.bounds.x + 4.0f, w.bounds.y + 4.0f, 13.0f, 0xffffffffu);
+        }
+    }
+}
+
+void GuiLayoutEditor::render_overlay(UiDrawList& ui, UiRect /*screen*/) const {
+    if (auto* w = selected_widget()) {
+        std::vector<float> box_pts{
+            w->bounds.x, w->bounds.y,
+            w->bounds.x + w->bounds.w, w->bounds.y,
+            w->bounds.x + w->bounds.w, w->bounds.y + w->bounds.h,
+            w->bounds.x, w->bounds.y + w->bounds.h,
+            w->bounds.x, w->bounds.y
+        };
+        ui.polyline(box_pts, 0xff00ffffu);
+        
+        float hs = kHandleSize;
+        ui.quad({w->bounds.x - hs * 0.5f, w->bounds.y - hs * 0.5f, hs, hs}, 0xffd4af37u);
+        ui.quad({w->bounds.x + w->bounds.w - hs * 0.5f, w->bounds.y - hs * 0.5f, hs, hs}, 0xffd4af37u);
+        ui.quad({w->bounds.x - hs * 0.5f, w->bounds.y + w->bounds.h - hs * 0.5f, hs, hs}, 0xffd4af37u);
+        ui.quad({w->bounds.x + w->bounds.w - hs * 0.5f, w->bounds.y + w->bounds.h - hs * 0.5f, hs, hs}, 0xffd4af37u);
+    }
+}
+
+void GuiLayoutEditor::render_property_panel(UiDrawList& ui, UiRect screen) const {
+    float pw = 240.0f;
+    float ph = 300.0f;
+    float px = screen.x + screen.w - pw - 12.0f;
+    float py = screen.y + 44.0f;
+    
+    ui.parchment_panel({px, py, pw, ph});
+    ui.text("GUI LAYOUT INSPECTOR", px + 12.0f, py + 12.0f, 14.0f, 0xff3b2413u);
+    ui.quad({px + 12.0f, py + 28.0f, pw - 24.0f, 1.0f}, 0xff8c6d46u);
+    
+    if (auto* w = selected_widget()) {
+        ui.text("ID: #" + std::to_string(w->id), px + 14.0f, py + 38.0f, 12.0f, 0xff1e1208u);
+        ui.text("Type: " + w->type, px + 14.0f, py + 58.0f, 12.0f, 0xff1e1208u);
+        ui.text("Label: " + w->label, px + 14.0f, py + 78.0f, 12.0f, 0xff1e1208u);
+        ui.text("X: " + std::to_string(static_cast<int>(w->bounds.x)), px + 14.0f, py + 98.0f, 12.0f, 0xff1e1208u);
+        ui.text("Y: " + std::to_string(static_cast<int>(w->bounds.y)), px + 14.0f, py + 118.0f, 12.0f, 0xff1e1208u);
+        ui.text("W: " + std::to_string(static_cast<int>(w->bounds.w)), px + 14.0f, py + 138.0f, 12.0f, 0xff1e1208u);
+        ui.text("H: " + std::to_string(static_cast<int>(w->bounds.h)), px + 14.0f, py + 158.0f, 12.0f, 0xff1e1208u);
+    } else {
+        ui.text("No widget selected", px + 14.0f, py + 48.0f, 12.0f, 0xff705030u);
+    }
+}
+
+bool GuiLayoutEditor::save_layout(const std::filesystem::path& path) const {
+    std::ofstream out(path);
+    if (!out) return false;
+    for (const auto& w : widgets_) {
+        out << w.id << " " << w.type << " " << w.bounds.x << " " << w.bounds.y << " " << w.bounds.w << " " << w.bounds.h << " " << (w.label.empty() ? "_" : w.label) << "\n";
+    }
+    return true;
+}
+
+bool GuiLayoutEditor::load_layout(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    if (!in) return false;
+    clear_widgets();
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream iss(line);
+        GuiWidgetDef w;
+        if (iss >> w.id >> w.type >> w.bounds.x >> w.bounds.y >> w.bounds.w >> w.bounds.h >> w.label) {
+            if (w.label == "_") w.label = "";
+            widgets_.push_back(w);
+            next_id_ = std::max(next_id_, w.id + 1);
+        }
+    }
+    return true;
+}
+
+std::vector<GuiAlignmentGuide> GuiLayoutEditor::compute_guides(std::uint64_t exclude_id) const {
+    std::vector<GuiAlignmentGuide> guides;
+    for (const auto& w : widgets_) {
+        if (w.id == exclude_id) continue;
+        guides.push_back({true, w.bounds.x, kSnapDistance});
+        guides.push_back({true, w.bounds.x + w.bounds.w, kSnapDistance});
+        guides.push_back({true, w.bounds.x + w.bounds.w / 2.0f, kSnapDistance});
+        
+        guides.push_back({false, w.bounds.y, kSnapDistance});
+        guides.push_back({false, w.bounds.y + w.bounds.h, kSnapDistance});
+        guides.push_back({false, w.bounds.y + w.bounds.h / 2.0f, kSnapDistance});
+    }
+    return guides;
+}
+
+float GuiLayoutEditor::snap_to_guide(float value, const std::vector<GuiAlignmentGuide>& guides, bool vertical) const {
+    for (const auto& g : guides) {
+        if (g.is_vertical == vertical) {
+            if (std::abs(value - g.position) <= g.snap_distance) {
+                return g.position;
+            }
+        }
+    }
+    return value;
+}
+
+} // namespace core

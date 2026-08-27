@@ -1,0 +1,27 @@
+name: Core Windows CPU CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  release-headless:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset release-headless
+      - name: Build
+        run: cmake --build --preset release-headless --parallel 2
+      - name: Tests
+        run: ctest --preset release-headless --output-on-failure
+      - name: JobSystem stress
+        shell: pwsh
+        run: |
+          cmake -S . -B build/release-headless -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCORE_BUILD_TESTS=ON `
+            -DCORE_BUILD_STRESS_TESTS=ON `
+            -DCORE_BUILD_DESKTOP=OFF
+          cmake --build build/release-headless --target core_job_stress --parallel 2
+          .\build\release-headless\core_job_stress.exe

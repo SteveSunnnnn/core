@@ -1,0 +1,387 @@
+#include "core/scripting/ScriptRegistry.hpp"
+#include "core/simulation/World.hpp"
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+
+namespace core {
+namespace {
+
+bool argument_well_formed(ScriptArgument argument) noexcept {
+    switch (argument.kind) {
+        case ScriptArgumentKind::None: return false;
+        case ScriptArgumentKind::Number: return std::isfinite(argument.number);
+        case ScriptArgumentKind::SymbolHash: return true;
+        case ScriptArgumentKind::Boolean:
+            return argument.number == 0.0 || argument.number == 1.0;
+        case ScriptArgumentKind::Scope: return argument.scope_value.valid();
+    }
+    return false;
+}
+
+CountryId numeric_country_argument(const World& world, double value) noexcept {
+    if (!std::isfinite(value) || value < 0.0 ||
+        value > static_cast<double>(std::numeric_limits<std::uint32_t>::max()) ||
+        std::floor(value) != value) return {};
+    const CountryId id{static_cast<std::uint32_t>(value)};
+    return static_cast<std::size_t>(id.value()) < world.countries.size() ? id : CountryId{};
+}
+
+CountryId country_argument(const World& world, ScriptArgument argument) noexcept {
+    if (argument.kind == ScriptArgumentKind::Scope) {
+        if (argument.scope_value.type != ScopeType::Country) return {};
+        const CountryId id{argument.scope_value.raw_id};
+        return static_cast<std::size_t>(id.value()) < world.countries.size() ? id : CountryId{};
+    }
+    if (argument.kind == ScriptArgumentKind::Number) {
+        return numeric_country_argument(world, argument.number);
+    }
+    if (argument.kind != ScriptArgumentKind::SymbolHash) return {};
+    CountryId match{};
+    for (std::size_t i = 0; i < world.countries.size(); ++i) {
+        const CountryId id{static_cast<std::uint32_t>(i)};
+        if (script_symbol_hash(world.countries.tag(id)) != argument.symbol_hash) continue;
+        if (match.valid()) return {}; // hash collision or duplicate tag: fail closed
+        match = id;
+    }
+    return match;
+}
+
+std::uint64_t hash_argument(ScriptArgument argument) noexcept {
+    if (argument.kind == ScriptArgumentKind::SymbolHash) return argument.symbol_hash;
+    if (argument.kind != ScriptArgumentKind::Number) return 0u;
+    constexpr double max_exact_integer = 9'007'199'254'740'991.0;
+    if (!std::isfinite(argument.number) || !(argument.number > 0.0) ||
+        argument.number > max_exact_integer || std::floor(argument.number) != argument.number) return 0u;
+    return static_cast<std::uint64_t>(argument.number);
+}
+
+} // namespace
+
+TriggerPrimitiveId ScriptRegistry::register_trigger(std::string name, ScopeType scope, Trigger trigger) {
+    if (trigger == nullptr) throw std::invalid_argument("null trigger primitive");
+    if (trigger_lookup_.contains(name)) throw std::runtime_error("duplicate trigger primitive: " + name);
+    if (triggers_.size() >= static_cast<std::size_t>(std::numeric_limits<TriggerPrimitiveId::rep_type>::max())) {
+        throw std::overflow_error("too many trigger primitives");
+    }
+    const auto id = TriggerPrimitiveId{static_cast<TriggerPrimitiveId::rep_type>(triggers_.size())};
+    triggers_.push_back({name, scope, trigger});
+    trigger_lookup_.emplace(std::move(name), id);
+    return id;
+}
+
+EffectPrimitiveId ScriptRegistry::register_effect(std::string name, ScopeType scope, Effect effect) {
+    if (effect == nullptr) throw std::invalid_argument("null effect primitive");
+    if (effect_lookup_.contains(name)) throw std::runtime_error("duplicate effect primitive: " + name);
+    if (effects_.size() >= static_cast<std::size_t>(std::numeric_limits<EffectPrimitiveId::rep_type>::max())) {
+        throw std::overflow_error("too many effect primitives");
+    }
+    const auto id = EffectPrimitiveId{static_cast<EffectPrimitiveId::rep_type>(effects_.size())};
+    effects_.push_back({name, scope, effect});
+    effect_lookup_.emplace(std::move(name), id);
+    return id;
+}
+
+TriggerPrimitiveId ScriptRegistry::register_typed_trigger(std::string name, ScopeType scope, TypedTrigger trigger,
+                                                          bool accepts_number, bool accepts_symbol,
+                                                          bool accepts_boolean, bool accepts_scope) {
+    if (trigger == nullptr) throw std::invalid_argument("null typed trigger primitive");
+    if (trigger_lookup_.contains(name)) throw std::runtime_error("duplicate trigger primitive: " + name);
+    if (!accepts_number && !accepts_symbol && !accepts_boolean && !accepts_scope)
+        throw std::invalid_argument("typed trigger accepts no argument kinds");
+    if (triggers_.size() >= static_cast<std::size_t>(std::numeric_limits<TriggerPrimitiveId::rep_type>::max()))
+        throw std::overflow_error("too many trigger primitives");
+    const auto id = TriggerPrimitiveId{static_cast<TriggerPrimitiveId::rep_type>(triggers_.size())};
+    const auto mask = static_cast<std::uint8_t>((accepts_number ? number_argument_bit : 0u) |
+                                                (accepts_symbol ? symbol_argument_bit : 0u) |
+                                                (accepts_boolean ? boolean_argument_bit : 0u) |
+                                                (accepts_scope ? scope_argument_bit : 0u));
+    triggers_.push_back({name, scope, nullptr, trigger, mask});
+    trigger_lookup_.emplace(std::move(name), id);
+    return id;
+}
+
+EffectPrimitiveId ScriptRegistry::register_typed_effect(std::string name, ScopeType scope, TypedEffect effect,
+                                                        bool accepts_number, bool accepts_symbol,
+                                                        bool accepts_boolean, bool accepts_scope) {
+    if (effect == nullptr) throw std::invalid_argument("null typed effect primitive");
+    if (effect_lookup_.contains(name)) throw std::runtime_error("duplicate effect primitive: " + name);
+    if (!accepts_number && !accepts_symbol && !accepts_boolean && !accepts_scope)
+        throw std::invalid_argument("typed effect accepts no argument kinds");
+    if (effects_.size() >= static_cast<std::size_t>(std::numeric_limits<EffectPrimitiveId::rep_type>::max()))
+        throw std::overflow_error("too many effect primitives");
+    const auto id = EffectPrimitiveId{static_cast<EffectPrimitiveId::rep_type>(effects_.size())};
+    const auto mask = static_cast<std::uint8_t>((accepts_number ? number_argument_bit : 0u) |
+                                                (accepts_symbol ? symbol_argument_bit : 0u) |
+                                                (accepts_boolean ? boolean_argument_bit : 0u) |
+                                                (accepts_scope ? scope_argument_bit : 0u));
+    effects_.push_back({name, scope, nullptr, effect, mask});
+    effect_lookup_.emplace(std::move(name), id);
+    return id;
+}
+
+TriggerPrimitiveId ScriptRegistry::find_trigger(std::string_view name) const noexcept {
+    const auto it = trigger_lookup_.find(name);
+    return it == trigger_lookup_.end() ? TriggerPrimitiveId{} : it->second;
+}
+
+EffectPrimitiveId ScriptRegistry::find_effect(std::string_view name) const noexcept {
+    const auto it = effect_lookup_.find(name);
+    return it == effect_lookup_.end() ? EffectPrimitiveId{} : it->second;
+}
+
+ScopeType ScriptRegistry::trigger_scope(TriggerPrimitiveId id) const {
+    const auto index = static_cast<std::size_t>(id.value());
+    if (!id.valid() || index >= triggers_.size()) throw std::out_of_range("invalid TriggerPrimitiveId");
+    return triggers_[index].scope;
+}
+
+ScopeType ScriptRegistry::effect_scope(EffectPrimitiveId id) const {
+    const auto index = static_cast<std::size_t>(id.value());
+    if (!id.valid() || index >= effects_.size()) throw std::out_of_range("invalid EffectPrimitiveId");
+    return effects_[index].scope;
+}
+
+bool ScriptRegistry::trigger_accepts_argument(TriggerPrimitiveId id, ScriptArgumentKind kind) const {
+    const auto index = static_cast<std::size_t>(id.value());
+    if (!id.valid() || index >= triggers_.size()) throw std::out_of_range("invalid TriggerPrimitiveId");
+    std::uint8_t bit = 0u;
+    switch (kind) {
+        case ScriptArgumentKind::Number: bit = number_argument_bit; break;
+        case ScriptArgumentKind::SymbolHash: bit = symbol_argument_bit; break;
+        case ScriptArgumentKind::Boolean: bit = boolean_argument_bit; break;
+        case ScriptArgumentKind::Scope: bit = scope_argument_bit; break;
+        case ScriptArgumentKind::None: return false;
+    }
+    return (triggers_[index].argument_mask & bit) != 0u;
+}
+
+bool ScriptRegistry::effect_accepts_argument(EffectPrimitiveId id, ScriptArgumentKind kind) const {
+    const auto index = static_cast<std::size_t>(id.value());
+    if (!id.valid() || index >= effects_.size()) throw std::out_of_range("invalid EffectPrimitiveId");
+    std::uint8_t bit = 0u;
+    switch (kind) {
+        case ScriptArgumentKind::Number: bit = number_argument_bit; break;
+        case ScriptArgumentKind::SymbolHash: bit = symbol_argument_bit; break;
+        case ScriptArgumentKind::Boolean: bit = boolean_argument_bit; break;
+        case ScriptArgumentKind::Scope: bit = scope_argument_bit; break;
+        case ScriptArgumentKind::None: return false;
+    }
+    return (effects_[index].argument_mask & bit) != 0u;
+}
+
+bool ScriptRegistry::evaluate_trigger(TriggerPrimitiveId id, const World& world, ScopeRef scope, double argument) const {
+    return evaluate_trigger(id, world, scope, ScriptArgument::numeric(argument));
+}
+
+bool ScriptRegistry::evaluate_trigger(TriggerPrimitiveId id, const World& world, ScopeRef scope, ScriptArgument argument) const {
+    const auto index = static_cast<std::size_t>(id.value());
+    if (!id.valid() || index >= triggers_.size()) throw std::out_of_range("invalid TriggerPrimitiveId");
+    const auto& entry = triggers_[index];
+    if (entry.scope != scope.type) throw std::runtime_error("trigger scope mismatch");
+    if (!argument_well_formed(argument)) throw std::runtime_error("trigger argument is not canonical and finite");
+    if (!trigger_accepts_argument(id, argument.kind)) throw std::runtime_error("trigger argument kind mismatch");
+    if (entry.typed_callback != nullptr) return entry.typed_callback(world, scope, argument);
+    if (argument.kind != ScriptArgumentKind::Number || entry.callback == nullptr) throw std::runtime_error("numeric trigger callback unavailable");
+    return entry.callback(world, scope, argument.number);
+}
+
+void ScriptRegistry::execute_effect(EffectPrimitiveId id, World& world, ScopeRef scope, double argument) const {
+    execute_effect(id, world, scope, ScriptArgument::numeric(argument));
+}
+
+void ScriptRegistry::execute_effect(EffectPrimitiveId id, World& world, ScopeRef scope, ScriptArgument argument) const {
+    const auto index = static_cast<std::size_t>(id.value());
+    if (!id.valid() || index >= effects_.size()) throw std::out_of_range("invalid EffectPrimitiveId");
+    const auto& entry = effects_[index];
+    if (entry.scope != scope.type) throw std::runtime_error("effect scope mismatch");
+    if (!argument_well_formed(argument)) throw std::runtime_error("effect argument is not canonical and finite");
+    if (!effect_accepts_argument(id, argument.kind)) throw std::runtime_error("effect argument kind mismatch");
+    if (entry.typed_callback != nullptr) { entry.typed_callback(world, scope, argument); return; }
+    if (argument.kind != ScriptArgumentKind::Number || entry.callback == nullptr) throw std::runtime_error("numeric effect callback unavailable");
+    entry.callback(world, scope, argument.number);
+}
+
+bool ScriptRegistry::evaluate_trigger(std::string_view name, const World& world, ScopeRef scope, double argument) const {
+    const auto id = find_trigger(name);
+    if (!id.valid()) throw std::runtime_error("unknown trigger: " + std::string{name});
+    return evaluate_trigger(id, world, scope, argument);
+}
+
+void ScriptRegistry::execute_effect(std::string_view name, World& world, ScopeRef scope, double argument) const {
+    const auto id = find_effect(name);
+    if (!id.valid()) throw std::runtime_error("unknown effect: " + std::string{name});
+    execute_effect(id, world, scope, argument);
+}
+
+ScriptRegistry ScriptRegistry::make_builtin() {
+    ScriptRegistry registry;
+    registry.trigger_lookup_.reserve(64u);
+    registry.effect_lookup_.reserve(64u);
+    registry.triggers_.reserve(64u);
+    registry.effects_.reserve(64u);
+    registry.register_trigger("population_above", ScopeType::Country,
+        [](const World& world, ScopeRef scope, double threshold) {
+            return world.countries.population(CountryId{scope.raw_id}) > threshold;
+        });
+    registry.register_trigger("gdp_above", ScopeType::Country,
+        [](const World& world, ScopeRef scope, double threshold) {
+            return world.countries.gdp(CountryId{scope.raw_id}) > threshold;
+        });
+    registry.register_trigger("treasury_above", ScopeType::Country,
+        [](const World& world, ScopeRef scope, double threshold) {
+            return world.countries.treasury(CountryId{scope.raw_id}) > threshold;
+        });
+    registry.register_trigger("tax_rate_above", ScopeType::Country,
+        [](const World& world, ScopeRef scope, double threshold) {
+            return world.countries.tax_rate(CountryId{scope.raw_id}) > threshold;
+        });
+    registry.register_effect("add_treasury", ScopeType::Country,
+        [](World& world, ScopeRef scope, double amount) {
+            const CountryId country{scope.raw_id};
+            const auto replacement = world.countries.treasury(country) + amount;
+            if (!std::isfinite(replacement)) throw std::range_error("add_treasury overflow");
+            world.countries.add_treasury(country, amount);
+        });
+    registry.register_effect("set_tax_rate", ScopeType::Country,
+        [](World& world, ScopeRef scope, double rate) {
+            world.countries.set_tax_rate(CountryId{scope.raw_id}, rate);
+        });
+    registry.register_effect("set_gdp", ScopeType::Country,
+        [](World& world, ScopeRef scope, double value) { world.countries.set_gdp(CountryId{scope.raw_id}, value); });
+
+    registry.register_trigger("state_population_above", ScopeType::State,
+        [](const World& world, ScopeRef scope, double threshold) { double total=0.0; for(std::size_t i=0;i<world.pops.size();++i){const auto p=PopId{static_cast<std::uint32_t>(i)};const auto pr=world.pops.province(p);if(pr.valid()&&world.geography.province_state(pr)==StateId{scope.raw_id})total+=static_cast<double>(world.pops.population(p));} return total>threshold; });
+    registry.register_trigger("province_population_above", ScopeType::Province,
+        [](const World& world, ScopeRef scope, double threshold) { double total=0.0; for(std::size_t i=0;i<world.pops.size();++i){const auto p=PopId{static_cast<std::uint32_t>(i)};if(world.pops.province(p)==ProvinceId{scope.raw_id})total+=static_cast<double>(world.pops.population(p));} return total>threshold; });
+    registry.register_trigger("pop_size_above", ScopeType::Pop, [](const World& world, ScopeRef s,double x){return static_cast<double>(world.pops.population(PopId{s.raw_id}))>x;});
+    registry.register_trigger("pop_sol_above", ScopeType::Pop, [](const World& world, ScopeRef s,double x){return static_cast<double>(world.pops.standard_of_living_milli(PopId{s.raw_id}))>x*1000.0;});
+    registry.register_trigger("pop_literacy_above", ScopeType::Pop, [](const World& world, ScopeRef s,double x){return static_cast<double>(world.pops.literacy_permyriad(PopId{s.raw_id}))>x*10000.0;});
+    registry.register_trigger("market_supply_above", ScopeType::Market, [](const World& world, ScopeRef s,double x){EconomyAmount t=0;for(auto v:world.markets.supply_row(MarketId{s.raw_id}))t=saturating_add(t,v);return static_cast<double>(t)>x;});
+    registry.register_trigger("market_demand_above", ScopeType::Market, [](const World& world, ScopeRef s,double x){EconomyAmount t=0;for(auto v:world.markets.demand_row(MarketId{s.raw_id}))t=saturating_add(t,v);return static_cast<double>(t)>x;});
+
+    registry.register_effect("set_state_owner", ScopeType::State, [](World& world,ScopeRef s,double x){const auto owner=numeric_country_argument(world,x);if(!owner.valid())return;world.geography.set_state_owner(StateId{s.raw_id},owner);});
+    registry.register_effect("set_province_owner", ScopeType::Province, [](World& world,ScopeRef s,double x){const auto owner=numeric_country_argument(world,x);if(!owner.valid())return;world.geography.set_province_owner(ProvinceId{s.raw_id},owner);});
+    registry.register_effect("set_pop_wealth", ScopeType::Pop, [](World& world,ScopeRef s,double x){const auto scaled=x*1000.0;if(!std::isfinite(scaled)||scaled<static_cast<double>(std::numeric_limits<std::int32_t>::min())||scaled>static_cast<double>(std::numeric_limits<std::int32_t>::max()))return;world.pops.set_wealth_milli(PopId{s.raw_id},static_cast<std::int32_t>(scaled));});
+    registry.register_effect("set_pop_literacy", ScopeType::Pop, [](World& world,ScopeRef s,double x){const auto v=static_cast<std::uint16_t>(std::clamp(x,0.0,1.0)*10000.0);world.pops.set_literacy_permyriad(PopId{s.raw_id},v);});
+    registry.register_effect("set_market_owner", ScopeType::Market, [](World& world,ScopeRef s,double x){const auto owner=numeric_country_argument(world,x);if(!owner.valid())return;world.markets.set_owner(MarketId{s.raw_id},owner);});
+
+    // Grand-strategy primitives accept either legacy numeric IDs/hashes or stable symbolic
+    // references. Named country arguments resolve against country tags; named law arguments
+    // compile to deterministic FNV-1a hashes. Numeric arguments remain supported for compatibility.
+    registry.register_trigger("government_legitimacy_above", ScopeType::Country,
+        [](const World& world, ScopeRef s, double x) {
+            const auto* government = world.grand_strategy.government_for(CountryId{s.raw_id});
+            return government != nullptr && static_cast<double>(government->legitimacy_ppm) > x * 1'000'000.0;
+        });
+    registry.register_trigger("government_stability_above", ScopeType::Country,
+        [](const World& world, ScopeRef s, double x) {
+            const auto* government = world.grand_strategy.government_for(CountryId{s.raw_id});
+            return government != nullptr && static_cast<double>(government->stability_milli) > x * 1'000.0;
+        });
+    registry.register_typed_trigger("has_enacted_law", ScopeType::Country,
+        [](const World& world, ScopeRef s, ScriptArgument x) {
+            const auto key = hash_argument(x);
+            if (key == 0u) return false;
+            const CountryId country{s.raw_id};
+            for (const auto& law : world.grand_strategy.laws())
+                if (law.country == country && law.key_hash == key && law.enacted) return true;
+            return false;
+        });
+    registry.register_typed_trigger("has_alliance_with", ScopeType::Country,
+        [](const World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            return target.valid() && target != CountryId{s.raw_id} &&
+                world.grand_strategy.has_active_treaty(CountryId{s.raw_id}, target, TreatyKind::Alliance);
+        }, true, true, false, true);
+    registry.register_typed_trigger("at_war_with", ScopeType::Country,
+        [](const World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (!target.valid()) return false;
+            const CountryId country{s.raw_id};
+            for (const auto& war : world.grand_strategy.wars())
+                if (war.active && ((war.attacker == country && war.defender == target) ||
+                                   (war.attacker == target && war.defender == country))) return true;
+            return false;
+        }, true, true, false, true);
+    registry.register_typed_trigger("has_diplomatic_play_with", ScopeType::Country,
+        [](const World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (!target.valid()) return false;
+            const CountryId country{s.raw_id};
+            for (const auto& play : world.grand_strategy.diplomatic_plays()) {
+                const bool pair = (play.initiator == country && play.target == target) ||
+                                  (play.initiator == target && play.target == country);
+                if (pair && play.phase != DiplomaticPlayPhase::Resolved) return true;
+            }
+            return false;
+        }, true, true, false, true);
+
+    registry.register_typed_effect("improve_relations_with", ScopeType::Country,
+        [](World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (target.valid() && target != CountryId{s.raw_id}) world.grand_strategy.adjust_relation(CountryId{s.raw_id}, target, 5'000);
+        }, true, true, false, true);
+    registry.register_typed_effect("damage_relations_with", ScopeType::Country,
+        [](World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (target.valid() && target != CountryId{s.raw_id}) world.grand_strategy.adjust_relation(CountryId{s.raw_id}, target, -5'000);
+        }, true, true, false, true);
+    registry.register_typed_effect("form_alliance_with", ScopeType::Country,
+        [](World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (target.valid() && target != CountryId{s.raw_id}) (void)world.grand_strategy.create_treaty(CountryId{s.raw_id}, target, TreatyKind::Alliance);
+        }, true, true, false, true);
+    registry.register_typed_effect("form_trade_agreement_with", ScopeType::Country,
+        [](World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (target.valid() && target != CountryId{s.raw_id}) (void)world.grand_strategy.create_treaty(CountryId{s.raw_id}, target, TreatyKind::TradeAgreement);
+        }, true, true, false, true);
+    registry.register_typed_effect("break_alliance_with", ScopeType::Country,
+        [](World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (!target.valid()) return;
+            const CountryId country{s.raw_id};
+            const auto treaties = world.grand_strategy.treatys();
+            for (std::size_t i = 0; i < treaties.size(); ++i) {
+                const auto& treaty = treaties[i];
+                const bool pair = (treaty.first == country && treaty.second == target) ||
+                                  (treaty.first == target && treaty.second == country);
+                if (pair && treaty.kind == TreatyKind::Alliance && treaty.active) {
+                    (void)world.grand_strategy.break_treaty(TreatyId{static_cast<TreatyId::rep_type>(i)});
+                    return;
+                }
+            }
+        }, true, true, false, true);
+    registry.register_typed_effect("start_diplomatic_play_with", ScopeType::Country,
+        [](World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (target.valid() && target != CountryId{s.raw_id})
+                (void)world.grand_strategy.start_diplomatic_play(CountryId{s.raw_id}, target, 1u);
+        }, true, true, false, true);
+    registry.register_typed_effect("back_down_from_play_with", ScopeType::Country,
+        [](World& world, ScopeRef s, ScriptArgument x) {
+            const auto target = country_argument(world, x);
+            if (!target.valid()) return;
+            const CountryId country{s.raw_id};
+            const auto plays = world.grand_strategy.diplomatic_plays();
+            for (std::size_t i = 0; i < plays.size(); ++i) {
+                const auto& play = plays[i];
+                const bool pair = (play.initiator == country && play.target == target) ||
+                                  (play.initiator == target && play.target == country);
+                if (pair && play.phase != DiplomaticPlayPhase::Resolved) {
+                    (void)world.grand_strategy.back_down(DiplomaticPlayId{static_cast<DiplomaticPlayId::rep_type>(i)}, country);
+                    return;
+                }
+            }
+        }, true, true, false, true);
+    registry.register_typed_effect("start_law_enactment", ScopeType::Country,
+        [](World& world, ScopeRef s, ScriptArgument x) {
+            const auto key = hash_argument(x);
+            if (key != 0u) (void)world.grand_strategy.start_law_enactment(CountryId{s.raw_id}, key);
+        });
+    return registry;
+}
+
+} // namespace core

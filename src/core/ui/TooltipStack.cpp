@@ -1,0 +1,298 @@
+#include "core/ui/TooltipStack.hpp"
+#include <algorithm>
+#include <cmath>
+
+namespace core {
+
+void TooltipStack::set_resolver(TooltipResolver resolver) {
+    resolver_ = std::move(resolver);
+}
+
+void TooltipStack::push_root(std::string title, std::string body, UiRect anchor, UiRect screen) {
+    if (!frames_.empty() && is_locked()) {
+        return; // Don't replace if currently locked
+    }
+    clear();
+
+    TooltipFrame frame;
+    frame.title = std::move(title);
+    frame.body = std::move(body);
+    auto [parsed, terms] = parse_terms(frame.body);
+    frame.parsed_body = std::move(parsed);
+    frame.terms = std::move(terms);
+    frame.anchor = anchor;
+    frame.depth = 0;
+    frame.bounds = calculate_bounds(frame.title, frame.parsed_body, anchor, screen, 0);
+
+    recompute_term_hit_rects(frame);
+    frames_.push_back(std::move(frame));
+}
+
+void TooltipStack::push_child(const std::string& term_key, UiRect term_rect, UiRect screen) {
+    if (frames_.size() >= kMaxDepth || !resolver_) {
+        return;
+    }
+
+    // Circular recursion check: avoid pushing an already active term key
+    for (const auto& f : frames_) {
+        for (const auto& t : f.terms) {
+            if (f.depth > 0 && t.key == term_key && f.depth + 1 < static_cast<int>(frames_.size())) {
+                return;
+            }
+        }
+    }
+
+    auto [title, body] = resolver_(term_key);
+    if (title.empty() && body.empty()) {
+        return;
+    }
+
+    TooltipFrame frame;
+    frame.title = std::move(title);
+    frame.body = std::move(body);
+    auto [parsed, terms] = parse_terms(frame.body);
+    frame.parsed_body = std::move(parsed);
+    frame.terms = std::move(terms);
+    frame.anchor = term_rect;
+    frame.depth = static_cast<int>(frames_.size());
+    frame.bounds = calculate_bounds(frame.title, frame.parsed_body, term_rect, screen, frame.depth);
+
+    recompute_term_hit_rects(frame);
+    frames_.push_back(std::move(frame));
+}
+
+void TooltipStack::pop_to(int depth) {
+    if (depth < 0 || depth >= static_cast<int>(frames_.size())) {
+        return;
+    }
+    while (frames_.size() > static_cast<std::size_t>(depth + 1)) {
+        frames_.pop_back();
+    }
+}
+
+void TooltipStack::clear() {
+    frames_.clear();
+    pending_term_key_.reset();
+    hover_timer_ = 0.0f;
+}
+
+void TooltipStack::lock_current() {
+    if (!frames_.empty()) {
+        frames_.back().is_locked = true;
+    }
+}
+
+void TooltipStack::unlock_all() {
+    for (auto& frame : frames_) {
+        frame.is_locked = false;
+    }
+}
+
+void TooltipStack::on_mouse_move(float x, float y, float dt_seconds) {
+    mouse_x_ = x;
+    mouse_y_ = y;
+
+    int hovered_frame_depth = -1;
+    bool found_hover = false;
+
+    for (int i = static_cast<int>(frames_.size()) - 1; i >= 0; --i) {
+        auto& frame = frames_[static_cast<std::size_t>(i)];
+        if (x >= frame.bounds.x && x <= frame.bounds.x + frame.bounds.w &&
+            y >= frame.bounds.y && y <= frame.bounds.y + frame.bounds.h) {
+            hovered_frame_depth = i;
+
+            bool term_hovered = false;
+            for (const auto& term : frame.terms) {
+                if (x >= term.hit_rect.x && x <= term.hit_rect.x + term.hit_rect.w &&
+                    y >= term.hit_rect.y && y <= term.hit_rect.y + term.hit_rect.h) {
+
+                    term_hovered = true;
+                    if (pending_term_key_ == term.key && pending_term_depth_ == i) {
+                        hover_timer_ += dt_seconds;
+                        if (hover_timer_ >= kHoverDelaySeconds) {
+                            if (static_cast<int>(frames_.size()) == i + 1) {
+                                push_child(term.key, term.hit_rect, {0.0f, 0.0f, 1920.0f, 1080.0f});
+                            }
+                            hover_timer_ = 0.0f;
+                            pending_term_key_.reset();
+                        }
+                    } else {
+                        pending_term_key_ = term.key;
+                        pending_term_rect_ = term.hit_rect;
+                        pending_term_depth_ = i;
+                        hover_timer_ = 0.0f;
+                    }
+                    break;
+                }
+            }
+
+            if (!term_hovered) {
+                pending_term_key_.reset();
+                hover_timer_ = 0.0f;
+            }
+
+            found_hover = true;
+            break;
+        }
+    }
+
+    if (!found_hover) {
+        pending_term_key_.reset();
+        hover_timer_ = 0.0f;
+    }
+
+    if (hovered_frame_depth != -1) {
+        if (hovered_frame_depth + 1 < static_cast<int>(frames_.size())) {
+            if (!frames_[static_cast<std::size_t>(hovered_frame_depth + 1)].is_locked) {
+                pop_to(hovered_frame_depth);
+            }
+        }
+    } else {
+        if (!frames_.empty()) {
+            int target_depth = -1;
+            for (int i = static_cast<int>(frames_.size()) - 1; i >= 0; --i) {
+                if (frames_[static_cast<std::size_t>(i)].is_locked) {
+                    target_depth = i;
+                    break;
+                }
+            }
+            if (target_depth != -1) {
+                pop_to(target_depth);
+            } else {
+                clear();
+            }
+        }
+    }
+}
+
+bool TooltipStack::on_mouse_click(float x, float y) {
+    return is_mouse_over_any(x, y);
+}
+
+void TooltipStack::render(UiDrawList& ui, UiRect /*screen*/) const {
+    for (const auto& frame : frames_) {
+        // Parchment base panel
+        ui.parchment_panel(frame.bounds);
+
+        float current_y = frame.bounds.y + kTooltipPadding;
+
+        if (!frame.title.empty()) {
+            ui.leather_panel({frame.bounds.x + 2.0f, frame.bounds.y + 2.0f, frame.bounds.w - 4.0f, 22.0f});
+            ui.text(frame.title, frame.bounds.x + kTooltipPadding + 4.0f, current_y - 2.0f, 13.0f, 0xffd4af37u);
+            current_y += 24.0f;
+        }
+
+        if (frame.depth > 0) {
+            // Depth bracket line
+            ui.quad({frame.bounds.x + 1.0f, frame.bounds.y + 1.0f, 3.0f, frame.bounds.h - 2.0f}, 0xffd4af37u);
+        }
+
+        if (frame.is_locked) {
+            // Brass lock indicator
+            ui.quad({frame.bounds.x + frame.bounds.w - 14.0f, frame.bounds.y + 4.0f, 8.0f, 8.0f}, 0xffd4af37u);
+        }
+
+        ui.text(frame.parsed_body, frame.bounds.x + kTooltipPadding, current_y, 12.0f, 0xff160b06u);
+
+        for (const auto& term : frame.terms) {
+            ui.quad({term.hit_rect.x, term.hit_rect.y + term.hit_rect.h - 2.0f, term.hit_rect.w, 1.0f}, 0xffd4af37u);
+            ui.text(term.display_text, term.hit_rect.x, term.hit_rect.y, 12.0f, 0xffd4af37u);
+        }
+    }
+}
+
+bool TooltipStack::is_locked() const noexcept {
+    if (frames_.empty()) return false;
+    return frames_.back().is_locked;
+}
+
+bool TooltipStack::is_mouse_over_any(float x, float y) const noexcept {
+    for (const auto& frame : frames_) {
+        if (x >= frame.bounds.x && x <= frame.bounds.x + frame.bounds.w &&
+            y >= frame.bounds.y && y <= frame.bounds.y + frame.bounds.h) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::pair<std::string, std::vector<TooltipTerm>> TooltipStack::parse_terms(std::string_view body) {
+    std::string parsed;
+    parsed.reserve(body.size());
+    std::vector<TooltipTerm> terms;
+
+    std::size_t i = 0;
+    while (i < body.size()) {
+        if (i + 6 <= body.size() && body.substr(i, 6) == "[term:") {
+            const auto end_marker = body.find(']', i + 6);
+            if (end_marker != std::string_view::npos) {
+                const auto pipe = body.find('|', i + 6);
+                if (pipe != std::string_view::npos && pipe < end_marker) {
+                    const auto key = body.substr(i + 6, pipe - (i + 6));
+                    const auto display = body.substr(pipe + 1, end_marker - (pipe + 1));
+
+                    TooltipTerm term;
+                    term.key = std::string(key);
+                    term.display_text = std::string(display);
+                    term.text_offset = parsed.length();
+                    term.text_length = display.length();
+                    terms.push_back(std::move(term));
+
+                    parsed.append(display);
+                    i = end_marker + 1;
+                    continue;
+                }
+            }
+        }
+        parsed.push_back(body[i]);
+        ++i;
+    }
+    return {parsed, terms};
+}
+
+UiRect TooltipStack::calculate_bounds(std::string_view title, std::string_view parsed_body,
+                                      UiRect anchor, UiRect screen, int depth) {
+    const float screen_w = screen.w > 0.0f ? screen.w : 1920.0f;
+    const float screen_h = screen.h > 0.0f ? screen.h : 1080.0f;
+
+    float width = std::max(kMinTooltipWidth, std::min(kMaxTooltipWidth, static_cast<float>(parsed_body.length()) * kCharWidthEstimate));
+    const float title_w = static_cast<float>(title.length()) * kCharWidthEstimate + kTooltipPadding * 2.0f;
+    width = std::max(width, title_w);
+
+    const int lines = std::max(1, static_cast<int>((static_cast<float>(parsed_body.length()) * kCharWidthEstimate) / width) + 1);
+    float height = static_cast<float>(lines) * kLineHeight + kTooltipPadding * 2.0f;
+    if (!title.empty()) {
+        height += 24.0f;
+    }
+
+    UiRect bounds;
+    bounds.w = width;
+    bounds.h = height;
+
+    if (depth == 0) {
+        bounds.x = anchor.x + anchor.w + 4.0f;
+        bounds.y = anchor.y;
+    } else {
+        bounds.x = anchor.x + anchor.w + 8.0f;
+        bounds.y = anchor.y + 12.0f;
+    }
+
+    if (bounds.x + bounds.w > screen_w) bounds.x = std::max(0.0f, screen_w - bounds.w);
+    if (bounds.y + bounds.h > screen_h) bounds.y = std::max(0.0f, screen_h - bounds.h);
+
+    return bounds;
+}
+
+void TooltipStack::recompute_term_hit_rects(TooltipFrame& frame) const {
+    float start_y = frame.bounds.y + kTooltipPadding;
+    if (!frame.title.empty()) start_y += 24.0f;
+
+    for (auto& term : frame.terms) {
+        term.hit_rect.x = frame.bounds.x + kTooltipPadding + static_cast<float>(term.text_offset) * kCharWidthEstimate;
+        term.hit_rect.y = start_y;
+        term.hit_rect.w = static_cast<float>(term.text_length) * kCharWidthEstimate;
+        term.hit_rect.h = kLineHeight;
+    }
+}
+
+} // namespace core

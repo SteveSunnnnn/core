@@ -1,0 +1,38 @@
+# Build trees
+/build/
+/build-*/
+/out/
+/validation-output/
+CMakeUserPresets.json
+compile_commands.json
+.cache/
+
+# Generated runtime/content packages
+*.coreworld.tmp
+*.coreasset.tmp
+*.corearch.tmp
+
+# Python/editor caches
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+
+# OS/compiler outputs
+.DS_Store
+Thumbs.db
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.so
+*.dylib
+*.log
+*.save
+*.tmp
+
+# Generated technical demo/world compiler outputs
+/demo/britain_technical_input/
+/demo/britain_technical.coreworld
+/demo/britain_technical_preview.png

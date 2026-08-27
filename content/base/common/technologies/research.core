@@ -1,0 +1,159 @@
+# Core 1.0 Victorian Era Technology Tree
+research_rules default {
+    base_innovation_milli = 1000
+    innovation_per_million_literate_population_milli = 1000
+    max_innovation_milli = 1000000
+}
+
+# --- Society Technologies ---
+technology empirical_method {
+    category = society
+    era = 1
+    cost = 100000
+    unlocks = {
+        feature = research_institution
+    }
+}
+
+technology central_banking {
+    category = society
+    era = 1
+    cost = 120000
+    prerequisite = empirical_method
+    unlocks = {
+        feature = national_bank
+    }
+}
+
+technology egalitarianism {
+    category = society
+    era = 2
+    cost = 250000
+    prerequisite = empirical_method
+    unlocks = {
+        feature = civil_rights
+    }
+}
+
+technology nationalism {
+    category = society
+    era = 2
+    cost = 250000
+    prerequisite = central_banking
+    unlocks = {
+        feature = national_identity
+    }
+}
+
+technology labor_movement {
+    category = society
+    era = 3
+    cost = 500000
+    prerequisite = egalitarianism
+    unlocks = {
+        feature = trade_unions
+    }
+}
+
+# --- Production Technologies ---
+technology mechanical_power {
+    category = production
+    era = 1
+    cost = 120000
+    prerequisite = empirical_method
+    unlocks = {
+        production_method = powered_machinery
+    }
+}
+
+technology water_tube_boiler {
+    category = production
+    era = 1
+    cost = 150000
+    prerequisite = mechanical_power
+    unlocks = {
+        production_method = high_pressure_steam
+    }
+}
+
+technology railways {
+    category = production
+    era = 2
+    cost = 300000
+    prerequisite = water_tube_boiler
+    unlocks = {
+        feature = transport_network
+    }
+}
+
+technology bessemer_process {
+    category = production
+    era = 2
+    cost = 350000
+    prerequisite = water_tube_boiler
+    unlocks = {
+        production_method = cheap_steel
+    }
+}
+
+technology electrical_generation {
+    category = production
+    era = 3
+    cost = 600000
+    prerequisite = bessemer_process
+    unlocks = {
+        production_method = electric_power
+    }
+}
+
+# --- Military Technologies ---
+technology staff_planning {
+    category = military
+    era = 1
+    cost = 120000
+    prerequisite = empirical_method
+    unlocks = {
+        feature = formation_planning
+    }
+}
+
+technology percussion_cap {
+    category = military
+    era = 1
+    cost = 140000
+    prerequisite = staff_planning
+    unlocks = {
+        production_method = rifled_muskets
+    }
+}
+
+technology rifling {
+    category = military
+    era = 2
+    cost = 280000
+    prerequisite = percussion_cap
+    unlocks = {
+        feature = modern_infantry
+    }
+}
+
+technology ironclads {
+    category = military
+    era = 2
+    cost = 320000
+    prerequisite = rifling
+    unlocks = {
+        feature = armored_warships
+    }
+}
+
+technology trench_warfare {
+    category = military
+    era = 3
+    cost = 550000
+    prerequisite = rifling
+    unlocks = {
+        feature = defensive_doctrine
+    }
+}
+

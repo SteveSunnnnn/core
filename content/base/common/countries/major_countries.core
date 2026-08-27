@@ -1,0 +1,14 @@
+# Generic engine demonstration content. Games and mods author their own countries.
+# Population and GDP are never statically hardcoded here; they are computed
+# dynamically by the simulation from physical POPs and market commodity outputs.
+country GBR {
+    treasury = 19
+    tax_rate = 0.20
+}
+
+country FRA {
+    treasury = 12
+    tax_rate = 0.22
+}
+
+

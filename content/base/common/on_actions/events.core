@@ -1,0 +1,14 @@
+# Core 1.0 Victorian Era Pulse & Action Hooks
+on_action on_yearly_pulse {
+    scope = country
+    action = {
+        script = fiscal_relief
+    }
+}
+
+on_action on_monthly_pulse {
+    scope = country
+    action = {
+        script = fiscal_relief
+    }
+}

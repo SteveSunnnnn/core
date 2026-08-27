@@ -1,0 +1,53 @@
+# Generic engine demonstration content. Games and mods replace these keys with
+# their own localization, art and scripted behavior.
+notification fiscal_capacity_available {
+    scope = country
+    title = notification.fiscal_capacity.title
+    body = notification.fiscal_capacity.body
+    icon = ui.icon.finance
+    category = economy
+    priority = normal
+    dedupe = replace
+    lifetime_ticks = 120
+    potential = fiscal_relief
+    action = {
+        key = apply_relief
+        label = notification.fiscal_capacity.apply
+        allow = fiscal_relief
+        effect = fiscal_relief
+    }
+}
+
+notification technology_researched {
+    scope = country
+    title = notification.tech.title
+    body = notification.tech.body
+    icon = ui.icon.research
+    category = technology
+    priority = high
+    dedupe = stack
+    lifetime_ticks = 180
+}
+
+notification war_declared {
+    scope = country
+    title = notification.war.title
+    body = notification.war.body
+    icon = ui.icon.military
+    category = diplomacy
+    priority = critical
+    dedupe = stack
+    lifetime_ticks = 300
+}
+
+notification low_treasury_warning {
+    scope = country
+    title = notification.treasury_low.title
+    body = notification.treasury_low.body
+    icon = ui.icon.finance
+    category = economy
+    priority = high
+    dedupe = replace
+    lifetime_ticks = 150
+}
+

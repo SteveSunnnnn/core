@@ -1,0 +1,9 @@
+#include "core/assets/AssetPack.hpp"
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <vector>
+namespace {std::vector<std::byte> read_file(const std::filesystem::path&p){std::ifstream i(p,std::ios::binary|std::ios::ate);if(!i)throw std::runtime_error("cannot open asset: "+p.string());const auto n=static_cast<std::size_t>(i.tellg());std::vector<std::byte>b(n);i.seekg(0);if(n)i.read(reinterpret_cast<char*>(b.data()),static_cast<std::streamsize>(n));return b;}core::AssetKind kind(std::string_view s){if(s=="mesh")return core::AssetKind::Mesh;if(s=="texture")return core::AssetKind::Texture;if(s=="shader")return core::AssetKind::Shader;if(s=="material")return core::AssetKind::Material;if(s=="audio")return core::AssetKind::Audio;if(s=="font")return core::AssetKind::Font;if(s=="world")return core::AssetKind::World;if(s=="script")return core::AssetKind::Script;throw std::runtime_error("unknown asset kind");}}
+int main(int argc,char**argv){try{if(argc!=3){std::cerr<<"Usage: core_asset_cooker <manifest.txt> <out.coreasset>\nrows: <kind> <lod> <key> <file>\n";return 2;}std::filesystem::path manifest=argv[1];std::ifstream in(manifest);if(!in)throw std::runtime_error("cannot open manifest");core::AssetPackWriter writer;std::string line;std::uint32_t ln=0;while(std::getline(in,line)){++ln;if(line.empty()||line[0]=='#')continue;std::istringstream row(line);std::string k,key,file;unsigned lod=0;if(!(row>>k>>lod>>key>>file)||lod>255)throw std::runtime_error("bad asset manifest row "+std::to_string(ln));std::filesystem::path fp=file;if(fp.is_relative())fp=manifest.parent_path()/fp;auto bytes=read_file(fp);writer.add(key,kind(k),static_cast<std::uint8_t>(lod),bytes);}writer.write(argv[2]);std::cout<<"Core Asset Cooker PASS\n";return 0;}catch(const std::exception&e){std::cerr<<"core_asset_cooker: "<<e.what()<<'\n';return 1;}}

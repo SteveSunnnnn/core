@@ -1,0 +1,61 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "dev-headless",
+      "displayName": "Core Dev Headless",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/dev-headless",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CORE_BUILD_TESTS": "ON",
+        "CORE_BUILD_DESKTOP": "OFF"
+      }
+    },
+    {
+      "name": "dev-desktop",
+      "displayName": "Core Dev Desktop",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/dev-desktop",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CORE_BUILD_TESTS": "ON",
+        "CORE_BUILD_DESKTOP": "ON"
+      }
+    },
+    {
+      "name": "release-headless",
+      "displayName": "Core Release Headless QA",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-headless",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CORE_BUILD_TESTS": "ON",
+        "CORE_BUILD_BENCHMARKS": "ON",
+        "CORE_BUILD_DESKTOP": "OFF"
+      }
+    },
+    {
+      "name": "release-desktop",
+      "displayName": "Core Release Desktop",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-desktop",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CORE_BUILD_TESTS": "OFF",
+        "CORE_BUILD_DESKTOP": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev-headless", "configurePreset": "dev-headless" },
+    { "name": "dev-desktop", "configurePreset": "dev-desktop" },
+    { "name": "release-headless", "configurePreset": "release-headless" },
+    { "name": "release-desktop", "configurePreset": "release-desktop" }
+  ],
+  "testPresets": [
+    { "name": "dev-headless", "configurePreset": "dev-headless", "output": { "outputOnFailure": true } },
+    { "name": "release-headless", "configurePreset": "release-headless", "output": { "outputOnFailure": true } }
+  ]
+}
