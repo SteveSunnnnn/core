@@ -226,3 +226,25 @@ The foundation deliberately does not modify `DefinitionDatabase` yet: the owning
 game must first define which data-context providers and command dispatcher are
 installed. Adding a blueprint field to the definition database before that owner
 exists would couple generic content validation to an incomplete runtime contract.
+
+## Retained UI runtime (ScriptedGuiRuntime)
+
+`ScriptedGuiRuntime` is the presentation-side retained state machine built from a
+compiled `ScriptedGuiBlueprint`:
+
+```cpp
+core::ScriptedGuiRuntime runtime{blueprint};
+runtime.instantiate_screen(core::ui_stable_key("country_overview"), root_country_entity);
+
+// Per-frame or per-tick evaluation
+core::UiRuntimeDiff diff = runtime.refresh(dataProvider, viewports);
+if (diff.dirty_nodes > 0) {
+    // Process updated/dirty nodes
+}
+```
+
+Key runtime properties:
+- **Zero Game-Entity Coupling**: Communicates exclusively via `UiDataEntityRef`, `UiDataCollectionRef`, and `ScriptedGuiDataProvider`.
+- **Generational Dirty Tracking**: Nodes track property mutations (`UiRuntimeDirty`) with monotonically increasing generation numbers so the renderer only re-emits modified batches.
+- **Virtualized Viewports**: List and Grid containers consume `UiCollectionViewport` offsets and evaluate visible ranges without allocating per-element strings.
+- **Outlier-Resistant Chart Sampling**: Series bindings downsample dense time series data to configured vertex budgets while preserving zero baselines.

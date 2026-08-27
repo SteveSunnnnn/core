@@ -23,6 +23,13 @@ using UiStableKey = ScriptStableKey;
     return script_stable_key(text);
 }
 
+[[nodiscard]] inline UiStableKey ui_stable_node_key(UiStableKey owner, std::string_view local) noexcept {
+    Fnv1a64 hash;
+    hash.add(owner);
+    hash.add(local);
+    return hash.value();
+}
+
 struct UiDataContextTag {};
 struct UiDataPropertyTag {};
 struct UiCommandTag {};

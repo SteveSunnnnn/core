@@ -1,5 +1,12 @@
 # Changelog
 
+## Core 1.0 Development — Retained UI Runtime & Pin Updates — 2026-08-27
+- Implemented `src/core/ui/ScriptedGuiRuntime.cpp` and wired it into `core_runtime`, completing the retained UI state machine.
+- Added comprehensive unit tests for `ScriptedGuiRuntime` in `tests/scripted_gui_tests.cpp` covering data provider bindings, virtualized list/grid viewports, chart downsampling, and dirty diff generation.
+- Added `ui_stable_node_key` helper to `src/core/ui/ScriptedGui.hpp` for deterministic node-hierarchy lookup.
+- Clarified Vulkan-Headers 1.4.360 version pin and build-time dependency discovery in `THIRD_PARTY.md`.
+- Updated engine audit and documentation reflecting the compiled and tested retained UI subsystem.
+
 ## Core 1.0 Development — Public Repository Packaging — 2026-08-27
 - Declared the first-party source under the MIT License and added the canonical root `LICENSE` file.
 - Added contribution and security policies, Git attributes, a documentation index, and Windows headless CI.

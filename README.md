@@ -106,8 +106,9 @@ Core/
 └── tools/                  GIS, Blender, shader and Windows validation tools
 ```
 
-The retained `src/core/ui/ScriptedGuiRuntime.hpp` draft is not currently part
-of the compiled runtime target; its status is recorded in the final audit.
+The retained UI state machine (`src/core/ui/ScriptedGuiRuntime.cpp`) is
+compiled into `core_runtime` and verified against typed data provider bindings
+and virtualized collections.
 
 ## Contributing and security
 

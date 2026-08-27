@@ -268,6 +268,7 @@ src/core/ui/FontAtlas.cpp
 src/core/ui/FontAtlas.hpp
 src/core/ui/ScriptedGui.cpp
 src/core/ui/ScriptedGui.hpp
+src/core/ui/ScriptedGuiRuntime.cpp
 src/core/ui/ScriptedGuiRuntime.hpp
 src/core/ui/StrategyUi.cpp
 src/core/ui/StrategyUi.hpp

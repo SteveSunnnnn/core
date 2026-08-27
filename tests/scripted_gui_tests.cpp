@@ -1,4 +1,5 @@
 #include "core/ui/ScriptedGui.hpp"
+#include "core/ui/ScriptedGuiRuntime.hpp"
 #include "core/ui/StrategyUi.hpp"
 
 #include <algorithm>
@@ -254,5 +255,182 @@ scripted_gui bad_schema {
     assert(!schema_error.ok());
     assert(has_diagnostic(schema_error, core::ScriptedGuiDiagnosticCode::UnknownField));
 
-    std::cout << "Scripted GUI blueprint tests passed\n";
+    // ScriptedGuiRuntime integration tests
+    class MockDataProvider : public core::ScriptedGuiDataProvider {
+    public:
+        bool show_budget = true;
+        bool can_spend = true;
+        double budget = 1234.5;
+        std::string display_name = "Great Britain";
+        core::UiStableKey flag_asset = core::ui_stable_key("flags/gbr");
+        std::size_t state_count = 50;
+        std::string capital_name = "London";
+        std::vector<double> gdp = {100.0, 110.0, 125.0, 140.0, 160.0};
+        std::vector<core::UiStableKey> year_labels = {
+            core::ui_stable_key("1836"),
+            core::ui_stable_key("1837"),
+            core::ui_stable_key("1838"),
+            core::ui_stable_key("1839"),
+            core::ui_stable_key("1840")
+        };
+        bool fail_reads = false;
+
+        bool read_property(core::UiDataEntityRef source,
+                           std::uint16_t property_slot,
+                           core::UiDataValue& out) const noexcept override {
+            if (fail_reads) return false;
+            if (source.context.value() == 0) { // country
+                switch (property_slot) {
+                case 0: out = core::UiDataValue::boolean_value(show_budget); return true;
+                case 1: out = core::UiDataValue::boolean_value(can_spend); return true;
+                case 2: out = core::UiDataValue::number_value(budget); return true;
+                case 3: out = core::UiDataValue::text_value(display_name); return true;
+                case 4: out = core::UiDataValue::key_value(core::UiValueType::Asset, flag_asset); return true;
+                case 5: {
+                    core::UiDataCollectionRef col{};
+                    col.element_context = core::UiDataContextId{1};
+                    col.stable_key = core::ui_stable_key("states");
+                    col.size = state_count;
+                    out = core::UiDataValue::collection_value(col);
+                    return true;
+                }
+                case 6: {
+                    core::UiDataEntityRef ent{};
+                    ent.context = core::UiDataContextId{1};
+                    ent.stable_key = core::ui_stable_key("capital");
+                    out = core::UiDataValue::entity_value(ent);
+                    return true;
+                }
+                case 7: {
+                    core::UiDataSeriesRef s{};
+                    s.stable_key = core::ui_stable_key("gdp_history");
+                    s.size = gdp.size();
+                    out = core::UiDataValue::series_value(core::UiValueType::NumberSeries, s);
+                    return true;
+                }
+                case 8: {
+                    core::UiDataSeriesRef s{};
+                    s.stable_key = core::ui_stable_key("year_labels");
+                    s.size = year_labels.size();
+                    out = core::UiDataValue::series_value(core::UiValueType::TextSeries, s);
+                    return true;
+                }
+                default: return false;
+                }
+            } else if (source.context.value() == 1) { // state
+                if (property_slot == 0) {
+                    out = core::UiDataValue::text_value(capital_name);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool collection_element(const core::UiDataCollectionRef&,
+                                std::size_t index,
+                                core::UiDataEntityRef& out) const noexcept override {
+            if (index >= state_count) return false;
+            out.context = core::UiDataContextId{1};
+            out.stable_key = core::ui_stable_key("state_" + std::to_string(index));
+            out.handle = index;
+            return true;
+        }
+
+        bool number_series_value(const core::UiDataSeriesRef&,
+                                 std::size_t index,
+                                 double& out) const noexcept override {
+            if (index >= gdp.size()) return false;
+            out = gdp[index];
+            return true;
+        }
+
+        bool text_series_value(const core::UiDataSeriesRef&,
+                               std::size_t index,
+                               core::UiStableKey& out) const noexcept override {
+            if (index >= year_labels.size()) return false;
+            out = year_labels[index];
+            return true;
+        }
+    };
+
+    MockDataProvider provider;
+    core::ScriptedGuiRuntime runtime{valid.blueprint};
+    assert(!runtime.mounted());
+
+    core::UiDataEntityRef root_country{};
+    root_country.context = country;
+    root_country.stable_key = core::ui_stable_key("GBR");
+    root_country.handle = 1001;
+
+    const auto screen_key = core::ui_stable_key("country_overview");
+    const bool mounted = runtime.instantiate_screen(screen_key, root_country);
+    assert(mounted);
+    assert(runtime.mounted());
+    assert(runtime.generation() == 0);
+
+    const auto initial_diff = runtime.refresh(provider);
+    assert(initial_diff.generation == 1);
+    assert(initial_diff.dirty_nodes > 0);
+    assert(initial_diff.provider_errors == 0);
+    assert(!initial_diff.truncated);
+
+    const auto* capital_node = runtime.find_blueprint_node(core::ui_stable_node_key(screen_key, "capital_name"));
+    assert(capital_node != nullptr);
+    assert(capital_node->text == "London");
+
+    const auto* button_rt = runtime.find_blueprint_node(core::ui_stable_node_key(screen_key, "budget_button"));
+    assert(button_rt != nullptr);
+    assert(button_rt->visible && button_rt->enabled);
+    assert(button_rt->command_key == core::ui_stable_key("open_budget"));
+
+    const auto* progress_rt = runtime.find_blueprint_node(core::ui_stable_node_key(screen_key, "budget_progress"));
+    assert(progress_rt != nullptr);
+    assert(progress_rt->value == 1234.5);
+
+    const auto* chart_rt = runtime.find_blueprint_node(core::ui_stable_node_key(screen_key, "growth_chart"));
+    assert(chart_rt != nullptr);
+    assert(chart_rt->chart_values.size() == 5);
+    assert(chart_rt->chart_labels.size() == 5);
+    assert(chart_rt->chart_kind == core::UiChartKind::Area);
+
+    const auto chart_view = runtime.chart_view(static_cast<std::uint32_t>(chart_rt - runtime.nodes().data()));
+    assert(chart_view.values.size() == 5);
+    assert(chart_view.labels.size() == 5);
+
+    // Modify provider state and verify dirty diff
+    provider.show_budget = false;
+    provider.budget = 2000.0;
+    const auto update_diff = runtime.refresh(provider);
+    assert(update_diff.generation == 2);
+    assert(update_diff.dirty_nodes >= 2);
+    assert(!button_rt->visible);
+    assert(progress_rt->value == 2000.0);
+
+    // Viewport virtualization on List
+    core::UiCollectionViewport list_vp{};
+    list_vp.node_or_instance_key = core::ui_stable_node_key(screen_key, "state_list");
+    list_vp.scroll_y = 100.0f;
+    list_vp.viewport_height = 200.0f;
+    const core::UiCollectionViewport vps[] = {list_vp};
+    const auto vp_diff = runtime.refresh(provider, vps);
+    assert(vp_diff.generation == 3);
+    const auto* list_rt = runtime.find_blueprint_node(core::ui_stable_node_key(screen_key, "state_list"));
+    assert(list_rt != nullptr);
+    assert(list_rt->item_window.count > 0);
+
+    // Provider error recovery test
+    provider.fail_reads = true;
+    const auto err_diff = runtime.refresh(provider);
+    assert(err_diff.provider_errors > 0);
+
+    provider.fail_reads = false;
+    const auto recover_diff = runtime.refresh(provider);
+    assert(recover_diff.provider_errors == 0);
+
+    runtime.clear();
+    assert(!runtime.mounted());
+    assert(runtime.nodes().empty());
+    assert(!runtime.removed_keys().empty());
+
+    std::cout << "Scripted GUI blueprint and runtime tests passed\n";
 }

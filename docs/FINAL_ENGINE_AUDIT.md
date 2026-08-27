@@ -13,6 +13,7 @@ Audit date: 2026-08-27. Product version remains **1.0.0**.
 - The weekly economy regression now checks exact aggregate monetary conservation and uses enough partitions to exercise actual multi-worker execution.
 - Modifier graphs evaluate deep dependency chains iteratively; a 50,000-node regression prevents stack-recursive evaluation from returning.
 - Economy content ingestion rejects empty/duplicate definition keys, invalid `GoodId` references, non-positive flows, and offset/ID capacity overflow before mutating tables.
+- `ScriptedGuiRuntime` retained UI subsystem evaluates typed bindings, virtualized collection lists/grids, chart downsampling, and generational dirty diffs with zero provider memory leaks.
 
 ## Release benchmark snapshot
 
@@ -37,7 +38,7 @@ These are not test regressions introduced by the audit; they are boundaries of t
 - Cross-currency trade is intentionally withheld until a balanced FX counterparty/reserve model exists. Same-currency trade settles cash, but the automatic arbitrage scan remains worst-case `O(goods * markets^2)`.
 - Economy work is partitioned primarily by market. A very large single world market cannot use all cores without deterministic entity sub-partitioning.
 - Economic definition keys are now unique and validated, but persistent saves still rely on dense definition IDs plus the content fingerprint rather than stable-key remapping for definition reorder migrations.
-- `src/core/ui/ScriptedGuiRuntime.hpp` is currently an uncompiled retained-runtime draft; it is not part of the verified runtime target.
+- `src/core/ui/ScriptedGuiRuntime.cpp` retained UI runtime is now fully implemented, wired into `core_runtime`, and verified in the automated test suite.
 
 ## Reproduction
 

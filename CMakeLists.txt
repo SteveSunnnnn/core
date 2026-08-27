@@ -106,6 +106,7 @@ add_library(core_runtime
     src/core/ui/VictorianHudSystem.cpp
     src/core/ui/TooltipStack.cpp
     src/core/ui/ScriptedGui.cpp
+    src/core/ui/ScriptedGuiRuntime.cpp
     src/core/ui/FontAtlas.cpp
     src/core/editor/MapEditorSystem.cpp
     src/core/editor/GuiLayoutEditor.cpp

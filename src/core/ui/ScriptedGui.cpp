@@ -281,13 +281,6 @@ struct NodeKeyRecord {
     return false;
 }
 
-[[nodiscard]] UiStableKey combine_node_key(UiStableKey owner, std::string_view local) noexcept {
-    Fnv1a64 hash;
-    hash.add(owner);
-    hash.add(local);
-    return hash.value();
-}
-
 } // namespace
 
 class ScriptedGuiCompilePass {
@@ -865,7 +858,7 @@ private:
                     }
                 }
                 node_keys.push_back({local_key, id_field->symbol});
-                node.stable_key = combine_node_key(owner_key, text(id_field->symbol));
+                node.stable_key = ui_stable_node_key(owner_key, text(id_field->symbol));
             }
         }
         result_.blueprint.nodes_.push_back(node);
