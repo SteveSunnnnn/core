@@ -15,7 +15,6 @@
   - POP qualification accumulation (`qualification_permyriad`) smoothly builds up weekly driven by local literacy rates and standard of living.
   - **Comprehensive Realistic Technology & Research Mechanics** (`src/core/research/ResearchSystem.cpp` / `hpp`):
     - **Multi-Pillar Innovation Generation**: Academic & popular innovation scales dynamically with literate population, amplified by up to $+75\%$ through government **Education Institutions (Tiers 1~5)**.
-    - **Category-Specific Research Specialization**: Industrialized economies accelerate **Production** technologies ($+20\%$), military powers accelerate **Military** doctrines ($+15\%$), and high-literacy civic societies accelerate **Society/Economic** sciences ($+15\%$).
     - **Scientific Breakthroughs ("Eureka" Moments)**: Active research has a deterministic weekly chance ($2.5\%$) to trigger inspiration breakthroughs, delivering $+5\%$ immediate progress leaps.
     - **World-First Discovery Honors**: The pioneer country to first invent a technology in the world is awarded $+5.0$ international **Prestige**, reflecting global acclaim and technological leadership.
     - **Realistic Absorptive Capacity**: Foreign tech diffusion rate is directly modulated by the recipient nation's literacy and educational capacity, preventing backward, illiterate societies from instant assimilation while rewarding educational reforms.

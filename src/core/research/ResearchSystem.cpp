@@ -279,20 +279,8 @@ ResearchTickStats ResearchSystem::run_weekly(World& world) {
         if (!potential_passes(*definition, world, country)) { ++stats.stalled_countries; continue; }
 
         ++stats.countries_with_research;
-
-        // Category-specific research specialization focus
-        std::uint32_t speed_multiplier_ppm = 1'000'000u;
-        if (definition->category == TechnologyCategory::Production && world.countries.gdp(country) > 500.0) {
-            speed_multiplier_ppm += 200'000u; // Industrial economy bonus (+20%)
-        } else if (definition->category == TechnologyCategory::Society) {
-            speed_multiplier_ppm += 150'000u; // Academic/civic focus (+15%)
-        } else if (definition->category == TechnologyCategory::Military && world.countries.prestige(country) > 10.0) {
-            speed_multiplier_ppm += 150'000u; // Military doctrine focus (+15%)
-        }
-
-        const auto effective_innovation = static_cast<std::uint64_t>(innovation_milli_[country_index]) * speed_multiplier_ppm / 1'000'000u;
         auto delta = detail::mul_div_u64_saturating(
-            effective_innovation, 1'000'000u, definition->cost_milli, 1'000'000u);
+            innovation_milli_[country_index], 1'000'000u, definition->cost_milli, 1'000'000u);
         if (delta == 0u) { ++stats.stalled_countries; continue; }
 
         // Eureka / Breakthrough Moment (2.5% deterministic weekly chance)
