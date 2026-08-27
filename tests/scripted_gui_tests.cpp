@@ -464,5 +464,18 @@ scripted_gui bad_schema {
                                     false);
     assert(draw_list.vertices().size() > 10);
 
+    // Verify Tariff Smooth Slider & Input Box Dual-Widget Rendering
+    draw_list.tariff_slider_input_row({10.0f, 110.0f, 600.0f, 36.0f},
+                                     "Grain (London Market)",
+                                     0.15f,
+                                     "15.0%",
+                                     true);
+    draw_list.tariff_slider_input_row({10.0f, 150.0f, 600.0f, 36.0f},
+                                     "Bessemer Steel (Export)",
+                                     0.05f,
+                                     "5.0%",
+                                     false);
+    assert(draw_list.vertices().size() > 30);
+
     std::cout << "Scripted GUI blueprint, construction queue UI, and runtime tests passed\n";
 }

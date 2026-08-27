@@ -255,15 +255,18 @@ void UiDrawList::progress_bar(UiRect rect, float frac, std::uint32_t fill_color,
     if (rect.w <= 0.0f || rect.h <= 0.0f) return;
     const float f = std::clamp(frac, 0.0f, 1.0f);
 
-    // Brass frame
-    quad(rect, 0xff8c6e1cu, scissor);
+    // Outer Dark Bevel Frame
+    quad(rect, 0xff160b06u, scissor);
     if (rect.w > 2.0f && rect.h > 2.0f) {
-        quad({rect.x + 1.0f, rect.y + 1.0f, rect.w - 2.0f, rect.h - 2.0f}, bg_color, scissor);
-        const float fill_w = (rect.w - 2.0f) * f;
+        quad({rect.x + 1.0f, rect.y + 1.0f, rect.w - 2.0f, rect.h - 2.0f}, 0xff8c6e1cu, scissor);
+    }
+    if (rect.w > 4.0f && rect.h > 4.0f) {
+        quad({rect.x + 2.0f, rect.y + 2.0f, rect.w - 4.0f, rect.h - 4.0f}, bg_color, scissor);
+        const float fill_w = (rect.w - 4.0f) * f;
         if (fill_w > 0.0f) {
-            quad({rect.x + 1.0f, rect.y + 1.0f, fill_w, rect.h - 2.0f}, fill_color, scissor);
-            // Top gloss line
-            quad({rect.x + 1.0f, rect.y + 1.0f, fill_w, 2.0f}, 0x40ffffffu, scissor);
+            quad({rect.x + 2.0f, rect.y + 2.0f, fill_w, rect.h - 4.0f}, fill_color, scissor);
+            // Top specular gloss line
+            quad({rect.x + 2.0f, rect.y + 2.0f, fill_w, 2.0f}, 0x50ffffffu, scissor);
         }
     }
 }
@@ -389,6 +392,56 @@ void UiDrawList::construction_queue_row(UiRect rect, const std::string& name, co
     // 5. ETA / Paused status text on the right
     const float eta_x = bar_x + bar_w + 12.0f;
     text(eta_text, eta_x, label_y, 12.0f, paused ? 0xffff6b6bu : 0xffc8b6a6u, scissor);
+}
+
+void UiDrawList::tariff_slider_input_row(UiRect rect, const std::string& label, float tariff_fraction,
+                                         const std::string& input_text, bool is_import,
+                                         UiRect scissor) {
+    if (rect.w <= 0.0f || rect.h <= 0.0f) return;
+
+    // 1. Background Parchment/Leather Card with warm shadow
+    panel(rect, 0xff1e1410u, 0xff8c7040u, 0x40000000u, 2.0f, scissor);
+
+    // 2. Import/Export Type Badge
+    const float pad_x = 8.0f;
+    const float label_y = rect.y + rect.h * 0.5f - 6.0f;
+    const std::string badge = is_import ? "[IMPORT]" : "[EXPORT]";
+    text(badge, rect.x + pad_x, label_y, 11.0f, is_import ? 0xff4da6ffu : 0xffffa64du, scissor);
+
+    // 3. Trade Good / Lane Name
+    text(label, rect.x + pad_x + 75.0f, label_y, 13.0f, 0xffede0d4u, scissor);
+
+    // 4. Interactive Brass Slider Bar
+    const float slider_x = rect.x + pad_x + 220.0f;
+    const float slider_w = std::max(60.0f, rect.w - 380.0f);
+    const float slider_y = rect.y + rect.h * 0.5f - 4.0f;
+    const float slider_h = 8.0f;
+
+    // Slider Groove
+    quad({slider_x, slider_y, slider_w, slider_h}, 0xff0d0805u, scissor);
+    quad({slider_x + 1.0f, slider_y + 1.0f, slider_w - 2.0f, slider_h - 2.0f}, 0xff251a14u, scissor);
+
+    const float frac = std::clamp(tariff_fraction, 0.0f, 1.0f);
+    const float fill_w = (slider_w - 2.0f) * frac;
+    if (fill_w > 0.0f) {
+        quad({slider_x + 1.0f, slider_y + 1.0f, fill_w, slider_h - 2.0f}, 0xffd4af37u, scissor);
+    }
+
+    // Brass Handle Thumb with Gold Specular
+    const float handle_x = slider_x + fill_w - 3.0f;
+    const float handle_y = slider_y - 4.0f;
+    quad({handle_x, handle_y, 8.0f, slider_h + 8.0f}, 0xff8c6e1cu, scissor);
+    quad({handle_x + 1.0f, handle_y + 1.0f, 6.0f, slider_h + 6.0f}, 0xffe6c86au, scissor);
+
+    // 5. Direct Number Input Box (Intaglio recessed frame)
+    const float input_x = slider_x + slider_w + 16.0f;
+    const float input_w = 64.0f;
+    const float input_h = rect.h - 10.0f;
+    const float input_y = rect.y + 5.0f;
+
+    quad({input_x, input_y, input_w, input_h}, 0xff8c7040u, scissor); // Brass frame
+    quad({input_x + 1.0f, input_y + 1.0f, input_w - 2.0f, input_h - 2.0f}, 0xff120c08u, scissor); // Dark recessed interior
+    text(input_text, input_x + 6.0f, label_y, 12.0f, 0xffd4af37u, scissor);
 }
 
 void UiDrawList::text(std::string utf8, float x, float y, float size, std::uint32_t rgba, UiRect scissor) {

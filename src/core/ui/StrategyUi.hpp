@@ -65,6 +65,9 @@ public:
     void construction_queue_row(UiRect rect, const std::string& name, const std::string& kind_label,
                                 float progress_ratio, const std::string& eta_text,
                                 bool paused = false, UiRect scissor = {});
+    void tariff_slider_input_row(UiRect rect, const std::string& label, float tariff_fraction,
+                                 const std::string& input_text, bool is_import,
+                                 UiRect scissor = {});
 
     void text(std::string utf8, float x, float y, float size, std::uint32_t rgba, UiRect scissor = {});
     void hit(std::uint64_t id, UiRect rect);
