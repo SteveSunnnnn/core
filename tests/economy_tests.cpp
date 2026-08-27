@@ -601,6 +601,40 @@ static void test_bank_balance_sheet_credit_service_and_default() {
     assert(f.world.trade_policies.get(country).logistics_capacity_milli == 250'000);
 }
 
+static void test_nonperforming_credit_draws_keep_npl_ledger_balanced() {
+    auto f = make_fixture(1u, 1u, 1u, 100u);
+    const CountryId country{0u};
+    const BuildingId building{0u};
+    const auto bank = f.world.banks.create({bank_stable_key("bank.test.npl"), country,
+        default_currency_key, 1'000'000, 500'000, 100'000, 80'000, 10'000, 52'000});
+
+    // Force the first contract into arrears.  A follow-up draw on an NPL
+    // contract must increase both the loan principal and the NPL bucket by
+    // exactly the same amount.
+    const auto first = f.world.banks.fund_building(bank, building, 20'000, 52'000, 52);
+    assert(first == 20'000);
+    f.world.buildings.cash_mut()[building.value()] = 0;
+    for (int week = 0; week < 4; ++week) f.world.banks.run_weekly(f.world);
+
+    const auto npl_loan = f.world.banks.loan(BankLoanId{0u});
+    const auto before = f.world.banks.bank(bank);
+    assert(npl_loan.status == BankLoanStatus::NonPerforming);
+    assert(before.nonperforming_milli == npl_loan.principal_milli);
+    assert(before.nonperforming_milli == before.loan_assets_milli);
+    assert(f.world.banks.validate(f.world.countries.size(), f.world.buildings.size()));
+
+    const auto second = f.world.banks.fund_building(bank, building, 5'000, 52'000, 52);
+    assert(second == 5'000);
+    const auto after = f.world.banks.bank(bank);
+    const auto after_loan = f.world.banks.loan(BankLoanId{0u});
+    assert(after_loan.status == BankLoanStatus::NonPerforming);
+    assert(after.loan_assets_milli == before.loan_assets_milli + second);
+    assert(after.nonperforming_milli == before.nonperforming_milli + second);
+    assert(after_loan.principal_milli == npl_loan.principal_milli + second);
+    assert(after.nonperforming_milli == after.loan_assets_milli);
+    assert(f.world.banks.validate(f.world.countries.size(), f.world.buildings.size()));
+}
+
 static void test_authored_trade_route_tariff_and_logistics_capacity() {
     auto f = make_fixture(2u, 1u, 1u, 100u);
     const MarketId exporter{0u}, importer{1u};
@@ -874,6 +908,7 @@ int main() {
     test_gold_points_specie_arbitrage_and_drain();
     test_sovereign_debt_issuance_credit_rating_and_default();
     test_bank_balance_sheet_credit_service_and_default();
+    test_nonperforming_credit_draws_keep_npl_ledger_balanced();
     test_authored_trade_route_tariff_and_logistics_capacity();
     test_construction_queue_and_pm_gradual_transition();
     test_realistic_gradual_transitions_and_governance();

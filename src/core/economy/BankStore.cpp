@@ -201,6 +201,12 @@ EconomyAmount BankStore::fund_building(BankId id, BuildingId borrower, EconomyAm
     remaining_weeks_[loan_i] = std::max(remaining_weeks_[loan_i], std::max<std::uint16_t>(1, term));
     loan_assets_milli_[bi] = saturating_add(loan_assets_milli_[bi], funded);
     deposits_milli_[bi] = saturating_add(deposits_milli_[bi], funded);
+    // Additional draws on an already non-performing contract remain
+    // non-performing. Keeping the NPL bucket in lockstep with principal is
+    // required for balance-sheet validation and for capital-ratio gating.
+    if (loan_statuses_[loan_i] == BankLoanStatus::NonPerforming)
+        nonperforming_milli_[bi] = saturating_add(nonperforming_milli_[bi], funded);
+    update_status(bi);
     return funded;
 }
 
@@ -315,9 +321,11 @@ void BankStore::run_weekly(World& world) {
             }
             if (arrears_weeks_[li] >= default_after_weeks) { charge_off(li); continue; }
         } else if (arrears_weeks_[li] > 0) {
-            if (loan_statuses_[li] == BankLoanStatus::NonPerforming)
-                nonperforming_milli_[bi] = saturating_sub(
-                    nonperforming_milli_[bi], std::min(nonperforming_milli_[bi], principal_milli_[li]));
+            // A non-performing loan's principal reduction was already removed
+            // from the bank NPL bucket above. Do not subtract the remaining
+            // principal a second time when the borrower cures the arrears;
+            // the previous code left NPL totals lower than the loan ledger and
+            // made an otherwise balanced bank fail validation after recovery.
             arrears_weeks_[li] = 0; loan_statuses_[li] = BankLoanStatus::Performing;
         }
         if (remaining_weeks_[li] > 0) --remaining_weeks_[li];

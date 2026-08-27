@@ -3,6 +3,7 @@
 #include "core/render/StrategicCamera.hpp"
 #include "core/runtime/CoreEngine.hpp"
 #include "core/ui/StrategyUi.hpp"
+#include "core/ui/VictorianHudSystem.hpp"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <cstdlib>

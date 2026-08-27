@@ -12,6 +12,20 @@ struct SDL_Window;
 
 namespace core {
 
+// Expanded UI vertex used only at the renderer boundary.  UiDrawList keeps a
+// compact AARRGGBB color; the Vulkan path uploads normalized float channels so
+// the shader layout stays explicit and portable across backends.
+struct UiGpuVertex {
+    float x;
+    float y;
+    float u;
+    float v;
+    float r;
+    float g;
+    float b;
+    float a;
+};
+
 class VulkanDesktopBackend {
 public:
     VulkanDesktopBackend() = default;
@@ -23,7 +37,8 @@ public:
     void draw_frame();
     // Stage a UI draw list for the next frame. Solid and polyline batches are
     // rendered through the UI pipeline with per-batch scissor; textured/MSDF
-    // batches need bindless texture plumbing and are skipped for now.
+    // batches currently use a deterministic solid-color fallback until the
+    // backend's texture atlas is bound.
     void submit_ui(const UiDrawList& ui);
     void wait_idle();
     void write_report(const std::filesystem::path& path) const;
@@ -135,16 +150,6 @@ private:
 
     // UI draw-list staging: CPU copies filled by submit_ui, and one
     // persistently mapped vertex/index buffer pair per frame in flight.
-    struct UiGpuVertex {
-        float x;
-        float y;
-        float u;
-        float v;
-        float r;
-        float g;
-        float b;
-        float a;
-    };
     struct UiGpuBatch {
         std::uint32_t first_index;
         std::uint32_t index_count;

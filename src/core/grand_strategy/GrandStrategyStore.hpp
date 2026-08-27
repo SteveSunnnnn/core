@@ -278,6 +278,7 @@ public:
 
     [[nodiscard]] std::span<ArmyRecord> armys_mut() noexcept { return armys_; }
     [[nodiscard]] std::span<NavyRecord> navys_mut() noexcept { return navys_; }
+    [[nodiscard]] std::span<TreatyRecord> treatys_mut() noexcept { return treatys_; }
     [[nodiscard]] std::span<TradeRouteRecord> trade_routes_mut() noexcept { return trade_routes_; }
     [[nodiscard]] std::span<InstitutionRecord> institutions_mut() noexcept { return institutions_; }
     [[nodiscard]] std::span<TechnologyRecord> technologys_mut() noexcept { return technologys_; }
@@ -410,4 +411,3 @@ private:
 };
 
 } // namespace core
-

@@ -580,6 +580,107 @@ void test_financial_section_roundtrip_and_atomic_validation() {
     assert(restored.engine_checksum() == before);
 }
 
+void test_grand_strategy_extension_roundtrip() {
+    CoreEngine source{{0u, 0x13579bdu, 0x2468aceu}};
+    const auto good = source.definitions().add_good({"gsx_good", 1'000});
+    const std::array<RecipeFlow, 1> output{{{good, 10}}};
+    const auto building_type = source.definitions().add_building_type("gsx_building", 100, {}, output);
+    const auto first = source.world().countries.create({"GS1", 1'000.0, 500.0, 100.0, 0.2});
+    const auto second = source.world().countries.create({"GS2", 1'000.0, 500.0, 100.0, 0.2});
+    source.world().markets.resize(2u, source.definitions());
+    source.world().markets.set_owner(MarketId{0u}, first);
+    source.world().markets.set_owner(MarketId{1u}, second);
+    const auto state = source.world().geography.create_state({"gsx_state", second, MarketId{1u}, {}});
+    const auto province = source.world().geography.create_province({"gsx_province", state, second, MarketId{1u}, 1.0, 2.0, 100});
+    source.world().geography.set_state_capital(state, province);
+    const auto building = source.world().buildings.create({MarketId{1u}, building_type, 1u, 1'000, 0, province});
+
+    auto& gs = source.world().grand_strategy;
+    const auto design = gs.add_ship_design({first, 11u, 22u, 33u, 44'000});
+    const auto sea = gs.add_sea_zone({55u, first, 660'000u});
+    const auto navy = gs.add_navy({first, state, 8'000u, 770'000u, design,
+                                   NavalMission::BlockadePort, sea});
+    const auto treaty = gs.create_treaty_ex(first, second, TreatyKind::Custom, 66u,
+                                            7u, 99u, 1'200, 77u);
+    (void)gs.add_treaty_article({treaty, TreatyKind::TradeAgreement, 88u, 99u, true});
+    (void)gs.add_treaty_participant({treaty, first, 1u});
+    (void)gs.add_treaty_participant({treaty, second, 0u});
+    const auto play = gs.start_diplomatic_play(first, second, 101u);
+    (void)gs.add_diplomatic_sway({play, first, second, SwayOfferType::ConcessionTreaty, 102u, true});
+    (void)gs.add_war_goal({play, first, second, WarGoalType::ConquerState, state, true, false});
+    (void)gs.add_war_goal({play, first, second, WarGoalType::WarReparations, StateId{}, false, false});
+    (void)gs.add_commander({first, state, CommanderTrait::LogisticsMaster, 4u});
+    (void)gs.add_naval_battle({sea, navy, navy, -123, false});
+    (void)gs.add_parliament({first, 103u, true, 52u, 13u, 120u, 75u, 45u, 104u,
+                             800'000u, 200'000u, MigrationPolicy::MigrationControls});
+    (void)gs.add_cultural_acceptance({first, CultureId{9u}, CulturalAcceptanceLevel::Accepted});
+
+    const auto checksum = source.world().checksum();
+    const auto save = source.make_save();
+    constexpr std::uint32_t gsx_tag = 0x31585347u;
+    assert(find_u32_le(save.bytes, gsx_tag) != save.bytes.size());
+
+    CoreEngine restored{{0u, 0x13579bdu, 0x2468aceu}};
+    const auto restored_good = restored.definitions().add_good({"gsx_good", 1'000});
+    const std::array<RecipeFlow, 1> restored_output{{{restored_good, 10}}};
+    (void)restored.definitions().add_building_type("gsx_building", 100, {}, restored_output);
+    restored.restore(save.bytes);
+    assert(restored.world().checksum() == checksum);
+    const auto& restored_gs = restored.world().grand_strategy;
+    assert(restored_gs.treatys().size() == 1u);
+    assert(restored_gs.treatys()[0].treaty_key_hash == 77u);
+    assert(restored_gs.treatys()[0].start_tick == 7u);
+    assert(restored_gs.treatys()[0].expiry_tick == 99u);
+    assert(restored_gs.navys()[0].mission == NavalMission::BlockadePort);
+    assert(restored_gs.navys()[0].assigned_zone == sea);
+    assert(restored_gs.treaty_articles().size() == 1u);
+    assert(restored_gs.treaty_participants().size() == 2u);
+    assert(restored_gs.parliaments()[0].migration_policy == MigrationPolicy::MigrationControls);
+    assert(restored_gs.cultural_acceptances()[0].level == CulturalAcceptanceLevel::Accepted);
+    assert(restored_gs.diplomatic_sways()[0].accepted);
+    assert(restored_gs.war_goals()[0].state_target == state);
+    assert(restored_gs.war_goals()[1].goal_type == WarGoalType::WarReparations);
+    assert(!restored_gs.war_goals()[1].state_target.valid());
+    assert(restored_gs.commanders()[0].trait == CommanderTrait::LogisticsMaster);
+    assert(restored_gs.sea_zones()[0].blockade_efficiency_ppm == 660'000u);
+    assert(restored_gs.naval_battles()[0].progress_milli == -123);
+    (void)building;
+}
+
+void test_pre_gsx_save_keeps_idle_navy_compatible() {
+    CoreEngine source{{0u, 0x55667788u, 0x99aabbccu}};
+    const auto good = source.definitions().add_good({"pre_gsx_good", 1'000});
+    const std::array<RecipeFlow, 1> output{{{good, 10}}};
+    const auto building_type = source.definitions().add_building_type("pre_gsx_building", 100, {}, output);
+    const auto country = source.world().countries.create({"PGS", 1'000.0, 500.0, 100.0, 0.2});
+    source.world().markets.resize(1u, source.definitions());
+    source.world().markets.set_owner(MarketId{0u}, country);
+    const auto state = source.world().geography.create_state({"pre_gsx_state", country, MarketId{0u}, {}});
+    const auto design = source.world().grand_strategy.add_ship_design({country, 1u, 2u, 3u, 4'000});
+    (void)source.world().grand_strategy.add_navy({country, state, 1'000u, 800'000u, design});
+    (void)building_type;
+
+    const auto checksum = source.world().checksum();
+    auto save = source.make_save();
+    constexpr std::uint32_t gsx_tag = 0x31585347u;
+    const auto gsx_offset = find_u32_le(save.bytes, gsx_tag);
+    assert(gsx_offset != save.bytes.size());
+    // Simulate a v4 save written before GSX1 existed: keep the historical
+    // sections and payload checksum, but remove the new extension tail.
+    save.bytes.resize(gsx_offset);
+    refresh_save_payload_framing(save.bytes);
+
+    CoreEngine restored{{0u, 0x55667788u, 0x99aabbccu}};
+    const auto restored_good = restored.definitions().add_good({"pre_gsx_good", 1'000});
+    const std::array<RecipeFlow, 1> restored_output{{{restored_good, 10}}};
+    (void)restored.definitions().add_building_type("pre_gsx_building", 100, {}, restored_output);
+    restored.restore(save.bytes);
+    assert(restored.world().checksum() == checksum);
+    assert(restored.world().grand_strategy.navys().size() == 1u);
+    assert(restored.world().grand_strategy.navys()[0].mission == NavalMission::None);
+    assert(!restored.world().grand_strategy.navys()[0].assigned_zone.valid());
+}
+
 void test_destroyed_entity_slots_roundtrip_and_recycle_order() {
     CoreEngine source{{0u, 0x77889900u, 0x00112233u}};
     const auto good = source.definitions().add_good({"slot_test_good", 1'000});
@@ -846,6 +947,10 @@ int main() {
     test_market_monetary_roundtrip_and_stable_accounts();
     std::cout << "[RUNNING test_financial_section_roundtrip_and_atomic_validation]\n" << std::flush;
     test_financial_section_roundtrip_and_atomic_validation();
+    std::cout << "[RUNNING test_grand_strategy_extension_roundtrip]\n" << std::flush;
+    test_grand_strategy_extension_roundtrip();
+    std::cout << "[RUNNING test_pre_gsx_save_keeps_idle_navy_compatible]\n" << std::flush;
+    test_pre_gsx_save_keeps_idle_navy_compatible();
     std::cout << "[RUNNING test_destroyed_entity_slots_roundtrip_and_recycle_order]\n" << std::flush;
     test_destroyed_entity_slots_roundtrip_and_recycle_order();
     std::cout << "[RUNNING test_allocator_generation_enters_world_checksum]\n" << std::flush;

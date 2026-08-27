@@ -38,6 +38,11 @@ constexpr std::uint32_t fx_section_tag = 0x31305846u; // "FX01" in little endian
 constexpr std::uint32_t financial_section_tag = 0x314e4946u; // "FIN1" in little endian.
 constexpr std::uint32_t slot_section_tag = 0x31544c53u; // "SLT1" in little endian.
 constexpr std::uint32_t global_script_section_tag = 0x31424c47u; // "GLB1" in little endian.
+// GSX1 carries GrandStrategyStore records added after the original v1/v3
+// layout (treaty metadata, naval missions and the newer political/diplomatic
+// collections). It is tagged and appended so older v4/v3 payloads remain
+// readable while new saves retain every checksum-authoritative field.
+constexpr std::uint32_t grand_strategy_extension_tag = 0x31585347u;
 constexpr std::uint32_t max_banks = 65'536u;
 constexpr std::uint32_t max_bank_loans = 5'000'000u;
 constexpr std::uint32_t max_context_bindings = 65'536u;
@@ -406,6 +411,210 @@ void encode_grand(Writer& w, const GrandStrategyStore& gs) {
     CNT(gs.law_enactments()); for(const auto&r:gs.law_enactments()){wid(w,r.country);w.u64(r.law_hash);w.u32(r.progress_ppm);w.u32(r.support_ppm);w.boolean(r.active);w.boolean(r.passed);}
     CNT(gs.wars()); for(const auto&r:gs.wars()){wid(w,r.play);wid(w,r.attacker);wid(w,r.defender);w.i32(r.war_score_milli);w.u16(r.weeks);w.boolean(r.active);}
 #undef CNT
+}
+
+// The original GrandStrategyStore payload predates several authoritative
+// records. Keep that compact, stable prefix intact and append this extension
+// after the other v4 sections. This makes old v4/v3 readers reject the new
+// section explicitly rather than silently dropping live state, while the
+// current reader can restore all fields before checksum validation.
+void encode_grand_extension(Writer& w, const GrandStrategyStore& gs) {
+    w.u32(grand_strategy_extension_tag);
+
+    w.u32(static_cast<std::uint32_t>(gs.treatys().size()));
+    for (const auto& record : gs.treatys()) {
+        w.u64(record.treaty_key_hash);
+        w.u64(record.start_tick);
+        w.u64(record.expiry_tick);
+        w.i32(record.obligation_milli);
+        w.boolean(record.is_multilateral);
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.navys().size()));
+    for (const auto& record : gs.navys()) {
+        w.u8(static_cast<std::uint8_t>(record.mission));
+        wid(w, record.assigned_zone);
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.treaty_articles().size()));
+    for (const auto& record : gs.treaty_articles()) {
+        wid(w, record.treaty);
+        w.u8(static_cast<std::uint8_t>(record.kind));
+        w.u64(record.article_hash);
+        w.u64(record.payload_hash);
+        w.boolean(record.active);
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.treaty_participants().size()));
+    for (const auto& record : gs.treaty_participants()) {
+        wid(w, record.treaty);
+        wid(w, record.country);
+        w.u8(record.role);
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.parliaments().size()));
+    for (const auto& record : gs.parliaments()) {
+        wid(w, record.country);
+        w.u64(record.power_distribution_law_hash);
+        w.boolean(record.elections_enabled);
+        w.u16(record.election_interval_weeks);
+        w.u16(record.weeks_to_next_election);
+        w.u32(record.total_seats);
+        w.u32(record.ruling_party_seats);
+        w.u32(record.opposition_seats);
+        w.u64(record.ruling_party_hash);
+        w.u32(record.pop_vote_weight_ppm);
+        w.u32(record.ig_clout_weight_ppm);
+        w.u8(static_cast<std::uint8_t>(record.migration_policy));
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.cultural_acceptances().size()));
+    for (const auto& record : gs.cultural_acceptances()) {
+        wid(w, record.country);
+        wid(w, record.culture);
+        w.u8(static_cast<std::uint8_t>(record.level));
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.diplomatic_sways().size()));
+    for (const auto& record : gs.diplomatic_sways()) {
+        wid(w, record.play);
+        wid(w, record.sponsor);
+        wid(w, record.target_country);
+        w.u8(static_cast<std::uint8_t>(record.offer_type));
+        w.u64(record.payload_hash);
+        w.boolean(record.accepted);
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.war_goals().size()));
+    for (const auto& record : gs.war_goals()) {
+        wid(w, record.play);
+        wid(w, record.holder);
+        wid(w, record.target);
+        w.u8(static_cast<std::uint8_t>(record.goal_type));
+        wid(w, record.state_target);
+        w.boolean(record.primary);
+        w.boolean(record.enforced);
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.commanders().size()));
+    for (const auto& record : gs.commanders()) {
+        wid(w, record.country);
+        wid(w, record.location);
+        w.u8(static_cast<std::uint8_t>(record.trait));
+        w.u8(record.skill_level);
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.sea_zones().size()));
+    for (const auto& record : gs.sea_zones()) {
+        w.u64(record.key_hash);
+        wid(w, record.controller);
+        w.u32(record.blockade_efficiency_ppm);
+    }
+
+    w.u32(static_cast<std::uint32_t>(gs.naval_battles().size()));
+    for (const auto& record : gs.naval_battles()) {
+        wid(w, record.zone);
+        wid(w, record.attacker_navy);
+        wid(w, record.defender_navy);
+        w.i32(record.progress_milli);
+        w.boolean(record.resolved);
+    }
+}
+
+struct DecodedGrandExtensionState {
+    bool present = false;
+};
+
+DecodedGrandExtensionState decode_grand_extension(Reader& r, GrandStrategyStore& gs) {
+    if (r.u32() != grand_strategy_extension_tag)
+        throw std::runtime_error("invalid grand-strategy extension tag");
+
+    const auto treaty_count = r.count(max_records);
+    if (treaty_count != gs.treatys().size())
+        throw std::runtime_error("grand-strategy treaty extension count mismatch");
+    auto treaties = gs.treatys_mut();
+    for (std::size_t i = 0; i < treaties.size(); ++i) {
+        treaties[i].treaty_key_hash = r.u64();
+        treaties[i].start_tick = r.u64();
+        treaties[i].expiry_tick = r.u64();
+        treaties[i].obligation_milli = r.i32();
+        treaties[i].is_multilateral = r.boolean();
+    }
+
+    const auto navy_count = r.count(max_records);
+    if (navy_count != gs.navys().size())
+        throw std::runtime_error("grand-strategy navy extension count mismatch");
+    auto navies = gs.navys_mut();
+    for (std::size_t i = 0; i < navies.size(); ++i) {
+        navies[i].mission = static_cast<NavalMission>(r.u8());
+        navies[i].assigned_zone = rid<SeaZoneId>(r);
+    }
+
+    const auto article_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < article_count; ++i) {
+        const auto treaty = rid<TreatyId>(r);
+        const auto kind = static_cast<TreatyKind>(r.u8());
+        gs.add_treaty_article({treaty, kind, r.u64(), r.u64(), r.boolean()});
+    }
+
+    const auto participant_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < participant_count; ++i) {
+        gs.add_treaty_participant({rid<TreatyId>(r), rid<CountryId>(r), r.u8()});
+    }
+
+    const auto parliament_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < parliament_count; ++i) {
+        ParliamentRecord record;
+        record.country = rid<CountryId>(r);
+        record.power_distribution_law_hash = r.u64();
+        record.elections_enabled = r.boolean();
+        record.election_interval_weeks = r.u16();
+        record.weeks_to_next_election = r.u16();
+        record.total_seats = r.u32();
+        record.ruling_party_seats = r.u32();
+        record.opposition_seats = r.u32();
+        record.ruling_party_hash = r.u64();
+        record.pop_vote_weight_ppm = r.u32();
+        record.ig_clout_weight_ppm = r.u32();
+        record.migration_policy = static_cast<MigrationPolicy>(r.u8());
+        gs.add_parliament(record);
+    }
+
+    const auto acceptance_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < acceptance_count; ++i) {
+        gs.add_cultural_acceptance({rid<CountryId>(r), rid<CultureId>(r),
+                                    static_cast<CulturalAcceptanceLevel>(r.u8())});
+    }
+
+    const auto sway_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < sway_count; ++i) {
+        gs.add_diplomatic_sway({rid<DiplomaticPlayId>(r), rid<CountryId>(r), rid<CountryId>(r),
+                                static_cast<SwayOfferType>(r.u8()), r.u64(), r.boolean()});
+    }
+
+    const auto war_goal_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < war_goal_count; ++i) {
+        gs.add_war_goal({rid<DiplomaticPlayId>(r), rid<CountryId>(r), rid<CountryId>(r),
+                         static_cast<WarGoalType>(r.u8()), rid<StateId>(r), r.boolean(), r.boolean()});
+    }
+
+    const auto commander_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < commander_count; ++i) {
+        gs.add_commander({rid<CountryId>(r), rid<StateId>(r),
+                          static_cast<CommanderTrait>(r.u8()), r.u8()});
+    }
+
+    const auto sea_zone_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < sea_zone_count; ++i) {
+        gs.add_sea_zone({r.u64(), rid<CountryId>(r), r.u32()});
+    }
+
+    const auto naval_battle_count = r.count(max_records);
+    for (std::uint32_t i = 0; i < naval_battle_count; ++i) {
+        gs.add_naval_battle({rid<SeaZoneId>(r), rid<NavyId>(r), rid<NavyId>(r), r.i32(), r.boolean()});
+    }
+
+    return {true};
 }
 void decode_grand_v1(Reader& r, GrandStrategyStore& gs){
     for(std::uint32_t i=0,n=r.count(max_records);i<n;++i)gs.add_technology({rid<CountryId>(r),r.u64(),r.u32(),r.boolean()});
@@ -1537,6 +1746,10 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     // Dense entity rows retain stable indices; SLT1 carries the allocator
     // bitmap, generations and free-list order needed for deterministic reuse.
     encode_slot_section(p, world);
+    // Grand-strategy records added after the original v1/v3 payload are
+    // appended after SLT1 so v3 read-only migration fixtures can still trim
+    // the v4 extension tail at their historical marker.
+    encode_grand_extension(p, world.grand_strategy);
 
     const auto checksum=world.checksum();
     const auto runtime_state_checksum = has_on_action_section
@@ -1626,6 +1839,7 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     DecodedConstructionState decoded_construction;
     DecodedResistanceState decoded_resistance;
     DecodedSlotState decoded_slots;
+    DecodedGrandExtensionState decoded_grand_extension;
     DecodedGlobalScriptState decoded_global_scripts;
     if (ver == legacy_version) {
         decode_grand_v1(p, decoded.grand_strategy);
@@ -1674,6 +1888,10 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
                     if (decoded_slots.present)
                         throw std::runtime_error("duplicate slot-pool extension");
                     decoded_slots = decode_slot_section(p, decoded);
+                } else if (tag == grand_strategy_extension_tag) {
+                    if (decoded_grand_extension.present)
+                        throw std::runtime_error("duplicate grand-strategy extension");
+                    decoded_grand_extension = decode_grand_extension(p, decoded.grand_strategy);
                 } else {
                     throw std::runtime_error("unknown extension section in Core save");
                 }

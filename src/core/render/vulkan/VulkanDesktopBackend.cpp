@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -54,6 +55,86 @@ struct LivingVertex {
     float y;
     float z;
 };
+
+[[nodiscard]] UiGpuVertex ui_gpu_vertex(const UiVertex& vertex) noexcept {
+    // Core UI colors are stored as AARRGGBB (the high byte is alpha).  Keep
+    // the public draw-list representation compact and expand only at the GPU
+    // upload boundary, where the shader consumes four normalized floats.
+    const auto rgba = vertex.rgba;
+    constexpr float inv = 1.0f / 255.0f;
+    return UiGpuVertex{
+        vertex.x, vertex.y, vertex.u, vertex.v,
+        static_cast<float>((rgba >> 16u) & 0xffu) * inv,
+        static_cast<float>((rgba >> 8u) & 0xffu) * inv,
+        static_cast<float>(rgba & 0xffu) * inv,
+        static_cast<float>((rgba >> 24u) & 0xffu) * inv};
+}
+
+[[nodiscard]] std::array<std::uint8_t, 7> glyph_rows(char input) noexcept {
+    const auto upper = (input >= 'a' && input <= 'z')
+        ? static_cast<char>(input - ('a' - 'A')) : input;
+    switch (upper) {
+    case ' ': return {0,0,0,0,0,0,0};
+    case 'A': return {0x0e,0x11,0x11,0x1f,0x11,0x11,0x11};
+    case 'B': return {0x1e,0x11,0x11,0x1e,0x11,0x11,0x1e};
+    case 'C': return {0x0f,0x10,0x10,0x10,0x10,0x10,0x0f};
+    case 'D': return {0x1e,0x11,0x11,0x11,0x11,0x11,0x1e};
+    case 'E': return {0x1f,0x10,0x10,0x1e,0x10,0x10,0x1f};
+    case 'F': return {0x1f,0x10,0x10,0x1e,0x10,0x10,0x10};
+    case 'G': return {0x0f,0x10,0x10,0x17,0x11,0x11,0x0f};
+    case 'H': return {0x11,0x11,0x11,0x1f,0x11,0x11,0x11};
+    case 'I': return {0x1f,0x04,0x04,0x04,0x04,0x04,0x1f};
+    case 'J': return {0x01,0x01,0x01,0x01,0x11,0x11,0x0e};
+    case 'K': return {0x11,0x12,0x14,0x18,0x14,0x12,0x11};
+    case 'L': return {0x10,0x10,0x10,0x10,0x10,0x10,0x1f};
+    case 'M': return {0x11,0x1b,0x15,0x15,0x11,0x11,0x11};
+    case 'N': return {0x11,0x19,0x15,0x13,0x11,0x11,0x11};
+    case 'O': return {0x0e,0x11,0x11,0x11,0x11,0x11,0x0e};
+    case 'P': return {0x1e,0x11,0x11,0x1e,0x10,0x10,0x10};
+    case 'Q': return {0x0e,0x11,0x11,0x11,0x15,0x12,0x0d};
+    case 'R': return {0x1e,0x11,0x11,0x1e,0x14,0x12,0x11};
+    case 'S': return {0x0f,0x10,0x10,0x0e,0x01,0x01,0x1e};
+    case 'T': return {0x1f,0x04,0x04,0x04,0x04,0x04,0x04};
+    case 'U': return {0x11,0x11,0x11,0x11,0x11,0x11,0x0e};
+    case 'V': return {0x11,0x11,0x11,0x11,0x11,0x0a,0x04};
+    case 'W': return {0x11,0x11,0x11,0x15,0x15,0x1b,0x11};
+    case 'X': return {0x11,0x11,0x0a,0x04,0x0a,0x11,0x11};
+    case 'Y': return {0x11,0x11,0x0a,0x04,0x04,0x04,0x04};
+    case 'Z': return {0x1f,0x01,0x02,0x04,0x08,0x10,0x1f};
+    case '0': return {0x0e,0x11,0x13,0x15,0x19,0x11,0x0e};
+    case '1': return {0x04,0x0c,0x04,0x04,0x04,0x04,0x0e};
+    case '2': return {0x0e,0x11,0x01,0x02,0x04,0x08,0x1f};
+    case '3': return {0x1e,0x01,0x01,0x0e,0x01,0x01,0x1e};
+    case '4': return {0x02,0x06,0x0a,0x12,0x1f,0x02,0x02};
+    case '5': return {0x1f,0x10,0x10,0x1e,0x01,0x01,0x1e};
+    case '6': return {0x0e,0x10,0x10,0x1e,0x11,0x11,0x0e};
+    case '7': return {0x1f,0x01,0x02,0x04,0x08,0x08,0x08};
+    case '8': return {0x0e,0x11,0x11,0x0e,0x11,0x11,0x0e};
+    case '9': return {0x0e,0x11,0x11,0x0f,0x01,0x01,0x0e};
+    case '-': return {0x00,0x00,0x00,0x1f,0x00,0x00,0x00};
+    case '#': return {0x0a,0x1f,0x0a,0x0a,0x1f,0x0a,0x00};
+    case ':': return {0x00,0x04,0x04,0x00,0x04,0x04,0x00};
+    case '.': return {0x00,0x00,0x00,0x00,0x00,0x0c,0x0c};
+    case '/': return {0x01,0x02,0x02,0x04,0x08,0x08,0x10};
+    case '%': return {0x19,0x19,0x02,0x04,0x08,0x13,0x13};
+    case '+': return {0x00,0x04,0x04,0x1f,0x04,0x04,0x00};
+    default: return {0x1f,0x11,0x15,0x11,0x15,0x11,0x1f};
+    }
+}
+
+[[nodiscard]] VkRect2D ui_scissor(UiRect rect, VkExtent2D extent) noexcept {
+    const auto full = VkRect2D{{0, 0}, extent};
+    if (!std::isfinite(rect.x) || !std::isfinite(rect.y) ||
+        !std::isfinite(rect.w) || !std::isfinite(rect.h) ||
+        rect.w <= 0.0f || rect.h <= 0.0f) return full;
+    const auto x0 = std::clamp(rect.x, 0.0f, static_cast<float>(extent.width));
+    const auto y0 = std::clamp(rect.y, 0.0f, static_cast<float>(extent.height));
+    const auto x1 = std::clamp(rect.x + rect.w, x0, static_cast<float>(extent.width));
+    const auto y1 = std::clamp(rect.y + rect.h, y0, static_cast<float>(extent.height));
+    return VkRect2D{
+        {static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0)},
+        {static_cast<std::uint32_t>(x1 - x0), static_cast<std::uint32_t>(y1 - y0)}};
+}
 
 VkPipelineColorBlendAttachmentState blend_attachment(bool alpha) {
     VkPipelineColorBlendAttachmentState state{};
@@ -133,7 +214,6 @@ void VulkanDesktopBackend::initialize(SDL_Window* window, bool enable_validation
     create_sync();
     if (!shader_dir_.empty()) {
         create_live_validation_renderer();
-        create_hdr_targets();
     }
 }
 
@@ -648,7 +728,6 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     const auto living_fragment = load_shader_module(shader_dir_ / "living.frag.spv");
     const auto ui_vertex = load_shader_module(shader_dir_ / "ui.vert.spv");
     const auto ui_fragment = load_shader_module(shader_dir_ / "ui.frag.spv");
-    const auto tonemap_fragment = load_shader_module(shader_dir_ / "tonemap.frag.spv");
 
     auto create_pipeline = [&](VkShaderModule vertex,
                                VkShaderModule fragment,
@@ -702,9 +781,13 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
         return pipeline;
     };
 
-    terrain_pipeline_ = create_pipeline(fullscreen, terrain, fullscreen_layout_, false, nullptr, hdr_format_, msaa_samples_);
-    ocean_pipeline_ = create_pipeline(fullscreen, ocean, fullscreen_layout_, true, nullptr, hdr_format_, msaa_samples_);
-    political_pipeline_ = create_pipeline(fullscreen, political, political_layout_, true, nullptr, hdr_format_, msaa_samples_);
+    // The current frame graph renders directly into the swapchain.  Keep the
+    // pipeline attachment format identical to that target; the HDR resources
+    // are optional forward-looking infrastructure and are not part of this
+    // validation renderer yet.
+    terrain_pipeline_ = create_pipeline(fullscreen, terrain, fullscreen_layout_, false, nullptr, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
+    ocean_pipeline_ = create_pipeline(fullscreen, ocean, fullscreen_layout_, true, nullptr, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
+    political_pipeline_ = create_pipeline(fullscreen, political, political_layout_, true, nullptr, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
 
     const VkVertexInputBindingDescription living_bindings[]{
         {0, sizeof(LivingVertex), VK_VERTEX_INPUT_RATE_VERTEX},
@@ -720,19 +803,19 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     living_input.pVertexBindingDescriptions = living_bindings;
     living_input.vertexAttributeDescriptionCount = 5;
     living_input.pVertexAttributeDescriptions = living_attributes;
-    living_pipeline_ = create_pipeline(living_vertex, living_fragment, fullscreen_layout_, true, &living_input);
+    living_pipeline_ = create_pipeline(living_vertex, living_fragment, fullscreen_layout_, true, &living_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
 
-    const VkVertexInputBindingDescription ui_binding{0, sizeof(UiVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+    const VkVertexInputBindingDescription ui_binding{0, sizeof(UiGpuVertex), VK_VERTEX_INPUT_RATE_VERTEX};
     const VkVertexInputAttributeDescription ui_attributes[]{
-        {0, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<std::uint32_t>(offsetof(UiVertex, x))},
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<std::uint32_t>(offsetof(UiVertex, u))},
-        {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, static_cast<std::uint32_t>(offsetof(UiVertex, r))}};
+        {0, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<std::uint32_t>(offsetof(UiGpuVertex, x))},
+        {1, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<std::uint32_t>(offsetof(UiGpuVertex, u))},
+        {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, static_cast<std::uint32_t>(offsetof(UiGpuVertex, r))}};
     VkPipelineVertexInputStateCreateInfo ui_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     ui_input.vertexBindingDescriptionCount = 1;
     ui_input.pVertexBindingDescriptions = &ui_binding;
     ui_input.vertexAttributeDescriptionCount = 3;
     ui_input.pVertexAttributeDescriptions = ui_attributes;
-    ui_pipeline_ = create_pipeline(ui_vertex, ui_fragment, ui_layout_, true, &ui_input);
+    ui_pipeline_ = create_pipeline(ui_vertex, ui_fragment, ui_layout_, true, &ui_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
 
     vkDestroyShaderModule(device_, ui_fragment, nullptr);
     vkDestroyShaderModule(device_, ui_vertex, nullptr);
@@ -757,7 +840,7 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     create_host_buffer(sizeof(identity), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                        identity.data(), living_instance_, living_instance_memory_);
 
-    const std::array<UiVertex, 6> ui_vertices{{
+    const std::array<UiGpuVertex, 6> ui_vertices{{
         {28.0f, 28.0f, 0.0f, 0.0f, 0.06f, 0.07f, 0.09f, 0.88f},
         {380.0f, 28.0f, 1.0f, 0.0f, 0.06f, 0.07f, 0.09f, 0.88f},
         {380.0f, 96.0f, 1.0f, 1.0f, 0.06f, 0.07f, 0.09f, 0.88f},
@@ -773,6 +856,34 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
 void VulkanDesktopBackend::destroy_live_validation_renderer() {
     if (device_ == VK_NULL_HANDLE) {
         return;
+    }
+    for (auto& frame : ui_frame_buffers_) {
+        if (frame.vertex_mapped != nullptr && frame.vertex_memory != VK_NULL_HANDLE) {
+            vkUnmapMemory(device_, frame.vertex_memory);
+            frame.vertex_mapped = nullptr;
+        }
+        if (frame.vertex_buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, frame.vertex_buffer, nullptr);
+            frame.vertex_buffer = VK_NULL_HANDLE;
+        }
+        if (frame.vertex_memory != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, frame.vertex_memory, nullptr);
+            frame.vertex_memory = VK_NULL_HANDLE;
+        }
+        frame.vertex_capacity = 0;
+        if (frame.index_mapped != nullptr && frame.index_memory != VK_NULL_HANDLE) {
+            vkUnmapMemory(device_, frame.index_memory);
+            frame.index_mapped = nullptr;
+        }
+        if (frame.index_buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, frame.index_buffer, nullptr);
+            frame.index_buffer = VK_NULL_HANDLE;
+        }
+        if (frame.index_memory != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, frame.index_memory, nullptr);
+            frame.index_memory = VK_NULL_HANDLE;
+        }
+        frame.index_capacity = 0;
     }
     if (ui_vertices_ != VK_NULL_HANDLE) {
         vkDestroyBuffer(device_, ui_vertices_, nullptr);
@@ -819,7 +930,191 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
         vkDestroyPipelineLayout(device_, fullscreen_layout_, nullptr);
         fullscreen_layout_ = VK_NULL_HANDLE;
     }
+    if (tonemap_layout_ != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device_, tonemap_layout_, nullptr);
+        tonemap_layout_ = VK_NULL_HANDLE;
+    }
+    if (hdr_descriptor_pool_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device_, hdr_descriptor_pool_, nullptr);
+        hdr_descriptor_pool_ = VK_NULL_HANDLE;
+        hdr_descriptor_set_ = VK_NULL_HANDLE;
+    }
+    if (hdr_descriptor_layout_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device_, hdr_descriptor_layout_, nullptr);
+        hdr_descriptor_layout_ = VK_NULL_HANDLE;
+    }
+    if (hdr_sampler_ != VK_NULL_HANDLE) {
+        vkDestroySampler(device_, hdr_sampler_, nullptr);
+        hdr_sampler_ = VK_NULL_HANDLE;
+    }
     live_renderer_enabled_ = false;
+}
+
+void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
+    ui_staging_vertices_.clear();
+    ui_staging_indices_.clear();
+    ui_staging_batches_.clear();
+
+    const auto source_vertices = ui.vertices();
+    const auto source_indices = ui.indices();
+    ui_staging_vertices_.reserve(source_vertices.size());
+    ui_staging_indices_.reserve(source_indices.size());
+    ui_staging_batches_.reserve(ui.batches().size() + ui.text_runs().size());
+    for (const auto& vertex : source_vertices) {
+        ui_staging_vertices_.push_back(ui_gpu_vertex(vertex));
+    }
+
+    // Validate each batch at the content boundary.  A malformed mod/UI script
+    // must not be able to feed an out-of-range index to the GPU.
+    for (const auto& batch : ui.batches()) {
+        if (batch.first_index >= source_indices.size()) continue;
+        const auto end = std::min<std::size_t>(source_indices.size(),
+                                               static_cast<std::size_t>(batch.first_index) + batch.index_count);
+        const auto first = static_cast<std::uint32_t>(ui_staging_indices_.size());
+        for (std::size_t index = batch.first_index; index < end; ++index) {
+            const auto value = source_indices[index];
+            if (value < source_vertices.size()) ui_staging_indices_.push_back(value);
+        }
+        const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
+        if (count != 0u) {
+            ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(batch.scissor, extent_)});
+        }
+    }
+
+    // Text runs are intentionally kept out of UiDrawList's geometry arrays so
+    // other renderers can choose a real font atlas.  The desktop fallback uses
+    // a tiny deterministic 5x7 bitmap font, which keeps the validation shell
+    // readable without shipping a proprietary font or texture dependency.
+    for (const auto& run : ui.text_runs()) {
+        if (!std::isfinite(run.x) || !std::isfinite(run.y) || !std::isfinite(run.size) || run.size <= 0.0f) continue;
+        const auto first = static_cast<std::uint32_t>(ui_staging_indices_.size());
+        const float cell = std::max(1.0f, run.size / 7.0f);
+        float x = run.x;
+        float y = run.y;
+        const auto color = ui_gpu_vertex(UiVertex{0.0f, 0.0f, 0.0f, 0.0f, run.rgba});
+        for (const unsigned char byte : run.utf8) {
+            if (byte == '\n') {
+                x = run.x;
+                y += cell * 9.0f;
+                continue;
+            }
+            if (byte >= 0x80u) {
+                x += cell * 6.0f;
+                continue;
+            }
+            const auto rows = glyph_rows(static_cast<char>(byte));
+            for (std::uint32_t row = 0; row < rows.size(); ++row) {
+                for (std::uint32_t column = 0; column < 5u; ++column) {
+                    if ((rows[row] & static_cast<std::uint8_t>(1u << (4u - column))) == 0u) continue;
+                    const auto base = static_cast<std::uint32_t>(ui_staging_vertices_.size());
+                    const float px = x + static_cast<float>(column) * cell;
+                    const float py = y + static_cast<float>(row) * cell;
+                    ui_staging_vertices_.push_back(UiGpuVertex{px, py, 0.0f, 0.0f, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{px + cell, py, 1.0f, 0.0f, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{px + cell, py + cell, 1.0f, 1.0f, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{px, py + cell, 0.0f, 1.0f, color.r, color.g, color.b, color.a});
+                    ui_staging_indices_.insert(ui_staging_indices_.end(), {base + 0u, base + 1u, base + 2u,
+                                                                             base + 0u, base + 2u, base + 3u});
+                }
+            }
+            x += cell * 6.0f;
+        }
+        const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
+        if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(run.scissor, extent_)});
+    }
+
+    if (!ui_staging_vertices_.empty() && !ui_staging_indices_.empty() && device_ != VK_NULL_HANDLE) {
+        ensure_ui_frame_buffers();
+    }
+}
+
+void VulkanDesktopBackend::ensure_ui_frame_buffers() {
+    if (device_ == VK_NULL_HANDLE) return;
+    const auto vertex_bytes = std::max<std::size_t>(sizeof(UiGpuVertex), ui_staging_vertices_.size() * sizeof(UiGpuVertex));
+    const auto index_bytes = std::max<std::size_t>(sizeof(std::uint32_t), ui_staging_indices_.size() * sizeof(std::uint32_t));
+
+    auto next_capacity = [](VkDeviceSize current, std::size_t required) {
+        VkDeviceSize capacity = current == 0 ? 4096u : current;
+        while (capacity < required) capacity = std::min<VkDeviceSize>(capacity * 2u, static_cast<VkDeviceSize>(std::numeric_limits<std::uint32_t>::max()));
+        return capacity;
+    };
+    auto grow = [&](VkBuffer& buffer, VkDeviceMemory& memory, void*& mapped,
+                    VkDeviceSize& capacity, VkDeviceSize required, VkBufferUsageFlags usage) {
+        if (capacity >= required && buffer != VK_NULL_HANDLE && mapped != nullptr) return;
+        if (mapped != nullptr && memory != VK_NULL_HANDLE) vkUnmapMemory(device_, memory);
+        mapped = nullptr;
+        if (buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
+        if (memory != VK_NULL_HANDLE) vkFreeMemory(device_, memory, nullptr);
+        memory = VK_NULL_HANDLE;
+        capacity = next_capacity(capacity, static_cast<std::size_t>(required));
+
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = capacity;
+        info.usage = usage;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        vkcheck(vkCreateBuffer(device_, &info, nullptr, &buffer), "vkCreateBuffer(ui)");
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(device_, buffer, &requirements);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = find_memory_type(requirements.memoryTypeBits,
+                                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        vkcheck(vkAllocateMemory(device_, &allocation, nullptr, &memory), "vkAllocateMemory(ui)");
+        vkcheck(vkBindBufferMemory(device_, buffer, memory, 0), "vkBindBufferMemory(ui)");
+        vkcheck(vkMapMemory(device_, memory, 0, requirements.size, 0, &mapped), "vkMapMemory(ui)");
+    };
+
+    bool resize = false;
+    for (const auto& frame : ui_frame_buffers_) {
+        resize = resize || frame.vertex_capacity < vertex_bytes || frame.index_capacity < index_bytes;
+    }
+    if (resize) vkcheck(vkDeviceWaitIdle(device_), "vkDeviceWaitIdle(ui resize)");
+    for (auto& frame : ui_frame_buffers_) {
+        grow(frame.vertex_buffer, frame.vertex_memory, frame.vertex_mapped, frame.vertex_capacity,
+             static_cast<VkDeviceSize>(vertex_bytes), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        grow(frame.index_buffer, frame.index_memory, frame.index_mapped, frame.index_capacity,
+             static_cast<VkDeviceSize>(index_bytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    }
+
+    // submit_ui() runs before draw_frame().  Protect the persistently mapped
+    // buffer for the current frame from the previous GPU submission; waiting
+    // only in draw_frame() would leave a write-after-submit race when the
+    // buffers have already reached their steady-state capacity.
+    if (frames_[frame_index_].fence != VK_NULL_HANDLE)
+        vkcheck(vkWaitForFences(device_, 1, &frames_[frame_index_].fence, VK_TRUE, UINT64_MAX),
+                "vkWaitForFences(ui upload)");
+    auto& frame = ui_frame_buffers_[frame_index_];
+    std::memcpy(frame.vertex_mapped, ui_staging_vertices_.data(), ui_staging_vertices_.size() * sizeof(UiGpuVertex));
+    std::memcpy(frame.index_mapped, ui_staging_indices_.data(), ui_staging_indices_.size() * sizeof(std::uint32_t));
+}
+
+void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
+    if (!live_renderer_enabled_ || ui_pipeline_ == VK_NULL_HANDLE || ui_staging_indices_.empty()) return;
+    const auto& frame = ui_frame_buffers_[frame_index_];
+    if (frame.vertex_buffer == VK_NULL_HANDLE || frame.index_buffer == VK_NULL_HANDLE) return;
+    VkViewport viewport{};
+    viewport.width = static_cast<float>(extent_.width);
+    viewport.height = static_cast<float>(extent_.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    VkRect2D full{{0, 0}, extent_};
+    vkCmdSetViewport(command, 0, 1, &viewport);
+    vkCmdSetScissor(command, 0, 1, &full);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+    const VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(command, 0, 1, &frame.vertex_buffer, &offset);
+    vkCmdBindIndexBuffer(command, frame.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+    const std::array<float, 2> inv_viewport{{
+        1.0f / static_cast<float>(std::max(extent_.width, 1u)),
+        1.0f / static_cast<float>(std::max(extent_.height, 1u))}};
+    vkCmdPushConstants(command, ui_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+                       0, sizeof(inv_viewport), inv_viewport.data());
+    for (const auto& batch : ui_staging_batches_) {
+        if (batch.index_count == 0u) continue;
+        vkCmdSetScissor(command, 0, 1, &batch.scissor);
+        vkCmdDrawIndexed(command, batch.index_count, 1, batch.first_index, 0, 0);
+    }
 }
 
 void VulkanDesktopBackend::record_live_validation_draws(VkCommandBuffer command) const {
@@ -853,15 +1148,20 @@ void VulkanDesktopBackend::record_live_validation_draws(VkCommandBuffer command)
     vkCmdBindVertexBuffers(command, 0, 2, living_buffers, living_offsets);
     vkCmdDraw(command, 3, 1, 0, 0);
 
-    const VkDeviceSize ui_offset = 0;
-    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-    vkCmdBindVertexBuffers(command, 0, 1, &ui_vertices_, &ui_offset);
-    const std::array<float, 2> inv_viewport{{
-        1.0f / static_cast<float>(std::max(extent_.width, 1u)),
-        1.0f / static_cast<float>(std::max(extent_.height, 1u))}};
-    vkCmdPushConstants(command, ui_layout_, VK_SHADER_STAGE_VERTEX_BIT,
-                       0, sizeof(inv_viewport), inv_viewport.data());
-    vkCmdDraw(command, 6, 1, 0, 0);
+    // Keep a small deterministic panel for the renderer validation probe when
+    // no application UI was submitted.  Real frames use the indexed draw-list
+    // path below, which is replaced every frame by submit_ui().
+    if (ui_staging_indices_.empty()) {
+        const VkDeviceSize ui_offset = 0;
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        vkCmdBindVertexBuffers(command, 0, 1, &ui_vertices_, &ui_offset);
+        const std::array<float, 2> inv_viewport{{
+            1.0f / static_cast<float>(std::max(extent_.width, 1u)),
+            1.0f / static_cast<float>(std::max(extent_.height, 1u))}};
+        vkCmdPushConstants(command, ui_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+                           0, sizeof(inv_viewport), inv_viewport.data());
+        vkCmdDraw(command, 6, 1, 0, 0);
+    }
 }
 
 void VulkanDesktopBackend::recreate_swapchain() {
@@ -931,6 +1231,7 @@ void VulkanDesktopBackend::draw_frame() {
     rendering.pColorAttachments = &color;
     vkCmdBeginRendering(frame.command, &rendering);
     record_live_validation_draws(frame.command);
+    record_ui_draws(frame.command);
     vkCmdEndRendering(frame.command);
 
     VkImageMemoryBarrier2 to_present{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};

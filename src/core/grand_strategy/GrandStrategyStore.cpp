@@ -1222,15 +1222,29 @@ bool GrandStrategyStore::validate(std::size_t countries, std::size_t markets, st
                 TreatyId{static_cast<TreatyId::rep_type>(ti)}).size() < 2u)
             return false;
     }
-    for (const auto& r : treaty_articles_) if (!ref_ok(r.treaty, treatys_.size())) return false;
+    for (const auto& r : treaty_articles_) {
+        if (!ref_ok(r.treaty, treatys_.size()) ||
+            static_cast<std::uint8_t>(r.kind) > static_cast<std::uint8_t>(TreatyKind::PeaceTreaty)) return false;
+    }
     for (const auto& r : treaty_participants_) if (!ref_ok(r.treaty, treatys_.size()) || !ref_ok(r.country, countries)) return false;
     for (const auto& r : armys_) if (!ref_ok(r.country, countries) || !ref_ok(r.location, states) || r.organization_ppm > 1'000'000u) return false;
-    for (const auto& r : navys_) if (!ref_ok(r.country, countries) || !ref_ok(r.location, states) || !ref_ok(r.design, ship_designs_.size()) || r.strength_ppm > 1'000'000u) return false;
+    for (const auto& r : navys_) {
+        if (!ref_ok(r.country, countries) || !ref_ok(r.location, states) ||
+            !ref_ok(r.design, ship_designs_.size()) ||
+            static_cast<std::uint8_t>(r.mission) > static_cast<std::uint8_t>(NavalMission::FleetInterception) ||
+            r.strength_ppm > 1'000'000u) return false;
+        // A newly restored/constructed navy may be idle before a sea zone is
+        // assigned.  Once a mission is selected it must point at a real zone;
+        // an explicitly stored zone is always checked even for an idle fleet.
+        if (r.assigned_zone.valid() && !ref_ok(r.assigned_zone, sea_zones_.size())) return false;
+        if (r.mission != NavalMission::None && !r.assigned_zone.valid()) return false;
+    }
     for (const auto& r : migration_flows_) if (!ref_ok(r.source, provinces) || !ref_ok(r.destination, provinces)) return false;
     for (const auto& r : interest_groups_) if (!ref_ok(r.country, countries) || r.clout_ppm > 1'000'000u) return false;
     for (const auto& r : political_partys_) if (!ref_ok(r.country, countries) || r.support_ppm > 1'000'000u) return false;
     for (const auto& power_bloc : power_blocs_) if (!ref_ok(power_bloc.leader, countries) || power_bloc.cohesion_ppm > 1'000'000u) return false;
-    for (const auto& r : diplomatic_plays_) if (!ref_ok(r.initiator, countries) || !ref_ok(r.target, countries)) return false;
+    for (const auto& r : diplomatic_plays_) if (!ref_ok(r.initiator, countries) || !ref_ok(r.target, countries) ||
+        static_cast<std::uint8_t>(r.phase) > static_cast<std::uint8_t>(DiplomaticPlayPhase::Resolved)) return false;
     for (const auto& r : fronts_) if (!ref_ok(r.first, countries) || !ref_ok(r.second, countries) || !ref_ok(r.state, states) || r.progress_milli < -100'000 || r.progress_milli > 100'000) return false;
     for (const auto& r : battles_) if (!ref_ok(r.front, fronts_.size()) || r.progress_milli < -100'000 || r.progress_milli > 100'000) return false;
     for (const auto& r : colonys_) if (!ref_ok(r.country, countries) || !ref_ok(r.province, provinces) || r.progress_ppm > 1'000'000u) return false;
@@ -1244,13 +1258,35 @@ bool GrandStrategyStore::validate(std::size_t countries, std::size_t markets, st
     for (const auto& r : governments_) if (!ref_ok(r.country, countries) || r.legitimacy_ppm > 1'000'000u || r.stability_milli < -100'000 || r.stability_milli > 100'000) return false;
     for (const auto& r : law_enactments_) if (!ref_ok(r.country, countries) || r.progress_ppm > 1'000'000u || r.support_ppm > 1'000'000u) return false;
     for (const auto& r : wars_) if (!ref_ok(r.play, diplomatic_plays_.size()) || !ref_ok(r.attacker, countries) || !ref_ok(r.defender, countries) || r.war_score_milli < -100'000 || r.war_score_milli > 100'000) return false;
-    for (const auto& r : parliaments_) if (!ref_ok(r.country, countries) || r.total_seats == 0u) return false;
-    for (const auto& r : cultural_acceptances_) if (!ref_ok(r.country, countries)) return false;
-    for (const auto& r : diplomatic_sways_) if (!ref_ok(r.play, diplomatic_plays_.size()) || !ref_ok(r.sponsor, countries) || !ref_ok(r.target_country, countries)) return false;
-    for (const auto& r : war_goals_) if (!ref_ok(r.play, diplomatic_plays_.size()) || !ref_ok(r.holder, countries) || !ref_ok(r.target, countries)) return false;
-    for (const auto& r : commanders_) if (!ref_ok(r.country, countries) || !ref_ok(r.location, states)) return false;
-    for (const auto& r : sea_zones_) if (r.controller.valid() && !ref_ok(r.controller, countries)) return false;
-    for (const auto& r : naval_battles_) if (!ref_ok(r.zone, sea_zones_.size()) || !ref_ok(r.attacker_navy, navys_.size()) || !ref_ok(r.defender_navy, navys_.size())) return false;
+    for (const auto& r : parliaments_) {
+        if (!ref_ok(r.country, countries) || r.total_seats == 0u ||
+            r.ruling_party_seats > r.total_seats || r.opposition_seats > r.total_seats ||
+            static_cast<std::uint64_t>(r.ruling_party_seats) + r.opposition_seats != r.total_seats ||
+            r.pop_vote_weight_ppm > 1'000'000u || r.ig_clout_weight_ppm > 1'000'000u ||
+            static_cast<std::uint8_t>(r.migration_policy) > static_cast<std::uint8_t>(MigrationPolicy::OpenBorders)) return false;
+    }
+    for (const auto& r : cultural_acceptances_) if (!ref_ok(r.country, countries) ||
+        static_cast<std::uint8_t>(r.level) > static_cast<std::uint8_t>(CulturalAcceptanceLevel::Primary)) return false;
+    for (const auto& r : diplomatic_sways_) if (!ref_ok(r.play, diplomatic_plays_.size()) ||
+        !ref_ok(r.sponsor, countries) || !ref_ok(r.target_country, countries) ||
+        static_cast<std::uint8_t>(r.offer_type) > static_cast<std::uint8_t>(SwayOfferType::StateTransfer)) return false;
+    for (const auto& r : war_goals_) {
+        if (!ref_ok(r.play, diplomatic_plays_.size()) || !ref_ok(r.holder, countries) ||
+            !ref_ok(r.target, countries) ||
+            static_cast<std::uint8_t>(r.goal_type) > static_cast<std::uint8_t>(WarGoalType::WarReparations)) return false;
+        // Only territorial conquest requires a state target.  Other goals
+        // (reparations, market access, regime change) intentionally carry an
+        // empty target, while any non-empty target is still range-checked.
+        if (r.state_target.valid() && !ref_ok(r.state_target, states)) return false;
+        if (r.goal_type == WarGoalType::ConquerState && !r.state_target.valid()) return false;
+    }
+    for (const auto& r : commanders_) if (!ref_ok(r.country, countries) || !ref_ok(r.location, states) ||
+        static_cast<std::uint8_t>(r.trait) > static_cast<std::uint8_t>(CommanderTrait::AggressivePusher)) return false;
+    for (const auto& r : sea_zones_) if ((r.controller.valid() && !ref_ok(r.controller, countries)) ||
+        r.blockade_efficiency_ppm > 1'000'000u) return false;
+    for (const auto& r : naval_battles_) if (!ref_ok(r.zone, sea_zones_.size()) ||
+        !ref_ok(r.attacker_navy, navys_.size()) || !ref_ok(r.defender_navy, navys_.size()) ||
+        r.progress_milli < -100'000 || r.progress_milli > 100'000) return false;
     return true;
 }
 
