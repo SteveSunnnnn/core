@@ -41,6 +41,7 @@ struct CurrencyRecord {
     EconomyAmount trade_demand_milli = 0;       // Foreign currency demanded this tick
     EconomyAmount trade_supply_milli = 0;       // Foreign currency offered this tick
     EconomyAmount seigniorage_accrued_milli = 0;// Seigniorage collected for sovereign leader
+    std::vector<EconomyPrice> history_rates_ppm;// Rolling weekly exchange rate history for UI charts
 };
 
 class CurrencyStore {
@@ -60,6 +61,7 @@ public:
 
     [[nodiscard]] EconomyPrice exchange_rate_ppm(CurrencyKey key) const noexcept;
     void set_exchange_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm) noexcept;
+    [[nodiscard]] std::span<const EconomyPrice> exchange_rate_history(CurrencyKey key) const noexcept;
 
     [[nodiscard]] MonetaryStandard monetary_standard(CurrencyKey key) const noexcept;
     void set_monetary_standard(CurrencyKey key, MonetaryStandard standard) noexcept;

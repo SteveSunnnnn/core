@@ -92,6 +92,12 @@ void CurrencyStore::set_exchange_rate_ppm(CurrencyKey key, EconomyPrice rate_ppm
     currencies_[idx].exchange_rate_ppm = std::clamp(rate_ppm, kMinExchangeRatePpm, kMaxExchangeRatePpm);
 }
 
+std::span<const EconomyPrice> CurrencyStore::exchange_rate_history(CurrencyKey key) const noexcept {
+    const auto idx = find_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return {};
+    return currencies_[idx].history_rates_ppm;
+}
+
 MonetaryStandard CurrencyStore::monetary_standard(CurrencyKey key) const noexcept {
     const auto idx = find_index(key);
     if (idx == static_cast<std::size_t>(-1)) return MonetaryStandard::GoldStandard;
@@ -301,6 +307,12 @@ void CurrencyStore::update_exchange_rates(EconomyPrice gold_price_ppm,
         cur.exchange_rate_ppm = std::clamp(cur.exchange_rate_ppm, kMinExchangeRatePpm, kMaxExchangeRatePpm);
         cur.trade_demand_milli = 0;
         cur.trade_supply_milli = 0;
+
+        // Record rolling weekly exchange rate for UI charts (retain up to 52 weeks)
+        cur.history_rates_ppm.push_back(cur.exchange_rate_ppm);
+        if (cur.history_rates_ppm.size() > 52) {
+            cur.history_rates_ppm.erase(cur.history_rates_ppm.begin());
+        }
     }
 }
 
@@ -308,6 +320,7 @@ std::size_t CurrencyStore::memory_bytes() const noexcept {
     std::size_t bytes = sizeof(CurrencyStore) + currencies_.capacity() * sizeof(CurrencyRecord);
     for (const auto& c : currencies_) {
         bytes += c.name.capacity();
+        bytes += c.history_rates_ppm.capacity() * sizeof(EconomyPrice);
     }
     return bytes;
 }
