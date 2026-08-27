@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -245,13 +246,31 @@ std::uint64_t legacy_country_checksum_pre_fx(const CountryStore& countries) noex
     return h.value();
 }
 
+std::uint64_t legacy_geography_checksum_pre_resistance(const GeographyStore& g) noexcept {
+    Fnv1a64 h; h.add(g.state_count()); h.add(g.province_count());
+    for (std::size_t i=0;i<g.state_count();++i) {
+        const StateId id{static_cast<StateId::rep_type>(i)};
+        h.add(g.state_key(id)); h.add(g.state_owner(id).value());
+        h.add(g.state_market(id).value()); h.add(g.state_capital(id).value());
+    }
+    for (std::size_t i=0;i<g.province_count();++i) {
+        const ProvinceId id{static_cast<ProvinceId::rep_type>(i)};
+        h.add(g.province_key(id)); h.add(g.province_state(id).value());
+        h.add(g.province_owner(id).value()); h.add(g.province_market(id).value());
+        h.add(std::bit_cast<std::uint64_t>(g.province_center_x(id)));
+        h.add(std::bit_cast<std::uint64_t>(g.province_center_y(id)));
+        h.add(g.province_areas_km2()[i]);
+    }
+    return h.value();
+}
+
 std::uint64_t legacy_world_checksum_v4_pre_fx(const World& world) noexcept {
     Fnv1a64 h;
     h.add(legacy_country_checksum_pre_fx(world.countries));
     h.add(world.markets.checksum());
     h.add(world.buildings.checksum());
     h.add(world.pops.checksum());
-    h.add(world.geography.checksum());
+    h.add(legacy_geography_checksum_pre_resistance(world.geography));
     h.add(world.grand_strategy.checksum());
     return h.value();
 }
@@ -272,7 +291,7 @@ std::uint64_t legacy_world_checksum_pre_financial(const World& world) noexcept {
     Fnv1a64 h;
     h.add(world.countries.checksum()); h.add(world.markets.checksum());
     h.add(world.buildings.checksum()); h.add(world.pops.checksum());
-    h.add(world.geography.checksum()); h.add(world.grand_strategy.checksum());
+    h.add(legacy_geography_checksum_pre_resistance(world.geography)); h.add(world.grand_strategy.checksum());
     h.add(legacy_currency_checksum_pre_integrity(world.currencies));
     return h.value();
 }
@@ -281,9 +300,22 @@ std::uint64_t legacy_world_checksum_pre_construction(const World& world) noexcep
     Fnv1a64 h;
     h.add(world.countries.checksum()); h.add(world.markets.checksum());
     h.add(world.buildings.checksum()); h.add(world.pops.checksum());
-    h.add(world.geography.checksum()); h.add(world.grand_strategy.checksum());
+    h.add(legacy_geography_checksum_pre_resistance(world.geography));
+    h.add(world.grand_strategy.checksum());
     h.add(world.currencies.checksum()); h.add(world.banks.checksum());
     h.add(world.trade_policies.checksum());
+    return h.value();
+}
+
+std::uint64_t legacy_world_checksum_pre_resistance(const World& world) noexcept {
+    Fnv1a64 h;
+    h.add(world.countries.checksum()); h.add(world.markets.checksum());
+    h.add(world.buildings.checksum()); h.add(world.pops.checksum());
+    h.add(legacy_geography_checksum_pre_resistance(world.geography));
+    h.add(world.grand_strategy.checksum());
+    h.add(world.currencies.checksum()); h.add(world.banks.checksum());
+    h.add(world.trade_policies.checksum());
+    h.add(world.construction.checksum());
     return h.value();
 }
 
@@ -293,7 +325,7 @@ std::uint64_t legacy_world_checksum_v3_pre_mon1(const World& world) noexcept {
     h.add(legacy_market_checksum_v1(world.markets));
     h.add(world.buildings.checksum());
     h.add(world.pops.checksum());
-    h.add(world.geography.checksum());
+    h.add(legacy_geography_checksum_pre_resistance(world.geography));
     h.add(world.grand_strategy.checksum());
     return h.value();
 }
@@ -304,7 +336,7 @@ std::uint64_t legacy_world_checksum_v4_pre_mon1(const World& world) noexcept {
     h.add(legacy_market_checksum_v4_pre_mon1(world.markets));
     h.add(world.buildings.checksum());
     h.add(world.pops.checksum());
-    h.add(world.geography.checksum());
+    h.add(legacy_geography_checksum_pre_resistance(world.geography));
     h.add(world.grand_strategy.checksum());
     return h.value();
 }
@@ -315,7 +347,7 @@ std::uint64_t legacy_world_checksum_v1(const World& world) noexcept {
     h.add(legacy_market_checksum_v1(world.markets));
     h.add(world.buildings.checksum());
     h.add(legacy_pop_checksum_v1(world.pops));
-    h.add(world.geography.checksum());
+    h.add(legacy_geography_checksum_pre_resistance(world.geography));
     h.add(legacy_grand_checksum_v1(world.grand_strategy));
     return h.value();
 }
@@ -1122,6 +1154,33 @@ DecodedConstructionState decode_construction_section(Reader& r, ConstructionStor
     return decoded;
 }
 
+constexpr std::uint32_t resistance_section_tag = 0x31534552u; // 'RES1'
+
+struct DecodedResistanceState {
+    bool present = false;
+};
+
+void encode_resistance_section(Writer& w, const GeographyStore& geography) {
+    w.u32(resistance_section_tag);
+    w.u32(static_cast<std::uint32_t>(geography.state_count()));
+    for (std::size_t i = 0; i < geography.state_count(); ++i) {
+        const StateId id{static_cast<StateId::rep_type>(i)};
+        w.u32(geography.state_resistance_ppm(id));
+    }
+}
+
+DecodedResistanceState decode_resistance_section(Reader& r, GeographyStore& geography) {
+    if (r.u32() != resistance_section_tag) throw std::runtime_error("invalid resistance extension tag");
+    DecodedResistanceState decoded{true};
+    const auto count = r.u32();
+    if (count != geography.state_count()) throw std::runtime_error("resistance state count mismatch");
+    for (std::size_t i = 0; i < count; ++i) {
+        const StateId id{static_cast<StateId::rep_type>(i)};
+        geography.set_state_resistance_ppm(id, r.u32());
+    }
+    return decoded;
+}
+
 void encode_on_action_section(Writer& w, const OnActionRuntime& on_actions) {
     w.u32(on_action_section_tag);
     w.u64(on_actions.next_invocation_id());
@@ -1314,6 +1373,7 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     encode_fx_section(p, world.currencies, world.countries);
     encode_financial_section(p, world);
     encode_construction_section(p, world.construction);
+    encode_resistance_section(p, world.geography);
 
     const auto checksum=world.checksum();
     const auto runtime_state_checksum = has_on_action_section
@@ -1401,6 +1461,7 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     DecodedFxState decoded_fx;
     DecodedFinancialState decoded_financial;
     DecodedConstructionState decoded_construction;
+    DecodedResistanceState decoded_resistance;
     if (ver == legacy_version) {
         decode_grand_v1(p, decoded.grand_strategy);
     } else {
@@ -1438,6 +1499,10 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
                     if (decoded_construction.present)
                         throw std::runtime_error("duplicate construction extension");
                     decoded_construction = decode_construction_section(p, decoded.construction);
+                } else if (tag == resistance_section_tag) {
+                    if (decoded_resistance.present)
+                        throw std::runtime_error("duplicate resistance extension");
+                    decoded_resistance = decode_resistance_section(p, decoded.geography);
                 } else {
                     throw std::runtime_error("unknown extension section in Core save");
                 }
@@ -1469,22 +1534,36 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     bool world_checksum_matches = false;
     if (ver == legacy_version) {
         world_checksum_matches = legacy_world_checksum_v1(decoded) == expected_checksum;
-    } else if (decoded_construction.present) {
+    } else if (decoded_resistance.present) {
         world_checksum_matches = decoded.checksum() == expected_checksum;
+    } else if (decoded_construction.present) {
+        world_checksum_matches = decoded.checksum() == expected_checksum ||
+                                 legacy_world_checksum_pre_resistance(decoded) == expected_checksum;
     } else if (decoded_financial.present) {
         world_checksum_matches = legacy_world_checksum_pre_construction(decoded) == expected_checksum ||
+                                 legacy_world_checksum_pre_resistance(decoded) == expected_checksum ||
                                  decoded.checksum() == expected_checksum;
     } else if (decoded_fx.present || decoded_market_monetary.present) {
         world_checksum_matches = legacy_world_checksum_pre_financial(decoded) == expected_checksum ||
-                                 legacy_world_checksum_v4_pre_fx(decoded) == expected_checksum;
+                                 legacy_world_checksum_v4_pre_fx(decoded) == expected_checksum ||
+                                 legacy_world_checksum_pre_resistance(decoded) == expected_checksum ||
+                                 decoded.checksum() == expected_checksum;
     } else if (ver == runtime_v3_version) {
         world_checksum_matches =
             legacy_world_checksum_v3_pre_mon1(decoded) == expected_checksum ||
+            legacy_world_checksum_v4_pre_mon1(decoded) == expected_checksum ||
+            legacy_world_checksum_v4_pre_fx(decoded) == expected_checksum ||
+            legacy_world_checksum_pre_financial(decoded) == expected_checksum ||
+            legacy_world_checksum_pre_construction(decoded) == expected_checksum ||
+            legacy_world_checksum_pre_resistance(decoded) == expected_checksum ||
             decoded.checksum() == expected_checksum;
     } else {
         world_checksum_matches =
             legacy_world_checksum_v4_pre_mon1(decoded) == expected_checksum ||
             legacy_world_checksum_v4_pre_fx(decoded) == expected_checksum ||
+            legacy_world_checksum_pre_financial(decoded) == expected_checksum ||
+            legacy_world_checksum_pre_construction(decoded) == expected_checksum ||
+            legacy_world_checksum_pre_resistance(decoded) == expected_checksum ||
             decoded.checksum() == expected_checksum;
     }
     if (!world_checksum_matches)

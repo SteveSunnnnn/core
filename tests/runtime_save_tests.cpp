@@ -625,6 +625,7 @@ void test_runtime_v3_read_only_migration() {
     assert(context_offset != save.bytes.size() && context_offset >= 64u);
     save.bytes.resize(context_offset - 4u);
     write_u32_le(save.bytes, 8u, 3u);
+    write_u64_le(save.bytes, 28u, pre_mon1_world_checksum(source.world()));
     auto legacy_instances = std::vector<GameplayInstance>{source.gameplay().instances().begin(),
                                                           source.gameplay().instances().end()};
     for (auto& instance : legacy_instances) {
@@ -679,16 +680,27 @@ void test_duplicate_keys_rejected() {
 } // namespace
 
 int main() {
+    std::cout << "[RUNNING test_stable_key_restore_across_registration_order]\n" << std::flush;
     test_stable_key_restore_across_registration_order();
+    std::cout << "[RUNNING test_event_context_survives_choice_and_save_restore]\n" << std::flush;
     test_event_context_survives_choice_and_save_restore();
+    std::cout << "[RUNNING test_failed_runtime_validation_is_atomic]\n" << std::flush;
     test_failed_runtime_validation_is_atomic();
+    std::cout << "[RUNNING test_missing_runtime_definition_is_atomic]\n" << std::flush;
     test_missing_runtime_definition_is_atomic();
+    std::cout << "[RUNNING test_legacy_v1_save_migration]\n" << std::flush;
     test_legacy_v1_save_migration();
+    std::cout << "[RUNNING test_runtime_v3_read_only_migration]\n" << std::flush;
     test_runtime_v3_read_only_migration();
+    std::cout << "[RUNNING test_market_monetary_roundtrip_and_stable_accounts]\n" << std::flush;
     test_market_monetary_roundtrip_and_stable_accounts();
+    std::cout << "[RUNNING test_financial_section_roundtrip_and_atomic_validation]\n" << std::flush;
     test_financial_section_roundtrip_and_atomic_validation();
+    std::cout << "[RUNNING test_pre_mon1_v4_migrates_with_legacy_world_checksum]\n" << std::flush;
     test_pre_mon1_v4_migrates_with_legacy_world_checksum();
+    std::cout << "[RUNNING test_corrupt_or_duplicate_mon1_is_atomic]\n" << std::flush;
     test_corrupt_or_duplicate_mon1_is_atomic();
+    std::cout << "[RUNNING test_duplicate_keys_rejected]\n" << std::flush;
     test_duplicate_keys_rejected();
     std::cout << "Core 1.0 runtime save tests: PASS\n";
     return 0;

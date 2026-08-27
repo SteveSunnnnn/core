@@ -57,9 +57,10 @@ public:
         EconomyAmount cash_milli;
         std::int32_t sol_milli;
         std::uint16_t literacy_permyriad;
+        std::uint16_t qualification_permyriad;
         std::uint16_t province_r16;
     };
-    static_assert(sizeof(PopHotRow) == 40u);
+    static_assert(sizeof(PopHotRow) == 48u);
 
 
     void rebuild_indices(const World& world);

@@ -635,6 +635,57 @@ static void test_construction_queue_and_pm_gradual_transition() {
     assert(f.world.countries.prestige(country) >= 25.0);
 }
 
+void test_realistic_gradual_transitions_and_governance() {
+    auto f = make_fixture(2u, 1u, 1u, 100u);
+    const CountryId country{0u};
+    const auto state = f.world.geography.create_state({"state.california", country, MarketId{0u}, ProvinceId{0u}, 750'000u});
+    assert(f.world.geography.state_resistance_ppm(state) == 750'000u);
+
+    // 1. Institution Budget Funded Directly from Treasury (no abstract points)
+    f.world.countries.set_treasury(country, 50.0); // 50,000 milli
+    const auto inst = f.world.grand_strategy.add_institution({country, 0x1234u, 2u});
+    assert(f.world.grand_strategy.institutions()[inst.value()].level == 2u);
+
+    const auto treasury_before = f.world.countries.treasury_milli(country);
+    f.world.grand_strategy.run_institutions_weekly(f.world);
+    const auto treasury_after = f.world.countries.treasury_milli(country);
+    assert(treasury_after < treasury_before); // Institution maintenance deducted from Treasury
+
+    // 2. Autonomous Trade Route Ramp-Up
+    const MarketId market_a{0u};
+    const MarketId market_b{1u};
+
+    // Give market_a excess clothes, market_b shortage
+    f.world.markets.inventory_row(market_a)[f.clothes.value()] = 50'000;
+    f.world.markets.price_row(market_a)[f.clothes.value()] = 100;
+    f.world.markets.shortage_row(market_b)[f.clothes.value()] = 50'000;
+    f.world.markets.price_row(market_b)[f.clothes.value()] = 3'000;
+
+    const auto route_id = f.world.grand_strategy.add_trade_route({market_a, market_b, f.clothes, 1'000, 1u, true});
+    EconomySystem economy{f.definitions};
+    economy.rebuild_indices(f.world);
+    JobSystem jobs{0u};
+
+    const auto initial_qty = f.world.grand_strategy.trade_routes()[route_id.value()].quantity_milli;
+    economy.run_weekly(f.world, jobs);
+    const auto ramped_qty = f.world.grand_strategy.trade_routes()[route_id.value()].quantity_milli;
+    assert(ramped_qty > initial_qty); // Market scaled volume adaptively!
+
+    // 3. Pop Qualification Progression & Resistance Decay
+    const auto pop_id = PopId{0u};
+    const auto init_qual = f.world.pops.qualification_permyriad(pop_id);
+    for (int week = 0; week < 20; ++week) {
+        economy.run_weekly(f.world, jobs);
+        f.world.grand_strategy.run_weekly_reference_tick(f.world);
+    }
+    const auto end_qual = f.world.pops.qualification_permyriad(pop_id);
+    assert(end_qual > init_qual); // Continuous qualification accumulation
+
+    // State resistance decays under good governance / high SoL
+    const auto res_after = f.world.geography.state_resistance_ppm(state);
+    assert(res_after < 750'000u); // Naturally decayed towards integration
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -655,6 +706,7 @@ int main() {
     test_bank_balance_sheet_credit_service_and_default();
     test_authored_trade_route_tariff_and_logistics_capacity();
     test_construction_queue_and_pm_gradual_transition();
+    test_realistic_gradual_transitions_and_governance();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }

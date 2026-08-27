@@ -141,6 +141,7 @@ JobDispatchStats EconomySystem::gather_pop_hot(World& world, JobSystem& jobs) {
     const auto pop_sol = world.pops.sol_all();
     const auto pop_provinces = world.pops.provinces();
     const auto pop_literacy = world.pops.literacy_all();
+    const auto pop_qual = world.pops.qualifications_all();
     pop_hot_.resize(world.pops.size());
     pop_hot_offsets_.assign(world.markets.size() + 1u, 0u);
     for (std::size_t mi = 0; mi < world.markets.size(); ++mi) {
@@ -158,9 +159,10 @@ JobDispatchStats EconomySystem::gather_pop_hot(World& world, JobSystem& jobs) {
                     const auto pi = static_cast<std::size_t>(ids[k].value());
                     const auto prov = pop_provinces[pi];
                     const auto lit = pop_literacy[pi];
+                    const auto q = pop_qual[pi];
                     rows[k] = PopHotRow{pop_population[pi], 0u, pop_employers[pi], pop_need_profiles[pi],
                                         pop_income[pi], pop_cash[pi], pop_sol[pi],
-                                        lit,
+                                        lit, q,
                                         static_cast<std::uint16_t>(prov.valid() ? prov.value() : 0xFFFFu)};
                 }
             }
@@ -174,6 +176,7 @@ JobDispatchStats EconomySystem::scatter_pop_hot(World& world, JobSystem& jobs) {
     auto pop_income = world.pops.incomes_mut();
     auto pop_cash = world.pops.cash_mut();
     auto pop_sol = world.pops.sol_mut();
+    auto pop_qual = world.pops.qualifications_mut();
     return jobs.parallel_for(world.markets.size(), 4u,
         [&](JobContext&, std::size_t, std::size_t begin, std::size_t end) {
             for (std::size_t mi = begin; mi < end; ++mi) {
@@ -187,6 +190,7 @@ JobDispatchStats EconomySystem::scatter_pop_hot(World& world, JobSystem& jobs) {
                     pop_income[pi] = rows[k].income_milli;
                     pop_cash[pi] = rows[k].cash_milli;
                     pop_sol[pi] = rows[k].sol_milli;
+                    pop_qual[pi] = rows[k].qualification_permyriad;
                 }
             }
         });
@@ -487,11 +491,25 @@ JobDispatchStats EconomySystem::trade(World& world) {
     if (has_authored_routes) {
         // Authored routes are already stable-ID ordered. Complexity is O(R),
         // independent of the number of unrelated markets.
-        for (const auto& route : routes) {
+        auto routes_mut = world.grand_strategy.trade_routes_mut();
+        for (auto& route : routes_mut) {
             if (!route.active || route.quantity_milli <= 0) continue;
             const auto capacity = mul_div_nonnegative(route.quantity_milli,
                 std::max<std::uint16_t>(1, route.level), 1);
-            (void)ship_leg(route.source, route.destination, route.good, capacity);
+            const auto shipped = ship_leg(route.source, route.destination, route.good, capacity);
+            if (shipped > 0) {
+                // Profitable and moving goods: ramp volume (+5% per week)
+                route.quantity_milli = std::min<EconomyAmount>(
+                    saturating_add(route.quantity_milli, std::max<EconomyAmount>(1, route.quantity_milli / 20)),
+                    100'000'000LL);
+            } else {
+                // Zero volume or unprofitable: ramp down volume (-10% per week)
+                route.quantity_milli = (route.quantity_milli * 9) / 10;
+                if (route.quantity_milli < 10) {
+                    route.quantity_milli = 0;
+                    route.active = false;
+                }
+            }
         }
         return JobDispatchStats{};
     }
@@ -782,7 +800,28 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
                     // Can only pay tax from available cash
                     const EconomyAmount actual_tax = std::min(total_tax, std::max<EconomyAmount>(0, row.cash_milli));
                     row.cash_milli = saturating_sub(row.cash_milli, actual_tax);
-                    tax_total = saturating_add(tax_total, actual_tax);
+
+                    // State resistance reduces local effective tax collection
+                    EconomyAmount effective_tax = actual_tax;
+                    if (row.province_r16 != 0xFFFFu) {
+                        const ProvinceId prov{row.province_r16};
+                        if (prov.valid() && prov.value() < world.geography.province_count()) {
+                            const auto st = world.geography.province_state(prov);
+                            if (st.valid()) {
+                                const auto res_ppm = world.geography.state_resistance_ppm(st);
+                                if (res_ppm > 0) {
+                                    const auto tax_eff_ppm = ppm_scale - mul_div_nonnegative(res_ppm, 750'000u, ppm_scale);
+                                    effective_tax = mul_div_nonnegative(actual_tax, tax_eff_ppm, ppm_scale);
+                                }
+                            }
+                        }
+                    }
+                    tax_total = saturating_add(tax_total, effective_tax);
+
+                    // Continuous Qualification accumulation:
+                    const auto qual_delta = (row.literacy_permyriad / 1000) + (row.sol_milli > 10'000 ? 5 : 1);
+                    row.qualification_permyriad = static_cast<std::uint16_t>(
+                        std::min<std::uint32_t>(10'000u, row.qualification_permyriad + qual_delta));
 
                     // 3. REALISTIC STANDARD OF LIVING (EMA SMOOTHING):
                     // Quality of life has inertia (assets, savings, long-term conditions)

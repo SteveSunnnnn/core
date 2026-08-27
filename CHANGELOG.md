@@ -1,5 +1,24 @@
 # Changelog
 
+## Core 1.0 Development — Realistic Governance, State Resistance & Natural Integration, Autonomous Trade & Treasury Funding — 2026-08-27
+
+- **Treasury-Funded Institutions & Fiscal Budgeting** (`src/core/grand_strategy/GrandStrategyStore.cpp` / `hpp`):
+  - Completely abolished abstract "administrative mana/points"; government institutions (1~5 levels across education, police, healthcare, bureaucracy) are directly funded with real money drawn weekly from the national Treasury (`GrandStrategyStore::run_institutions_weekly`).
+  - Deficit spending or salary arrears reduce national prestige and degrade institutional effectiveness realistically.
+- **Autonomous Market Trade Routes & Adaptive Merchant Scaling** (`src/core/economy/EconomySystem.cpp`):
+  - Market routes are autonomously scaled by private commercial capital based on spatial price arbitrage spreads after freight logistics and bilateral import/export tariffs (+5%/week for profitable lanes; -10%/week shrinkage and eventual deregistration for unprofitable or unsupplied lanes).
+- **State Resistance & Organic Core Integration** (`src/core/world/GeographyStore.cpp` / `hpp`):
+  - Abolished artificial point-based state integration. Added continuous `state_resistance_ppm_` ($0 \sim 1,000,000$ ppm).
+  - Newly conquered or annexed states start with high resistance, inducing tax evasion and reducing effective tax collection by up to 75%.
+  - Resistance naturally decays toward zero ($-2,000$ ppm/week, $\approx 10.4\%$ annualized) when local population Standard of Living (SoL $\ge 9.0$) is high, cultural acceptance is maintained, and institutions are funded, organically transforming the territory into an integrated core without arbitrary point expenditure.
+- **Continuous Social & Geopolitical Progression**:
+  - POP qualification accumulation (`qualification_permyriad`) smoothly builds up weekly driven by local literacy rates and standard of living.
+  - Spontaneous technology diffusion (`run_tech_spread_weekly`) spreads researched technologies from commercial and treaty partners into domestic research bases.
+  - Peacetime diplomatic relation drift, tension cooldown, and unengaged army readiness/organization recovery advance continuously.
+- **Tagged `RES1` Save Extension** (`src/core/save/SaveGame.cpp`):
+  - Emits and decodes state resistance state within a backward-compatible tagged section, preserving 100% downward compatibility across v1, v3, and v4 save schemas.
+- **All 26/26 Unit & System Test Suites Passing 100%** across both `release-headless` and `dev-headless`.
+
 ## Core 1.0 Development — Gradual Production Method Transition, Construction Queue & 3D Monument Pipeline — 2026-08-27
 
 - Implemented **Gradual Production Method (PM) Transition & Retooling** via a unified national **Construction Queue** (`ConstructionStore` in `src/core/economy/ConstructionStore.cpp` / `hpp`):

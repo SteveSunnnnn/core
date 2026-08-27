@@ -15,6 +15,7 @@ struct StateInit {
     CountryId owner{};
     MarketId market{};
     ProvinceId capital{};
+    std::uint32_t resistance_ppm = 0;
 };
 
 struct ProvinceInit {
@@ -41,6 +42,7 @@ public:
     [[nodiscard]] CountryId state_owner(StateId id) const;
     [[nodiscard]] MarketId state_market(StateId id) const;
     [[nodiscard]] ProvinceId state_capital(StateId id) const;
+    [[nodiscard]] std::uint32_t state_resistance_ppm(StateId id) const;
     [[nodiscard]] StateId province_state(ProvinceId id) const;
     [[nodiscard]] CountryId province_owner(ProvinceId id) const;
     [[nodiscard]] MarketId province_market(ProvinceId id) const;
@@ -50,6 +52,8 @@ public:
     void set_state_owner(StateId id, CountryId owner);
     void set_state_market(StateId id, MarketId market);
     void set_state_capital(StateId id, ProvinceId capital);
+    void set_state_resistance_ppm(StateId id, std::uint32_t ppm);
+    void add_state_resistance_ppm(StateId id, std::int32_t delta);
     void set_province_owner(ProvinceId id, CountryId owner);
     void set_province_market(ProvinceId id, MarketId market);
     void set_province_state(ProvinceId id, StateId state);
@@ -57,6 +61,7 @@ public:
     [[nodiscard]] std::span<const CountryId> state_owners() const noexcept { return state_owners_; }
     [[nodiscard]] std::span<const MarketId> state_markets() const noexcept { return state_markets_; }
     [[nodiscard]] std::span<const ProvinceId> state_capitals() const noexcept { return state_capitals_; }
+    [[nodiscard]] std::span<const std::uint32_t> state_resistance() const noexcept { return state_resistance_ppm_; }
     [[nodiscard]] std::span<const StateId> province_states() const noexcept { return province_states_; }
     [[nodiscard]] std::span<const CountryId> province_owners() const noexcept { return province_owners_; }
     [[nodiscard]] std::span<const MarketId> province_markets() const noexcept { return province_markets_; }
@@ -76,6 +81,7 @@ private:
     std::vector<CountryId> state_owners_;
     std::vector<MarketId> state_markets_;
     std::vector<ProvinceId> state_capitals_;
+    std::vector<std::uint32_t> state_resistance_ppm_;
 
     std::vector<std::string> province_keys_;
     std::vector<StateId> province_states_;

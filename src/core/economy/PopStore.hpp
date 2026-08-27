@@ -126,6 +126,7 @@ public:
     [[nodiscard]] std::span<const InterestGroupId> interest_groups() const noexcept { return cold_.interest_groups; }
     [[nodiscard]] std::span<const std::uint16_t> literacy_all() const noexcept { return cold_.literacy_permyriad; }
     [[nodiscard]] std::span<const std::uint16_t> qualifications_all() const noexcept { return cold_.qualification_permyriad; }
+    [[nodiscard]] std::span<std::uint16_t> qualifications_mut() noexcept { return cold_.qualification_permyriad; }
     [[nodiscard]] std::span<const std::int32_t> wealth_all() const noexcept { return cold_.wealth_milli; }
     [[nodiscard]] std::span<const std::uint32_t> political_strength_all() const noexcept { return cold_.political_strength_milli; }
 

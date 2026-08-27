@@ -749,10 +749,42 @@ void GrandStrategyStore::run_diplomacy_weekly() {
                 break;
         }
     }
+
+    // Peacetime natural diplomatic relation drift and tension decay
+    for (auto& rel : diplomatic_relations_) {
+        bool at_war = false;
+        for (const auto& war : wars_) {
+            if (war.active && ((war.attacker == rel.first && war.defender == rel.second) ||
+                               (war.attacker == rel.second && war.defender == rel.first))) {
+                at_war = true;
+                break;
+            }
+        }
+        if (at_war) {
+            rel.relation_milli = -100'000;
+            rel.tension_ppm = 1'000'000u;
+            continue;
+        }
+
+        if (rel.relation_milli > 0) {
+            rel.relation_milli = std::max(0, rel.relation_milli - 50);
+        } else if (rel.relation_milli < 0) {
+            rel.relation_milli = std::min(0, rel.relation_milli + 50);
+        }
+        if (rel.tension_ppm > 0) {
+            rel.tension_ppm = rel.tension_ppm > 2'000u ? (rel.tension_ppm - 2'000u) : 0u;
+        }
+    }
 }
 
 
 void GrandStrategyStore::run_warfare_weekly() {
+    for (auto& army : armys_) {
+        if (army.organization_ppm < 1'000'000u) {
+            army.organization_ppm = std::min(1'000'000u, army.organization_ppm + 25'000u);
+        }
+    }
+
     for (auto& war : wars_) {
         if (!war.active) continue;
         ++war.weeks;
@@ -856,10 +888,108 @@ void GrandStrategyStore::run_warfare_weekly() {
 }
 
 
+void GrandStrategyStore::run_institutions_weekly(World& world) {
+    for (const auto& inst : institutions_) {
+        if (!inst.country.valid() || inst.level == 0) continue;
+        const auto ci = static_cast<std::size_t>(inst.country.value());
+        if (ci >= world.countries.size()) continue;
+
+        const auto pop = world.countries.population(inst.country);
+        const auto base_cost = 5'000LL;
+        const auto scale = static_cast<EconomyAmount>(std::max<double>(1.0, 1.0 + pop / 500'000.0));
+        const auto weekly_cost = inst.level * base_cost * scale;
+
+        const auto treasury = world.countries.treasury_milli(inst.country);
+        if (treasury >= weekly_cost) {
+            world.countries.add_treasury_milli(inst.country, -weekly_cost);
+        } else {
+            if (treasury > 0) world.countries.add_treasury_milli(inst.country, -treasury);
+            world.countries.add_prestige(inst.country, -0.05);
+        }
+    }
+}
+
+void GrandStrategyStore::run_tech_spread_weekly(World& world) {
+    (void)world;
+    for (std::size_t ti = 0; ti < technologys_.size(); ++ti) {
+        auto& tech = technologys_[ti];
+        if (tech.unlocked || !tech.country.valid()) continue;
+
+        bool has_advanced_partner = false;
+        for (const auto& other_tech : technologys_) {
+            if (other_tech.key_hash == tech.key_hash && other_tech.unlocked && other_tech.country.valid() && other_tech.country != tech.country) {
+                if (has_active_treaty(tech.country, other_tech.country, TreatyKind::TradeAgreement) ||
+                    has_active_treaty(tech.country, other_tech.country, TreatyKind::Alliance) ||
+                    has_active_treaty(tech.country, other_tech.country, TreatyKind::InvestmentRights)) {
+                    has_advanced_partner = true;
+                    break;
+                }
+            }
+        }
+
+        if (has_advanced_partner) {
+            tech.progress_ppm = std::min<std::uint32_t>(1'000'000u, tech.progress_ppm + 300u);
+            if (tech.progress_ppm >= 1'000'000u) {
+                tech.unlocked = true;
+            }
+        }
+    }
+}
+
+void GrandStrategyStore::run_state_resistance_weekly(World& world) {
+    const auto state_count = world.geography.state_count();
+    const auto pop_provinces = world.pops.provinces();
+    const auto pop_sols = world.pops.sol_all();
+    const auto province_states = world.geography.province_states();
+
+    for (std::size_t si = 0; si < state_count; ++si) {
+        const StateId state{static_cast<StateId::rep_type>(si)};
+        const auto resistance = world.geography.state_resistance_ppm(state);
+        if (resistance == 0) continue;
+
+        const auto owner = world.geography.state_owner(state);
+        if (!owner.valid() || static_cast<std::size_t>(owner.value()) >= world.countries.size()) continue;
+
+        std::int64_t sol_sum = 0;
+        std::size_t pop_count = 0;
+        for (std::size_t pi = 0; pi < world.pops.size(); ++pi) {
+            if (pi < pop_provinces.size() && pop_provinces[pi].valid()) {
+                const auto prov_id = pop_provinces[pi].value();
+                if (prov_id < province_states.size() && province_states[prov_id] == state) {
+                    if (pi < pop_sols.size()) {
+                        sol_sum += pop_sols[pi];
+                        ++pop_count;
+                    }
+                }
+            }
+        }
+
+        const auto avg_sol = pop_count > 0 ? sol_sum / static_cast<std::int64_t>(pop_count) : 10'000;
+
+        if (avg_sol >= 9'000 && !world.countries.is_in_default(owner)) {
+            world.geography.add_state_resistance_ppm(state, -2'000);
+        } else if (avg_sol < 6'000 || world.countries.is_in_default(owner)) {
+            world.geography.add_state_resistance_ppm(state, 2'000);
+        }
+    }
+}
+
 void GrandStrategyStore::run_weekly_reference_tick() {
     for (auto& record : migration_flows_) if (record.weeks_remaining > 0u) --record.weeks_remaining;
     for (auto& record : colonys_) record.progress_ppm = std::min<std::uint32_t>(1'000'000u, record.progress_ppm + 500u);
     run_politics_weekly();
+    run_diplomacy_weekly();
+    run_warfare_weekly();
+    run_naval_weekly();
+}
+
+void GrandStrategyStore::run_weekly_reference_tick(World& world) {
+    for (auto& record : migration_flows_) if (record.weeks_remaining > 0u) --record.weeks_remaining;
+    for (auto& record : colonys_) record.progress_ppm = std::min<std::uint32_t>(1'000'000u, record.progress_ppm + 500u);
+    run_politics_weekly();
+    run_institutions_weekly(world);
+    run_tech_spread_weekly(world);
+    run_state_resistance_weekly(world);
     run_diplomacy_weekly();
     run_warfare_weekly();
     run_naval_weekly();

@@ -12,11 +12,13 @@ template<class Id> std::size_t checked(Id id, std::size_t size, const char* what
     return i;
 }
 }
-void GeographyStore::reserve_states(std::size_t n) { state_keys_.reserve(n); state_owners_.reserve(n); state_markets_.reserve(n); state_capitals_.reserve(n); }
+void GeographyStore::reserve_states(std::size_t n) { state_keys_.reserve(n); state_owners_.reserve(n); state_markets_.reserve(n); state_capitals_.reserve(n); state_resistance_ppm_.reserve(n); }
 void GeographyStore::reserve_provinces(std::size_t n) { province_keys_.reserve(n); province_states_.reserve(n); province_owners_.reserve(n); province_markets_.reserve(n); province_center_x_m_.reserve(n); province_center_y_m_.reserve(n); province_area_km2_.reserve(n); }
 StateId GeographyStore::create_state(StateInit init) {
     const auto id = StateId{static_cast<StateId::rep_type>(state_count())};
-    state_keys_.push_back(std::move(init.key)); state_owners_.push_back(init.owner); state_markets_.push_back(init.market); state_capitals_.push_back(init.capital); return id;
+    state_keys_.push_back(std::move(init.key)); state_owners_.push_back(init.owner); state_markets_.push_back(init.market); state_capitals_.push_back(init.capital);
+    state_resistance_ppm_.push_back(std::min<std::uint32_t>(init.resistance_ppm, 1'000'000u));
+    return id;
 }
 ProvinceId GeographyStore::create_province(ProvinceInit init) {
     if (!std::isfinite(init.center_x_m) || !std::isfinite(init.center_y_m)) throw std::invalid_argument("province center must be finite");
@@ -30,6 +32,10 @@ std::string_view GeographyStore::province_key(ProvinceId id) const { return prov
 CountryId GeographyStore::state_owner(StateId id) const { return state_owners_[state_index(id)]; }
 MarketId GeographyStore::state_market(StateId id) const { return state_markets_[state_index(id)]; }
 ProvinceId GeographyStore::state_capital(StateId id) const { return state_capitals_[state_index(id)]; }
+std::uint32_t GeographyStore::state_resistance_ppm(StateId id) const {
+    const auto i = state_index(id);
+    return i < state_resistance_ppm_.size() ? state_resistance_ppm_[i] : 0u;
+}
 StateId GeographyStore::province_state(ProvinceId id) const { return province_states_[province_index(id)]; }
 CountryId GeographyStore::province_owner(ProvinceId id) const { return province_owners_[province_index(id)]; }
 MarketId GeographyStore::province_market(ProvinceId id) const { return province_markets_[province_index(id)]; }
@@ -38,6 +44,17 @@ double GeographyStore::province_center_y(ProvinceId id) const { return province_
 void GeographyStore::set_state_owner(StateId id, CountryId v) { state_owners_[state_index(id)] = v; }
 void GeographyStore::set_state_market(StateId id, MarketId v) { state_markets_[state_index(id)] = v; }
 void GeographyStore::set_state_capital(StateId id, ProvinceId v) { state_capitals_[state_index(id)] = v; }
+void GeographyStore::set_state_resistance_ppm(StateId id, std::uint32_t ppm) {
+    const auto i = state_index(id);
+    if (i >= state_resistance_ppm_.size()) state_resistance_ppm_.resize(state_count(), 0u);
+    state_resistance_ppm_[i] = std::min<std::uint32_t>(ppm, 1'000'000u);
+}
+void GeographyStore::add_state_resistance_ppm(StateId id, std::int32_t delta) {
+    const auto i = state_index(id);
+    if (i >= state_resistance_ppm_.size()) state_resistance_ppm_.resize(state_count(), 0u);
+    const auto cur = static_cast<std::int64_t>(state_resistance_ppm_[i]);
+    state_resistance_ppm_[i] = static_cast<std::uint32_t>(std::clamp<std::int64_t>(cur + delta, 0, 1'000'000));
+}
 void GeographyStore::set_province_owner(ProvinceId id, CountryId v) { province_owners_[province_index(id)] = v; }
 void GeographyStore::set_province_market(ProvinceId id, MarketId v) { province_markets_[province_index(id)] = v; }
 void GeographyStore::set_province_state(ProvinceId id, StateId v) { province_states_[province_index(id)] = v; }
@@ -57,11 +74,16 @@ bool GeographyStore::validate(std::size_t countries, std::size_t markets) const 
 }
 std::uint64_t GeographyStore::checksum() const noexcept {
     Fnv1a64 h; h.add(state_count()); h.add(province_count());
-    for (std::size_t i=0;i<state_count();++i) { h.add(std::string_view{state_keys_[i]}); h.add(state_owners_[i].value()); h.add(state_markets_[i].value()); h.add(state_capitals_[i].value()); }
+    for (std::size_t i=0;i<state_count();++i) {
+        h.add(std::string_view{state_keys_[i]}); h.add(state_owners_[i].value());
+        h.add(state_markets_[i].value()); h.add(state_capitals_[i].value());
+        const auto r = i < state_resistance_ppm_.size() ? state_resistance_ppm_[i] : 0u;
+        h.add(r);
+    }
     for (std::size_t i=0;i<province_count();++i) { h.add(std::string_view{province_keys_[i]}); h.add(province_states_[i].value()); h.add(province_owners_[i].value()); h.add(province_markets_[i].value()); h.add(std::bit_cast<std::uint64_t>(province_center_x_m_[i])); h.add(std::bit_cast<std::uint64_t>(province_center_y_m_[i])); h.add(province_area_km2_[i]); }
     return h.value();
 }
-std::size_t GeographyStore::memory_bytes() const noexcept { return state_keys_.capacity()*sizeof(std::string)+state_owners_.capacity()*sizeof(CountryId)+state_markets_.capacity()*sizeof(MarketId)+state_capitals_.capacity()*sizeof(ProvinceId)+province_keys_.capacity()*sizeof(std::string)+province_states_.capacity()*sizeof(StateId)+province_owners_.capacity()*sizeof(CountryId)+province_markets_.capacity()*sizeof(MarketId)+province_center_x_m_.capacity()*sizeof(double)+province_center_y_m_.capacity()*sizeof(double)+province_area_km2_.capacity()*sizeof(std::uint32_t); }
+std::size_t GeographyStore::memory_bytes() const noexcept { return state_keys_.capacity()*sizeof(std::string)+state_owners_.capacity()*sizeof(CountryId)+state_markets_.capacity()*sizeof(MarketId)+state_capitals_.capacity()*sizeof(ProvinceId)+state_resistance_ppm_.capacity()*sizeof(std::uint32_t)+province_keys_.capacity()*sizeof(std::string)+province_states_.capacity()*sizeof(StateId)+province_owners_.capacity()*sizeof(CountryId)+province_markets_.capacity()*sizeof(MarketId)+province_center_x_m_.capacity()*sizeof(double)+province_center_y_m_.capacity()*sizeof(double)+province_area_km2_.capacity()*sizeof(std::uint32_t); }
 void GeographyScopeIndex::rebuild(std::size_t country_count, const GeographyStore& g) {
     country_state_offsets_.assign(country_count+1u,0u); state_province_offsets_.assign(g.state_count()+1u,0u);
     for (const auto c : g.state_owners()) if (c.valid() && c.value()<country_count) ++country_state_offsets_[static_cast<std::size_t>(c.value())+1u];

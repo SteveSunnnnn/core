@@ -256,6 +256,14 @@ public:
 
     [[nodiscard]] std::span<ArmyRecord> armys_mut() noexcept { return armys_; }
     [[nodiscard]] std::span<NavyRecord> navys_mut() noexcept { return navys_; }
+    [[nodiscard]] std::span<TradeRouteRecord> trade_routes_mut() noexcept { return trade_routes_; }
+    [[nodiscard]] std::span<InstitutionRecord> institutions_mut() noexcept { return institutions_; }
+    [[nodiscard]] std::span<TechnologyRecord> technologys_mut() noexcept { return technologys_; }
+    [[nodiscard]] std::span<DiplomaticRelationRecord> diplomatic_relations_mut() noexcept { return diplomatic_relations_; }
+
+    void run_institutions_weekly(World& world);
+    void run_tech_spread_weekly(World& world);
+    void run_state_resistance_weekly(World& world);
 
 
 
@@ -314,6 +322,7 @@ public:
 
 
     void run_weekly_reference_tick();
+    void run_weekly_reference_tick(World& world);
     [[nodiscard]] bool validate(std::size_t countries, std::size_t markets, std::size_t provinces,
                                 std::size_t states, std::size_t buildings, std::size_t goods) const noexcept;
     [[nodiscard]] std::uint64_t checksum() const noexcept;
