@@ -62,6 +62,9 @@ public:
                    std::uint32_t ink_rgba = 0xff2a180eu,
                    std::uint32_t fill_rgba = 0x203a2010u,
                    UiRect scissor = {});
+    void construction_queue_row(UiRect rect, const std::string& name, const std::string& kind_label,
+                                float progress_ratio, const std::string& eta_text,
+                                bool paused = false, UiRect scissor = {});
 
     void text(std::string utf8, float x, float y, float size, std::uint32_t rgba, UiRect scissor = {});
     void hit(std::uint64_t id, UiRect rect);

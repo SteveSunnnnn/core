@@ -376,6 +376,7 @@ std::uint64_t World::checksum() const noexcept {
     h.add(currencies.checksum());
     h.add(banks.checksum());
     h.add(trade_policies.checksum());
+    h.add(construction.checksum());
     return h.value();
 }
 

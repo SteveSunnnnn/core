@@ -277,6 +277,16 @@ std::uint64_t legacy_world_checksum_pre_financial(const World& world) noexcept {
     return h.value();
 }
 
+std::uint64_t legacy_world_checksum_pre_construction(const World& world) noexcept {
+    Fnv1a64 h;
+    h.add(world.countries.checksum()); h.add(world.markets.checksum());
+    h.add(world.buildings.checksum()); h.add(world.pops.checksum());
+    h.add(world.geography.checksum()); h.add(world.grand_strategy.checksum());
+    h.add(world.currencies.checksum()); h.add(world.banks.checksum());
+    h.add(world.trade_policies.checksum());
+    return h.value();
+}
+
 std::uint64_t legacy_world_checksum_v3_pre_mon1(const World& world) noexcept {
     Fnv1a64 h;
     h.add(world.countries.checksum());
@@ -1061,6 +1071,57 @@ DecodedFinancialState decode_financial_section(Reader& r, World& world) {
     return decoded;
 }
 
+constexpr std::uint32_t construction_section_tag = 0x31305143u; // 'CQ01'
+
+struct DecodedConstructionState { bool present = false; };
+
+void encode_construction_section(Writer& w, const ConstructionStore& construction) {
+    w.u32(construction_section_tag);
+    w.u32(static_cast<std::uint32_t>(construction.size()));
+    for (const auto& p : construction.projects()) {
+        wid(w, p.id);
+        wid(w, p.country);
+        wid(w, p.province);
+        wid(w, p.target_building);
+        w.u8(static_cast<std::uint8_t>(p.kind));
+        wid(w, p.target_pm);
+        w.u64(p.monument_key_hash);
+        w.u32(p.progress_points);
+        w.u32(p.total_points_required);
+        w.u32(p.weekly_progress_ppm);
+        w.i64(p.total_cost_milli);
+        w.i64(p.paid_cost_milli);
+        w.boolean(p.paused);
+        w.u32(p.priority);
+    }
+}
+
+DecodedConstructionState decode_construction_section(Reader& r, ConstructionStore& construction) {
+    if (r.u32() != construction_section_tag) throw std::runtime_error("invalid construction extension tag");
+    DecodedConstructionState decoded{true};
+    const auto count = r.count(100'000u);
+    construction.clear();
+    for (std::uint32_t i = 0; i < count; ++i) {
+        ConstructionProjectRecord p;
+        p.id = rid<ConstructionProjectId>(r);
+        p.country = rid<CountryId>(r);
+        p.province = rid<ProvinceId>(r);
+        p.target_building = rid<BuildingId>(r);
+        p.kind = static_cast<ConstructionKind>(r.u8());
+        p.target_pm = rid<ProductionMethodId>(r);
+        p.monument_key_hash = r.u64();
+        p.progress_points = r.u32();
+        p.total_points_required = r.u32();
+        p.weekly_progress_ppm = r.u32();
+        p.total_cost_milli = r.i64();
+        p.paid_cost_milli = r.i64();
+        p.paused = r.boolean();
+        p.priority = r.u32();
+        construction.restore_project(p);
+    }
+    return decoded;
+}
+
 void encode_on_action_section(Writer& w, const OnActionRuntime& on_actions) {
     w.u32(on_action_section_tag);
     w.u64(on_actions.next_invocation_id());
@@ -1252,6 +1313,7 @@ SaveGameBlob SaveGameCodec::encode(const World& world, const GameClock& clock,
     encode_market_monetary_section(p, world.markets);
     encode_fx_section(p, world.currencies, world.countries);
     encode_financial_section(p, world);
+    encode_construction_section(p, world.construction);
 
     const auto checksum=world.checksum();
     const auto runtime_state_checksum = has_on_action_section
@@ -1338,6 +1400,7 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     DecodedMarketMonetaryState decoded_market_monetary;
     DecodedFxState decoded_fx;
     DecodedFinancialState decoded_financial;
+    DecodedConstructionState decoded_construction;
     if (ver == legacy_version) {
         decode_grand_v1(p, decoded.grand_strategy);
     } else {
@@ -1371,6 +1434,10 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
                     if (decoded_financial.present)
                         throw std::runtime_error("duplicate financial extension");
                     decoded_financial = decode_financial_section(p, decoded);
+                } else if (tag == construction_section_tag) {
+                    if (decoded_construction.present)
+                        throw std::runtime_error("duplicate construction extension");
+                    decoded_construction = decode_construction_section(p, decoded.construction);
                 } else {
                     throw std::runtime_error("unknown extension section in Core save");
                 }
@@ -1402,8 +1469,11 @@ SaveGameMetadata SaveGameCodec::decode(std::span<const std::byte> bytes, World& 
     bool world_checksum_matches = false;
     if (ver == legacy_version) {
         world_checksum_matches = legacy_world_checksum_v1(decoded) == expected_checksum;
-    } else if (decoded_financial.present) {
+    } else if (decoded_construction.present) {
         world_checksum_matches = decoded.checksum() == expected_checksum;
+    } else if (decoded_financial.present) {
+        world_checksum_matches = legacy_world_checksum_pre_construction(decoded) == expected_checksum ||
+                                 decoded.checksum() == expected_checksum;
     } else if (decoded_fx.present || decoded_market_monetary.present) {
         world_checksum_matches = legacy_world_checksum_pre_financial(decoded) == expected_checksum ||
                                  legacy_world_checksum_v4_pre_fx(decoded) == expected_checksum;

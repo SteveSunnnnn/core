@@ -130,6 +130,8 @@ using SettlementAccountId = StrongId<SettlementAccountTag, std::uint64_t>;
 using BankId = StrongId<BankTag>;
 using BankLoanId = StrongId<BankLoanTag>;
 
+struct ConstructionProjectTag {};
+using ConstructionProjectId = StrongId<ConstructionProjectTag>;
 
 } // namespace core
 

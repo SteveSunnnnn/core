@@ -1,6 +1,28 @@
 # Changelog
 
-## Core 1.0 Development — Financial Ledger Completion — 2026-08-27
+## Core 1.0 Development — Gradual Production Method Transition, Construction Queue & 3D Monument Pipeline — 2026-08-27
+
+- Implemented **Gradual Production Method (PM) Transition & Retooling** via a unified national **Construction Queue** (`ConstructionStore` in `src/core/economy/ConstructionStore.cpp` / `hpp`):
+  - Changing a building's production method (PM) is no longer an instant switch; it enqueues a retooling project in the national construction queue.
+  - Construction capacity points (scaled by base output, GDP, and private investment) and funds from the national `InvestmentPool` or state Treasury are invested each weekly tick.
+  - Retooling progress (`pm_transition_progress_ppm`) smoothly advances from $0 \to 1,000,000$ ppm, preventing abrupt economic shocks, supply cliffs, and unemployment spikes.
+  - Supports building expansion (`ExpandBuilding`), PM upgrade (`UpgradeProductionMethod`), and historical monument construction (`ConstructMonument`).
+  - Supports dynamic queue management: priority reordering (`move_up`, `move_down`), pause/resume (`set_paused`), and project cancellation.
+- Implemented **Procedural 3D Monument Generation Pipeline** (`tools/assets/generate_statue_of_liberty.py`):
+  - Procedurally generates 4 Level-of-Detail (LOD0 to LOD3) models for the **Statue of Liberty (自由女神像)** featuring:
+    - 11-pointed star fort base (Fort Wood) with stone ramparts.
+    - Neoclassical rusticated granite pedestal with Greek key entablature, columned loggias, and observation balconies.
+    - Classical draped Roman figure of Libertas with detailed cloth folds.
+    - Radiant 7-spiked diadem crown (symbolizing the sun, 7 seas, and 7 continents).
+    - Raised right arm gripping the Torch of Enlightenment with multi-faceted gilded flame geometry.
+    - Left arm cradling the molded Tabula Ansata tablet inscribed with July 4, 1776.
+  - Outputs binary glTF 2.0 (`.glb`), Wavefront (`.obj`), PBR material definition (`.coremat.json`), and LOD manifest (`.corelod.json`).
+- Integrated **Construction Queue UI & Retained Widget Components**:
+  - Registered `construction_queue` and `construction_project` contexts and properties in `ScriptedGuiSchema`.
+  - Added `UiDrawList::construction_queue_row` in `StrategyUi.hpp` / `StrategyUi.cpp` rendering Victorian-styled queue cards with wood/leather backgrounds, gilded progress bars, badges, ETA calculations, and pause status indicators.
+- Added **`CQ01` Atomic Save Game Extension** (`src/core/save/SaveGame.cpp`):
+  - Emits and decodes tagged construction queue sections with full backward compatibility and legacy checksum fallbacks.
+- Added comprehensive unit tests in `tests/economy_tests.cpp` and `tests/scripted_gui_tests.cpp`, all verified across both `release-headless` and `dev-headless` with **26/26 CTest suites passing 100%**.
 
 - Added SoA commercial-bank and persistent loan stores with stable keys, balanced assets/liabilities, reserve and capital requirements, interest, amortization, arrears, NPL classification, charge-offs, and insolvency.
 - Added the optional `FIN1` save extension with atomic validation, deterministic checksums, and pre-FIN1 migration.

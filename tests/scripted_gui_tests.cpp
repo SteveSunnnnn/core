@@ -432,5 +432,37 @@ scripted_gui bad_schema {
     assert(runtime.nodes().empty());
     assert(!runtime.removed_keys().empty());
 
-    std::cout << "Scripted GUI blueprint and runtime tests passed\n";
+    // --- Construction Queue & PM Upgrade UI Schema & Widget Verification ---
+    const auto cq_ctx = schema.register_context("construction_queue");
+    const auto cp_ctx = schema.register_context("construction_project");
+    (void)schema.register_property(cq_ctx, "capacity", core::UiValueType::Number);
+    (void)schema.register_property(cq_ctx, "projects", core::UiValueType::Collection, cp_ctx);
+    (void)schema.register_property(cp_ctx, "name", core::UiValueType::Text);
+    (void)schema.register_property(cp_ctx, "kind_label", core::UiValueType::Text);
+    (void)schema.register_property(cp_ctx, "progress_ratio", core::UiValueType::Number);
+    (void)schema.register_property(cp_ctx, "eta_text", core::UiValueType::Text);
+    (void)schema.register_property(cp_ctx, "is_paused", core::UiValueType::Boolean);
+
+    // Verify Construction Queue UI Row Widget Rendering
+    core::UiDrawList draw_list;
+    draw_list.clear();
+    draw_list.construction_queue_row({10.0f, 10.0f, 600.0f, 40.0f},
+                                    "Textile Mill #1 [Steam Looms]",
+                                    "[PM Upgrade]",
+                                    0.65f,
+                                    "2 Weeks",
+                                    false);
+    assert(!draw_list.vertices().empty());
+    assert(!draw_list.indices().empty());
+
+    // Render Monument construction row
+    draw_list.construction_queue_row({10.0f, 60.0f, 600.0f, 40.0f},
+                                    "Statue of Liberty",
+                                    "[Monument]",
+                                    0.25f,
+                                    "18 Weeks",
+                                    false);
+    assert(draw_list.vertices().size() > 10);
+
+    std::cout << "Scripted GUI blueprint, construction queue UI, and runtime tests passed\n";
 }

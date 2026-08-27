@@ -7,6 +7,7 @@
 #include "core/economy/TradePolicyStore.hpp"
 #include "core/economy/MarketStore.hpp"
 #include "core/economy/PopStore.hpp"
+#include "core/economy/ConstructionStore.hpp"
 #include "core/world/GeographyStore.hpp"
 #include "core/grand_strategy/GrandStrategyStore.hpp"
 #include <cstddef>
@@ -165,10 +166,11 @@ public:
     CurrencyStore currencies;
     BankStore banks;
     TradePolicyStore trade_policies;
+    ConstructionStore construction;
 
     [[nodiscard]] std::uint64_t checksum() const noexcept;
     [[nodiscard]] std::size_t economy_memory_bytes() const noexcept {
-        return markets.memory_bytes() + buildings.memory_bytes() + pops.memory_bytes() + geography.memory_bytes() + grand_strategy.memory_bytes() + currencies.memory_bytes() + banks.memory_bytes() + trade_policies.memory_bytes();
+        return markets.memory_bytes() + buildings.memory_bytes() + pops.memory_bytes() + geography.memory_bytes() + grand_strategy.memory_bytes() + currencies.memory_bytes() + banks.memory_bytes() + trade_policies.memory_bytes() + construction.memory_bytes();
     }
 };
 

@@ -583,6 +583,58 @@ static void test_authored_trade_route_tariff_and_logistics_capacity() {
     assert(f.world.countries.treasury_milli(export_country) > exporter_treasury);
 }
 
+static void test_construction_queue_and_pm_gradual_transition() {
+    auto f = make_fixture(1u, 1u, 1u, 100u);
+    const CountryId country{0u};
+    const BuildingId building{0u};
+    const ProductionMethodId initial_pm = f.world.buildings.production_method(building);
+
+    // Register an advanced production method (e.g. Steam Weaving / Machinery)
+    const core::RecipeFlow inputs[] = {{f.coal, 1000}};
+    const core::RecipeFlow outputs[] = {{f.clothes, 3000}};
+    const auto advanced_pm = f.definitions.add_production_method(
+        "pm.advanced_steam_machinery", f.building_types[0], 100'000, inputs, outputs);
+
+    f.world.countries.set_treasury(country, 500.0);
+    f.world.countries.set_gdp(country, 1000.0);
+
+    // 1. Enqueue PM Upgrade: initial PM is untouched, transition progress is 0%
+    const auto proj_pm = f.world.construction.enqueue_pm_upgrade(country, building, advanced_pm, 50u, 5'000);
+    assert(f.world.construction.size() == 1);
+    assert(f.world.construction.pm_transition_progress_ppm(building) == 0);
+    assert(f.world.buildings.production_method(building) == initial_pm);
+
+    // 2. Enqueue Monument: Statue of Liberty
+    const auto proj_monument = f.world.construction.enqueue_monument(country, ProvinceId{0u}, "monument.statue_of_liberty", 50u, 10'000);
+    assert(f.world.construction.size() == 2);
+
+    // Test priority reordering and pause
+    assert(f.world.construction.move_down(proj_pm));
+    assert(f.world.construction.move_up(proj_pm));
+    assert(f.world.construction.set_paused(proj_monument, true));
+    assert(f.world.construction.find(proj_monument)->paused);
+    assert(f.world.construction.set_paused(proj_monument, false));
+
+    EconomySystem economy{f.definitions};
+    economy.rebuild_indices(f.world);
+    JobSystem jobs{0u};
+
+    // 3. Weekly execution: Construction advances gradually
+    economy.run_weekly(f.world, jobs);
+    assert(f.world.construction.pm_transition_progress_ppm(building) > 0);
+
+    // Run until completion
+    while (f.world.construction.size() > 0) {
+        economy.run_weekly(f.world, jobs);
+    }
+
+    // 4. Verification: PM was successfully upgraded to advanced_pm after queue execution!
+    assert(f.world.buildings.production_method(building) == advanced_pm);
+    assert(f.world.construction.pm_transition_progress_ppm(building) == 1'000'000);
+    // Monument provided national prestige
+    assert(f.world.countries.prestige(country) >= 25.0);
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -602,6 +654,7 @@ int main() {
     test_sovereign_debt_issuance_credit_rating_and_default();
     test_bank_balance_sheet_credit_service_and_default();
     test_authored_trade_route_tariff_and_logistics_capacity();
+    test_construction_queue_and_pm_gradual_transition();
     std::cout << "All Core 1.0 economy tests passed.\n";
     return 0;
 }

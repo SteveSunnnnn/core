@@ -24,6 +24,7 @@ add_library(core_runtime
     src/core/economy/CurrencyStore.cpp
     src/core/economy/BankStore.cpp
     src/core/economy/TradePolicyStore.cpp
+    src/core/economy/ConstructionStore.cpp
     src/core/living/ProvinceEntityIndex.cpp
     src/core/living/LivingMapSystem.cpp
     src/core/living/LivingMapStreamingPlanner.cpp

@@ -365,6 +365,32 @@ void UiDrawList::ink_chart(UiRect rect, std::span<const float> values,
     polyline(pts, ink_rgba, scissor);
 }
 
+void UiDrawList::construction_queue_row(UiRect rect, const std::string& name, const std::string& kind_label,
+                                        float progress_ratio, const std::string& eta_text,
+                                        bool paused, UiRect scissor) {
+    // 1. Background row card with dark wood/leather styling
+    panel(rect, paused ? 0xff281e18u : 0xff1e1410u, 0xff8c7040u, 0x40000000u, 2.0f, scissor);
+
+    // 2. Kind badge / label on the left
+    const float pad_x = 8.0f;
+    const float label_y = rect.y + 6.0f;
+    text(kind_label, rect.x + pad_x, label_y, 11.0f, paused ? 0xffa09080u : 0xffd4af37u, scissor);
+
+    // 3. Project name
+    text(name, rect.x + pad_x + 90.0f, label_y, 13.0f, 0xffede0d4u, scissor);
+
+    // 4. Progress bar in middle
+    const float bar_x = rect.x + pad_x + 240.0f;
+    const float bar_w = std::max(60.0f, rect.w - 380.0f);
+    const float bar_y = rect.y + (rect.h - 10.0f) * 0.5f;
+    progress_bar({bar_x, bar_y, bar_w, 10.0f}, progress_ratio,
+                 paused ? 0xff806040u : 0xff2e8b57u, 0xff120c08u, scissor);
+
+    // 5. ETA / Paused status text on the right
+    const float eta_x = bar_x + bar_w + 12.0f;
+    text(eta_text, eta_x, label_y, 12.0f, paused ? 0xffff6b6bu : 0xffc8b6a6u, scissor);
+}
+
 void UiDrawList::text(std::string utf8, float x, float y, float size, std::uint32_t rgba, UiRect scissor) {
     if (utf8.empty()) return;
     text_.push_back(UiTextRun{std::move(utf8), x, y, size, rgba, scissor});

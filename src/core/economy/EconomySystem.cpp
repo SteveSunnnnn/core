@@ -917,6 +917,9 @@ JobDispatchStats EconomySystem::settle_investment_pool_contributions(World& worl
 }
 
 JobDispatchStats EconomySystem::construction(World& world) {
+    // 1. Process queued construction projects (upgrades, PM transitions, monuments, manual expansions)
+    world.construction.tick_weekly(world);
+
     const auto building_markets = world.buildings.markets();
     const auto building_types = world.buildings.types();
     const auto building_levels = world.buildings.levels();
