@@ -35,6 +35,8 @@
 #include "core/content/VirtualFileSystem.hpp"
 #include "core/content/DefinitionDatabase.hpp"
 #include "core/content/ContentLoader.hpp"
+#include "core/runtime/CoreEngine.hpp"
+#include "core/runtime/GameContentRuntime.hpp"
 #include "core/simulation/CommandQueue.hpp"
 #include "core/simulation/DeterministicCommandStage.hpp"
 #include "core/simulation/GameClock.hpp"
@@ -1173,6 +1175,99 @@ static void test_content_loader_compiles_effective_mod_set_and_hashes_it() {
     std::filesystem::remove_all(root);
 }
 
+static void test_economy_definitions_are_script_driven_and_bind_atomically() {
+    SymbolTable symbols;
+    const auto registry = ScriptRegistry::make_builtin();
+    CoreScriptParser parser{symbols};
+    const auto parsed = parser.parse(R"CORE(
+        good grain { base_price_milli = 1000 }
+        good tools { base_price_milli = 2500 }
+        building_type farm {
+            workers_per_level = 5000
+            input = { good = tools quantity_milli = 50 }
+            output = { good = grain quantity_milli = 1200 }
+        }
+        production_method intensive_farming {
+            building_type = farm
+            throughput_ppm = 1250000
+            input = { good = tools quantity_milli = 90 }
+            output = { good = grain quantity_milli = 1700 }
+        }
+        need_profile workers {
+            need = { good = grain quantity_milli = 100 }
+        }
+    )CORE");
+    assert(parsed.ok());
+    DefinitionDatabase definitions{symbols, registry};
+    std::vector<ScriptCompileDiagnostic> diagnostics;
+    assert(definitions.ingest(parsed, diagnostics));
+    EconomyDefinitions economy;
+    assert(definitions.bind_economy(economy, diagnostics));
+    assert(diagnostics.empty());
+    assert(economy.good_count() == 2u);
+    assert(economy.building_type_count() == 1u);
+    assert(economy.production_method_count() == 1u);
+    assert(economy.need_profile_count() == 1u);
+    assert(economy.good(GoodId{0}).key == "grain");
+    assert(economy.outputs(BuildingTypeId{0})[0].quantity_milli_per_1000_workers == 1200);
+    assert(economy.production_method(ProductionMethodId{0}).throughput_ppm == 1'250'000);
+
+    const auto invalid = parser.parse(R"CORE(
+        building_type broken {
+            output = { good = missing quantity_milli = 1 }
+        }
+    )CORE");
+    DefinitionDatabase invalid_definitions{symbols, registry};
+    diagnostics.clear();
+    assert(invalid_definitions.ingest(invalid, diagnostics));
+    EconomyDefinitions unchanged;
+    (void)unchanged.add_good({"sentinel", 1});
+    assert(!invalid_definitions.bind_economy(unchanged, diagnostics));
+    assert(unchanged.good_count() == 1u);
+    assert(unchanged.good(GoodId{0}).key == "sentinel");
+}
+
+static void test_game_content_runtime_installs_one_script_snapshot() {
+    const auto root = core_test::unique_temp_path("core_script_game_bootstrap");
+    std::filesystem::create_directories(root / "common");
+    {
+        std::ofstream output(root / "common/game.core");
+        output << R"CORE(
+            good grain { base_price_milli = 1000 }
+            building_type farm {
+                output = { good = grain quantity_milli = 1000 }
+            }
+            need_profile workers {
+                need = { good = grain quantity_milli = 100 }
+            }
+            country TST { population = 1000 treasury = 25 }
+            script grant { scope = country effect = { add_treasury = 5 } }
+            decision scripted_grant { scope = country effect = grant }
+        )CORE";
+    }
+
+    CoreEngine engine{{0u, 0u, 0u}};
+    VirtualFileSystem vfs;
+    vfs.mount({"base", root, 0});
+    GameContentRuntime content{engine.scripts()};
+    const auto& result = content.load(vfs);
+    assert(result.ok());
+    std::vector<ScriptCompileDiagnostic> diagnostics;
+    assert(content.install_new_game(engine, 18360101, diagnostics));
+    assert(engine.clock().date().year == 1836);
+    assert(engine.clock().date().month == 1u);
+    assert(engine.clock().date().day == 1u);
+    assert(diagnostics.empty());
+    assert(engine.definitions().good_count() == 1u);
+    assert(engine.definitions().building_type_count() == 1u);
+    assert(engine.definitions().need_profile_count() == 1u);
+    assert(engine.world().countries.size() == 1u);
+    assert(engine.gameplay().definitions().size() == 1u);
+    assert(content.installed());
+    assert(!content.install_new_game(engine, 18360101, diagnostics));
+    std::filesystem::remove_all(root);
+}
+
 
 static void test_corescript_boolean_groups_compile_to_rpn() {
     SymbolTable symbols;
@@ -1287,6 +1382,8 @@ int main() {
     test_definition_database_history_and_immutable_runtime_split();
     test_mod_vfs_highest_priority_wins_deterministically();
     test_content_loader_compiles_effective_mod_set_and_hashes_it();
+    test_economy_definitions_are_script_driven_and_bind_atomically();
+    test_game_content_runtime_installs_one_script_snapshot();
     test_localization_is_symbol_keyed_and_supports_fallback();
     std::cout << "All Core 1.0 Development core tests passed.\n";
     return 0;

@@ -100,7 +100,7 @@ Core
     └── Map/Content editor
 ```
 
-## Jomini-class capability mapping
+## Grand-strategy capability mapping
 
 Core aims for equivalent *categories of capability*, implemented independently:
 

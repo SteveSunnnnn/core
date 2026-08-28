@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -31,6 +32,20 @@ std::string ascii_lower(std::string_view text) {
     out.reserve(text.size());
     for (const char c : text) out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     return out;
+}
+
+/// Narrow a script number to a std::uint32_t count. Values arriving from script
+/// text can be negative, fractional, NaN or far past 2^32; converting those
+/// directly is undefined behaviour (on x86 `limit = -1` becomes 2^31 and the
+/// truncation silently stops working).
+[[nodiscard]] bool read_u32_count(const ScriptNode& node, std::uint32_t& out) noexcept {
+    if (node.kind != ScriptValueKind::Number) return false;
+    if (!std::isfinite(node.number)) return false;
+    if (node.number < 0.0) return false;
+    if (node.number > static_cast<double>(std::numeric_limits<std::uint32_t>::max())) return false;
+    if (std::floor(node.number) != node.number) return false;
+    out = static_cast<std::uint32_t>(node.number);
+    return true;
 }
 
 ScopeType parse_scope_text(std::string_view text) noexcept {
@@ -1119,8 +1134,24 @@ bool ScriptCompiler::compile_scoped_condition_node(const ScriptNode& node, Compi
         filtered.children.clear();
         for (auto &child : node.children) {
             const auto clower = ascii_lower(symbols_.text(child.key));
-            if (clower == "limit" && child.kind == ScriptValueKind::Number) { cfg.has_limit=true; cfg.limit=static_cast<std::uint32_t>(child.number); cfg.ordered=true; continue; }
-            if (clower == "offset" && child.kind == ScriptValueKind::Number) { cfg.offset=static_cast<std::uint32_t>(child.number); continue; }
+            if (clower == "limit" && child.kind == ScriptValueKind::Number) {
+                std::uint32_t value = 0u;
+                if (!read_u32_count(child, value)) {
+                    diagnostics.push_back({"limit must be a non-negative integer below 4294967296", child.line});
+                    return false;
+                }
+                cfg.has_limit=true; cfg.limit=value; cfg.ordered=true; continue;
+            }
+            if (clower == "offset" && child.kind == ScriptValueKind::Number) {
+                std::uint32_t value = 0u;
+                if (!read_u32_count(child, value)) {
+                    diagnostics.push_back({"offset must be a non-negative integer below 4294967296", child.line});
+                    return false;
+                }
+                // offset is only honoured in ordered iteration; without this an
+                // `offset =` with no limit/order_by was silently discarded.
+                cfg.offset=value; cfg.ordered=true; continue;
+            }
             if (clower == "order_by" && child.kind == ScriptValueKind::Symbol) { cfg.has_order_by=true; cfg.order_by_value=child.symbol; cfg.order_by_key=script_stable_key(symbols_.text(child.symbol)); cfg.ordered=true; continue; }
             if (clower == "descending" && child.kind == ScriptValueKind::Symbol) { const auto v=ascii_lower(symbols_.text(child.symbol)); cfg.descending=(v=="yes"||v=="true"); continue; }
             filtered.children.push_back(child);
@@ -1354,8 +1385,22 @@ bool ScriptCompiler::compile_scoped_effect_node(const ScriptNode& node, CompileS
         filtered.children.clear();
         for (auto &child : node.children) {
             const auto clower = ascii_lower(symbols_.text(child.key));
-            if (clower == "limit" && child.kind == ScriptValueKind::Number) { cfg.has_limit=true; cfg.limit=static_cast<std::uint32_t>(child.number); cfg.ordered=true; continue; }
-            if (clower == "offset" && child.kind == ScriptValueKind::Number) { cfg.offset=static_cast<std::uint32_t>(child.number); continue; }
+            if (clower == "limit" && child.kind == ScriptValueKind::Number) {
+                std::uint32_t value = 0u;
+                if (!read_u32_count(child, value)) {
+                    diagnostics.push_back({"limit must be a non-negative integer below 4294967296", child.line});
+                    return false;
+                }
+                cfg.has_limit=true; cfg.limit=value; cfg.ordered=true; continue;
+            }
+            if (clower == "offset" && child.kind == ScriptValueKind::Number) {
+                std::uint32_t value = 0u;
+                if (!read_u32_count(child, value)) {
+                    diagnostics.push_back({"offset must be a non-negative integer below 4294967296", child.line});
+                    return false;
+                }
+                cfg.offset=value; cfg.ordered=true; continue;
+            }
             if (clower == "order_by" && child.kind == ScriptValueKind::Symbol) { cfg.has_order_by=true; cfg.order_by_value=child.symbol; cfg.order_by_key=script_stable_key(symbols_.text(child.symbol)); cfg.ordered=true; continue; }
             if (clower == "descending" && child.kind == ScriptValueKind::Symbol) { const auto v=ascii_lower(symbols_.text(child.symbol)); cfg.descending=(v=="yes"||v=="true"); continue; }
             filtered.children.push_back(child);
@@ -1587,7 +1632,11 @@ bool ScriptVm::evaluate_classic(const ScriptProgram& program, const World& world
         }
         return true;
     }
-    std::array<bool, 256u> stack{};
+    // Size the stack from the compiled program: each instruction pushes at
+    // most one value, so this can never overflow. The previous fixed 256-slot
+    // array threw "condition stack overflow" at runtime for blocks that
+    // compiled fine with more than 256 leaves, taking down the whole tick.
+    std::vector<bool> stack(program.condition.size() + 1u, false);
     std::size_t sp = 0;
     for (const auto& instruction : program.condition) {
         switch (instruction.op) {
@@ -1890,13 +1939,17 @@ bool ScriptVm::evaluate_scoped_node(const CompiledScopedCondition& node, const W
                 std::vector<std::pair<double, ScopeRef>> scored;
                 scored.reserve(candidates.size());
                 for (auto c : candidates) {
+                    // Charge the ORDER BY evaluation to the parent budget. This
+                    // used to copy the context and call begin_execution(),
+                    // which reset the budget to the default and then discarded
+                    // the spend with the copy — so a wide ordered_* iterator
+                    // could consume unbounded work and never trip the limit.
+                    if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
                     double score = static_cast<double>(c.raw_id);
                     if (node.iterator_config.has_order_by && programs_ != nullptr) {
                         if (auto *sv = programs_->find_value(node.iterator_config.order_by_value)) {
-                            ScriptExecutionContext tmp = context;
-                            tmp.current = c;
-                            tmp.begin_execution();
-                            try { score = evaluate_value_internal(*sv, world, tmp, depth+1u); } catch(...) { score = 0; }
+                            ScopeEnterGuard guard{context, c};
+                            try { score = evaluate_value_internal(*sv, world, context, depth+1u); } catch(...) { score = 0; }
                         }
                     }
                     scored.emplace_back(score, c);
@@ -1907,12 +1960,23 @@ bool ScriptVm::evaluate_scoped_node(const CompiledScopedCondition& node, const W
                 });
                 std::size_t offset = std::min<std::size_t>(node.iterator_config.offset, scored.size());
                 std::size_t limit = node.iterator_config.has_limit ? std::min<std::size_t>(node.iterator_config.limit, scored.size()-offset) : scored.size()-offset;
-                for (std::size_t i=offset; i<offset+limit; ++i) {
+                // `ordered_` is a windowed, ordered iteration primitive and must
+                // mean the same thing on the condition and effect sides: apply
+                // the block to *every* element in the sorted/limited window.
+                // The previous code short-circuited on the first match ("any"
+                // semantics), silently contradicting the effect side (which
+                // always touches every element in the window) and making
+                // `ordered_X` under a trigger behave like `any_X`.
+                bool all_match = true;
+                for (std::size_t i = offset; i < offset + limit; ++i) {
                     if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
                     ScopeEnterGuard guard{context, scored[i].second};
-                    if (evaluate_scoped_nodes(node.children, world, context, depth + 1u)) return true;
+                    if (!evaluate_scoped_nodes(node.children, world, context, depth + 1u)) {
+                        all_match = false;
+                        break;
+                    }
                 }
-                return false;
+                return all_match;
             }
             if (candidates.empty()) return false;
             if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
@@ -2037,13 +2101,17 @@ void ScriptVm::apply_scoped_node(const CompiledScopedEffect& node, World& world,
                 std::vector<std::pair<double, ScopeRef>> scored;
                 scored.reserve(candidates.size());
                 for (auto c : candidates) {
+                    // Charge the ORDER BY evaluation to the parent budget. This
+                    // used to copy the context and call begin_execution(),
+                    // which reset the budget to the default and then discarded
+                    // the spend with the copy — so a wide ordered_* iterator
+                    // could consume unbounded work and never trip the limit.
+                    if (!context.consume_work()) throw std::runtime_error("CoreScript execution budget exceeded");
                     double score = static_cast<double>(c.raw_id);
                     if (node.iterator_config.has_order_by && programs_ != nullptr) {
                         if (auto *sv = programs_->find_value(node.iterator_config.order_by_value)) {
-                            ScriptExecutionContext tmp = context;
-                            tmp.current = c;
-                            tmp.begin_execution();
-                            try { score = evaluate_value_internal(*sv, world, tmp, depth+1u); } catch(...) { score = 0; }
+                            ScopeEnterGuard guard{context, c};
+                            try { score = evaluate_value_internal(*sv, world, context, depth+1u); } catch(...) { score = 0; }
                         }
                     }
                     scored.emplace_back(score, c);

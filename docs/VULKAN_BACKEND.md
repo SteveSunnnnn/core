@@ -64,3 +64,14 @@ The renderer does not maintain one C++ render object for each visible world obje
 ## 1.0 RC-GPU live validation draw
 
 When `CORE_SHADER_DIR` points to the SPIR-V output produced by `tools/windows/validate_core.ps1`, the desktop backend creates graphics pipelines for Terrain, Ocean, Political Overlay, Living Map and solid Strategy UI. The 300-frame release gate executes all five pipelines under Dynamic Rendering and `VK_LAYER_KHRONOS_validation`. Render-finished binary semaphores are owned per swapchain image rather than per CPU frame, so they are not recycled before the presentation engine releases that image. This path is a production-API integration gate; final world-resource descriptor bindings, GPU culling/indirect dispatch and art-direction approval remain separate from the validation scene.
+
+Strategy UI coordinates are logical window coordinates with a top-left origin
+and positive Y downward. A positive Vulkan viewport height uses the same window
+orientation; the vertex shader must not apply an additional OpenGL Y flip.
+Scissors are converted to swapchain pixels using the current SDL logical/pixel
+ratio, which keeps geometry, clipping and input aligned on high-DPI displays.
+
+Shipping text uses `.corefont` MSDF metrics and a matching `COREIMG1` atlas.
+The fragment shader derives screen-space distance coverage from `fwidth`, so
+thin strokes do not disappear when DPI or scripted font size changes. See
+`SCRIPT_FIRST_CONTENT.md` for the content-owned font pipeline.

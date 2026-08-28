@@ -107,7 +107,7 @@ void VectorMapSystem::generate_border_mesh(VectorBorderMesh& out_mesh, float zoo
         switch (edge.border_class) {
         case VectorBorderClass::Country:
             width_px = 4.2f * zoom_scale;
-            rgba = 0xffd4af37u; // Victorian illuminated gold / brass border
+            rgba = 0xffd4af37u; // Illuminated gold / brass border
             break;
         case VectorBorderClass::State:
             width_px = 2.4f * zoom_scale;

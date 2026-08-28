@@ -82,11 +82,22 @@ public:
 
     [[nodiscard]] EconomyAmount seigniorage_accrued_milli(CurrencyKey key) const noexcept;
     void clear_seigniorage(CurrencyKey key) noexcept;
+    void set_seigniorage_accrued_milli(CurrencyKey key, EconomyAmount milli) noexcept;
+
+    // Per-tick FX flow accumulators. These participate in `checksum()`, so
+    // saves must round-trip them or the restored world fails verification.
+    void set_trade_demand_milli(CurrencyKey key, EconomyAmount milli) noexcept;
+    void set_trade_supply_milli(CurrencyKey key, EconomyAmount milli) noexcept;
 
     [[nodiscard]] std::uint64_t specie_export_mg(CurrencyKey key) const noexcept;
     [[nodiscard]] std::uint64_t specie_import_mg(CurrencyKey key) const noexcept;
     [[nodiscard]] bool convertibility_suspended(CurrencyKey key) const noexcept;
     void set_convertibility_suspended(CurrencyKey key, bool suspended) noexcept;
+
+    // Manual player-driven toggle of specie (gold/silver) convertibility.
+    // Only meaningful for metallic standards (Gold/Silver/Bimetallism); a fiat
+    // currency has no specie to suspend, so the call is a no-op returning false.
+    [[nodiscard]] bool toggle_convertibility(CurrencyKey key) noexcept;
 
     // Convert an amount in `from` currency to `to` currency:
     // Amount_to = (Amount_from * Rate_from) / Rate_to

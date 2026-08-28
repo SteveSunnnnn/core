@@ -2,7 +2,7 @@
 
 ## Status
 
-This is an internal Core 1.0 development snapshot, not a 1.1 release and not a final Clausewitz + Jomini replacement. The existing deterministic SoA, JobSystem, economy, world-pack and renderer boundaries are retained. This document records implemented logic contracts and explicitly separates them from the larger remaining feature surface.
+This is an internal Core 1.0 development snapshot, not a 1.1 release and not a complete grand-strategy engine. The existing deterministic SoA, JobSystem, economy, world-pack and renderer boundaries are retained. This document records implemented logic contracts and explicitly separates them from the larger remaining feature surface.
 
 ## CoreScript foundation
 

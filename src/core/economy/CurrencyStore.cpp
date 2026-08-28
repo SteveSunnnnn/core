@@ -193,6 +193,36 @@ void CurrencyStore::set_convertibility_suspended(CurrencyKey key, bool suspended
     currencies_[idx].convertibility_suspended = suspended;
 }
 
+bool CurrencyStore::toggle_convertibility(CurrencyKey key) noexcept {
+    const auto idx = find_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return false;
+    const auto standard = currencies_[idx].standard;
+    const bool metallic = standard == MonetaryStandard::GoldStandard ||
+                          standard == MonetaryStandard::SilverStandard ||
+                          standard == MonetaryStandard::Bimetallism;
+    if (!metallic) return false;
+    currencies_[idx].convertibility_suspended = !currencies_[idx].convertibility_suspended;
+    return true;
+}
+
+void CurrencyStore::set_seigniorage_accrued_milli(CurrencyKey key, EconomyAmount milli) noexcept {
+    const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
+    currencies_[idx].seigniorage_accrued_milli = std::max<EconomyAmount>(0, milli);
+}
+
+void CurrencyStore::set_trade_demand_milli(CurrencyKey key, EconomyAmount milli) noexcept {
+    const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
+    currencies_[idx].trade_demand_milli = std::max<EconomyAmount>(0, milli);
+}
+
+void CurrencyStore::set_trade_supply_milli(CurrencyKey key, EconomyAmount milli) noexcept {
+    const auto idx = find_or_add_index(key);
+    if (idx == static_cast<std::size_t>(-1)) return;
+    currencies_[idx].trade_supply_milli = std::max<EconomyAmount>(0, milli);
+}
+
 EconomyAmount CurrencyStore::convert(EconomyAmount amount_milli,
                                      CurrencyKey from,
                                      CurrencyKey to) const noexcept {

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Create a Core MSDF font package without bundling any font file in Core.
 
-Requires `msdf-atlas-gen` and `toktx`. The input font remains user-supplied. Outputs
-`<name>.corefont` metrics and `<name>_atlas.ktx2`, ready for AssetPack ingestion.
+Requires ``msdf-atlas-gen`` and Pillow. The input font remains user-supplied.
+Outputs ``<name>.corefont`` metrics plus an uncompressed
+``<name>_atlas.coreimg`` consumed directly by the Vulkan desktop backend.
+When ``toktx`` is available a production KTX2 copy is emitted as well.
 """
 from __future__ import annotations
 import argparse, json, pathlib, shutil, struct, subprocess, tempfile
+from PIL import Image
 
 MAGIC=b"COREFN01"
 VERSION=1
@@ -42,9 +45,8 @@ def main() -> int:
     ap.add_argument("--px-range", type=float, default=4.0)
     ns=ap.parse_args()
     msdf=shutil.which("msdf-atlas-gen")
-    toktx=shutil.which("toktx")
     if not msdf: raise SystemExit("required tool not found: msdf-atlas-gen")
-    if not toktx: raise SystemExit("required tool not found: toktx")
+    toktx=shutil.which("toktx")
     font=pathlib.Path(ns.font)
     if not font.is_file(): raise SystemExit(f"font not found: {font}")
     out=pathlib.Path(ns.out_dir);out.mkdir(parents=True,exist_ok=True)
@@ -53,7 +55,7 @@ def main() -> int:
         cmd=[msdf,"-font",str(font),"-type","msdf","-format","png","-imageout",str(png),
              "-json",str(meta),"-size",str(ns.size),"-pxrange",str(ns.px_range)]
         if ns.charset: cmd += ["-charset",str(ns.charset)]
-        else: cmd += ["-charset", "[0x20,0x7E]"]
+        else: cmd += ["-chars", "[0x20,0x7E]"]
         subprocess.run(cmd,check=True)
         data=json.loads(meta.read_text(encoding="utf-8"))
         atlas=data.get("atlas",{})
@@ -68,8 +70,18 @@ def main() -> int:
             glyphs.append((cp,advance,*plane,*atlas_bounds))
         glyphs.sort(key=lambda x:x[0])
         if not glyphs: raise SystemExit("msdf-atlas-gen produced no glyphs")
-        atlas_out=out/f"{ns.name}_atlas.ktx2"
-        subprocess.run([toktx,"--t2","--genmipmap","--encode","uastc",str(atlas_out),str(png)],check=True)
+        runtime_atlas=out/f"{ns.name}_atlas.coreimg"
+        rgba=Image.open(png).convert("RGBA")
+        if rgba.size != (width,height): raise SystemExit("MSDF PNG dimensions disagree with metadata")
+        pixels=rgba.tobytes()
+        with runtime_atlas.open("wb") as f:
+            f.write(b"COREIMG1")
+            f.write(struct.pack("<IIQ",width,height,len(pixels)))
+            f.write(pixels)
+        atlas_out=None
+        if toktx:
+            atlas_out=out/f"{ns.name}_atlas.ktx2"
+            subprocess.run([toktx,"--t2","--genmipmap","--encode","uastc",str(atlas_out),str(png)],check=True)
         texture_hash=fnv1a64(ns.atlas_key)
         # Match C++ FontAtlas::checksum: raw little-endian host bytes for integers/floats.
         checksum_parts=[struct.pack("<II f Q Q",width,height,ns.px_range,texture_hash,len(glyphs))]
@@ -80,7 +92,7 @@ def main() -> int:
             f.write(MAGIC);f.write(struct.pack("<IIII f Q Q I",VERSION,len(glyphs),width,height,
                                               ns.px_range,texture_hash,checksum,RECORD_BYTES))
             for glyph in glyphs:f.write(struct.pack("<I9f",*glyph))
-        print(f"PASS glyphs={len(glyphs)} metrics={metrics_out} atlas={atlas_out}")
+        print(f"PASS glyphs={len(glyphs)} metrics={metrics_out} runtime_atlas={runtime_atlas} ktx2={atlas_out or 'skipped'}")
     return 0
 
 if __name__=="__main__":raise SystemExit(main())

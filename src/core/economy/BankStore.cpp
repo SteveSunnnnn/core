@@ -321,11 +321,19 @@ void BankStore::run_weekly(World& world) {
             }
             if (arrears_weeks_[li] >= default_after_weeks) { charge_off(li); continue; }
         } else if (arrears_weeks_[li] > 0) {
-            // A non-performing loan's principal reduction was already removed
-            // from the bank NPL bucket above. Do not subtract the remaining
-            // principal a second time when the borrower cures the arrears;
-            // the previous code left NPL totals lower than the loan ledger and
-            // made an otherwise balanced bank fail validation after recovery.
+            // Curing the arrears returns the loan to Performing, so it stops
+            // contributing to the NPL bucket. The bucket was seeded with the
+            // full outstanding principal at write-down time and the repayments
+            // above only debited the portions actually paid, so the remaining
+            // principal is still booked as non-performing. Clear it now:
+            // validation requires the bucket to equal the sum of principal
+            // over loans still marked NonPerforming, and leaving the residue
+            // behind also inflates the NPL ratio enough to gate lending for an
+            // otherwise healthy bank.
+            if (loan_statuses_[li] == BankLoanStatus::NonPerforming)
+                nonperforming_milli_[bi] = saturating_sub(
+                    nonperforming_milli_[bi],
+                    std::min(nonperforming_milli_[bi], principal_milli_[li]));
             arrears_weeks_[li] = 0; loan_statuses_[li] = BankLoanStatus::Performing;
         }
         if (remaining_weeks_[li] > 0) --remaining_weeks_[li];

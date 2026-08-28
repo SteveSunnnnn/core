@@ -410,6 +410,10 @@ void ResearchSystem::run_tech_spread_weekly(World& world, std::uint64_t weekly_t
             if (!queued(world, country, def.key_hash)) {
                 (void)world.grand_strategy.add_technology({country, def.key_hash, 0u, false});
             }
+            // Deferred on_researched hook. The script receives `world` and may
+            // grant technologies, which reallocates technologys_ and would
+            // dangle the `record` reference this loop is iterating over.
+            const ScriptProgram* pending_on_researched = nullptr;
             for (auto& record : world.grand_strategy.technologys_) {
                 if (record.country == country && record.key_hash == def.key_hash && !record.unlocked) {
                     const auto cost_denom = std::max<std::uint64_t>(1u, static_cast<std::uint64_t>(def.cost_milli) / 1'000u);
@@ -431,11 +435,14 @@ void ResearchSystem::run_tech_spread_weekly(World& world, std::uint64_t weekly_t
                             world.countries.add_prestige(country, 5.0);
                         }
                         if (def.on_researched.has_value()) {
-                            (void)vm_.execute_if(*def.on_researched, world, ScopeRef::country(country));
+                            pending_on_researched = &*def.on_researched;
                         }
                     }
                     break;
                 }
+            }
+            if (pending_on_researched != nullptr) {
+                (void)vm_.execute_if(*pending_on_researched, world, ScopeRef::country(country));
             }
         }
     }

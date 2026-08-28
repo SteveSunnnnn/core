@@ -164,8 +164,8 @@ Vec3 ToneMappingPostProcess::aces_filmic(const Vec3& hdr, float exposure) noexce
     };
 }
 
-Vec3 ToneMappingPostProcess::apply_victorian_grading(const Vec3& ldr, float vignette) noexcept {
-    // Warm amber Victorian oil painting color balance
+Vec3 ToneMappingPostProcess::apply_warm_archival_grading(const Vec3& ldr, float vignette) noexcept {
+    // Warm amber archival-painting color balance
     const float r = ldr.x * 1.05f + 0.02f;
     const float g = ldr.y * 1.00f + 0.01f;
     const float b = ldr.z * 0.92f;

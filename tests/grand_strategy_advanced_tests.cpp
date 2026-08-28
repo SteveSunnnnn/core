@@ -1,7 +1,7 @@
 #include "core/ai/StrategicAiPlanner.hpp"
 #include "core/localization/LocalizationStore.hpp"
 #include "core/render/map/VectorMapTypography.hpp"
-#include "core/render/map/VictorianCartoucheRenderer.hpp"
+#include "core/render/map/MapDecorationRenderer.hpp"
 #include "core/render/vfx/LivingMapVfxSystem.hpp"
 #include "core/warfare/BattlePhaseSystem.hpp"
 #include "core/warfare/LogisticsNetwork.hpp"
@@ -87,7 +87,7 @@ int main() {
         std::cout << "  [PASS] StrategicAiPlanner script parameters, construction, and coalitions\n";
     }
 
-    // 3. Test VectorMapTypography & VictorianCartoucheRenderer
+    // 3. Test VectorMapTypography & MapDecorationRenderer
     {
         std::vector<VectorPoint> spline_pts{{100.0f, 100.0f}, {200.0f, 150.0f}, {300.0f, 120.0f}, {400.0f, 180.0f}};
         auto layout = VectorMapTypography::layout_curved_label("BRITISH EMPIRE", spline_pts, 18.0f, 0xffd4af37u, 10);
@@ -106,9 +106,9 @@ int main() {
 
         // Test tabletop frame and compass rose
         UiDrawList ui;
-        VictorianCartoucheRenderer::render_tabletop_wood_frame(ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
-        VictorianCartoucheRenderer::render_brass_compass_rose(ui, 500.0f, 500.0f, 50.0f);
-        VictorianCartoucheRenderer::render_corner_vignettes(ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
+        MapDecorationRenderer::render_tabletop_wood_frame(ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
+        MapDecorationRenderer::render_brass_compass_rose(ui, 500.0f, 500.0f, 50.0f);
+        MapDecorationRenderer::render_corner_vignettes(ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
 
         assert(ui.vertices().size() > 0);
         assert(ui.batches().size() > 0);

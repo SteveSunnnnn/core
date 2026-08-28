@@ -1,4 +1,5 @@
 #include "core/ui/ScriptedGui.hpp"
+#include "core/ui/ScriptedGuiPainter.hpp"
 #include "core/ui/ScriptedGuiRuntime.hpp"
 #include "core/ui/StrategyUi.hpp"
 
@@ -373,6 +374,14 @@ scripted_gui bad_schema {
     assert(initial_diff.dirty_nodes > 0);
     assert(initial_diff.provider_errors == 0);
     assert(!initial_diff.truncated);
+
+    core::UiDrawList scripted_draw_list;
+    core::ScriptedGuiPainter painter{valid.blueprint};
+    painter.paint(runtime, scripted_draw_list, {0.0f, 0.0f, 1280.0f, 720.0f},
+                  [](core::UiStableKey) { return std::string{"localized"}; });
+    assert(!scripted_draw_list.vertices().empty());
+    assert(!scripted_draw_list.indices().empty());
+    assert(!scripted_draw_list.hits().empty());
 
     const auto* capital_node = runtime.find_blueprint_node(core::ui_stable_node_key(screen_key, "capital_name"));
     assert(capital_node != nullptr);

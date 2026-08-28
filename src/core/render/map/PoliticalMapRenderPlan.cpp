@@ -13,7 +13,7 @@ PoliticalMapRenderPlan add_political_map_passes(RenderGraph& graph,
     plan.map_mode_words = graph.add_resource("province_map_mode_words", RenderResourceKind::Buffer);
     plan.vector_borders_vbo = graph.add_resource("vector_borders_vbo", RenderResourceKind::Buffer);
     plan.vector_borders_ibo = graph.add_resource("vector_borders_ibo", RenderResourceKind::Buffer);
-    plan.parchment_texture = graph.add_resource("victorian_parchment_texture", RenderResourceKind::Image);
+    plan.parchment_texture = graph.add_resource("decorative_parchment_texture", RenderResourceKind::Image);
 
     graph.add_pass({"political_map_upload", RenderQueue::Transfer,
                     {{plan.province_id_cache, RenderUsage::TransferDst, true},

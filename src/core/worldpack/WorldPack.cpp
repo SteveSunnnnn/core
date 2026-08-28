@@ -36,6 +36,10 @@ constexpr std::uint32_t format_version = 2;
 constexpr std::uint32_t header_bytes = 64;
 constexpr std::uint32_t index_entry_bytes = 48;
 
+// Largest uncompressed chunk we are willing to allocate. Real chunks are far
+// smaller; this only stops a malformed pack from claiming ~4 GiB.
+constexpr std::uint32_t kMaxChunkRawBytes = 64u * 1024u * 1024u;
+
 template <typename T, bool IsEnum = std::is_enum_v<T>>
 struct WireType { using type = T; };
 template <typename T>
@@ -460,6 +464,12 @@ std::span<const std::byte> WorldPackDecodeScratch::read(WorldChunkKey key) {
     }
     if (entry.codec == WorldChunkCodec::Zstd) {
 #if defined(CORE_HAS_ZSTD)
+        // The declared uncompressed size is attacker-controllable (a hostile
+        // pack can recompute build_hash to match). Cap it before allocating so
+        // a 4 GiB claim cannot be turned into a 4 GiB allocation; the checksum
+        // below is only verified after the buffer exists.
+        if (entry.raw_bytes > kMaxChunkRawBytes)
+            throw std::runtime_error("world chunk raw size exceeds safety cap");
         decoded_.resize(entry.raw_bytes);
         const auto decoded = ZSTD_decompressDCtx(zstd_->value, decoded_.data(), decoded_.size(), stored_.data(), stored_.size());
         if (ZSTD_isError(decoded) || decoded != decoded_.size()) throw std::runtime_error("failed decompressing world chunk");

@@ -7,6 +7,9 @@ CMakeUserPresets.json
 compile_commands.json
 .cache/
 
+# Tool working state
+.workbuddy/
+
 # Generated runtime/content packages
 *.coreworld.tmp
 *.coreasset.tmp

@@ -1,5 +1,6 @@
 #include "core/scripting/DynamicVariables.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace core {
@@ -163,7 +164,45 @@ std::uint64_t DynamicVariableMap::checksum() const noexcept {
     for (const auto& v : vars_) {
         h.add(v.key_hash);
         h.add(static_cast<std::uint8_t>(v.type));
-        h.add(v.value.id_val);
+        // Read the union member that is actually active. Reading id_val for a
+        // Bool is undefined behaviour, and it also bypassed Fnv1a64's
+        // -0.0/NaN normalisation for Double, so equal worlds could hash
+        // differently depending on FPU state.
+        switch (v.type) {
+            case DynamicVariableType::Int: {
+                const std::int64_t value = v.value.int_val;
+                h.add(value);
+                break;
+            }
+            case DynamicVariableType::Double: {
+                // Canonicalise NaN and -0.0 exactly as core::Fnv1a64 does, so
+                // equal worlds hash equally regardless of FPU NaN payloads.
+                constexpr std::uint64_t canonical_nan = 0x7ff8000000000000ULL;
+                const double value = v.value.double_val;
+                if (std::isnan(value)) {
+                    h.add(canonical_nan);
+                } else {
+                    const double normalized = (value == 0.0) ? 0.0 : value;
+                    h.add_bytes(&normalized, sizeof(normalized));
+                }
+                break;
+            }
+            case DynamicVariableType::Bool: {
+                const unsigned value = v.value.bool_val ? 1u : 0u;
+                h.add(value);
+                break;
+            }
+            case DynamicVariableType::EntityId: {
+                const std::uint64_t value = v.value.id_val;
+                h.add(value);
+                break;
+            }
+            case DynamicVariableType::StringHash: {
+                const std::uint64_t value = v.value.str_hash_val;
+                h.add(value);
+                break;
+            }
+        }
     }
     return h.value();
 }

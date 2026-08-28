@@ -283,15 +283,19 @@ UiRuntimeDiff ScriptedGuiRuntime::refresh(const ScriptedGuiDataProvider& provide
         return current_idx;
     };
 
+    // Clear last frame's dirty flags BEFORE rebuilding: freshly instantiated
+    // nodes report Topology|Visibility|Enabled, and resetting after the build
+    // wiped that flag so the retained-mode renderer never learned the tree had
+    // been (re)created.
+    for (auto& node : nodes_) {
+        node.dirty = UiRuntimeDirty::None;
+    }
+
     if (force_rebuild_ || nodes_.empty()) {
         nodes_.clear();
         root_index_ = instantiate_subtree(instantiate_subtree, mount_root_, mount_source_,
                                            kInvalidUiRuntimeNode, 0, 0);
         force_rebuild_ = false;
-    }
-
-    for (auto& node : nodes_) {
-        node.dirty = UiRuntimeDirty::None;
     }
 
     const auto initial_node_count = nodes_.size();
@@ -370,6 +374,18 @@ UiRuntimeDiff ScriptedGuiRuntime::refresh(const ScriptedGuiDataProvider& provide
                 } else if (out_val.type == UiValueType::Text) {
                     if (node.text != out_val.text || node.text_is_localization) {
                         node.text = std::string(out_val.text.substr(0, config_.max_text_bytes));
+                        // Truncating at an arbitrary byte index can split a
+                        // multi-byte codepoint, producing invalid UTF-8 that the
+                        // font atlas renders as U+FFFD. Back off to the last
+                        // complete codepoint boundary.
+                        while (!node.text.empty() &&
+                               (static_cast<unsigned char>(node.text.back()) & 0xC0u) == 0x80u) {
+                            node.text.pop_back();
+                        }
+                        if (!node.text.empty() &&
+                            (static_cast<unsigned char>(node.text.back()) & 0xC0u) == 0xC0u) {
+                            node.text.pop_back();
+                        }
                         node.text_is_localization = false;
                         node.text_key = 0;
                         node.dirty |= UiRuntimeDirty::Text;

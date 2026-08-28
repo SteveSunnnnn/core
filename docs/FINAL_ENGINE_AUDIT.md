@@ -2,6 +2,18 @@
 
 Audit date: 2026-08-28. Product version remains **1.0.0**.
 
+## Engine/game boundary
+
+The engine/game split is complete and enforced (see
+`ENGINE_GAME_BOUNDARY_AUDIT.md`): `core_runtime` contains only engine
+capability from `src/core`; game composition (`DesktopApp`,
+`GameAppController`, `StrategyHudSystem`, `GrandStrategyGui`,
+`GameProjectConfig`) lives in `src/game` as the `core_game_ui` target. A
+configure-time guard fails if any `src/core` source includes game-layer code.
+`content/base` and `demo/` are the bundled sample game, loaded through the
+VFS/script pipeline and excluded from every engine target. Milestone
+documents superseded by this audit have been removed from the repository.
+
 ## Verified in this workspace
 
 - Debug headless: 26/26 tests pass.

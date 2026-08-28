@@ -30,7 +30,10 @@ public:
 
     [[nodiscard]] std::size_t count() const noexcept { return count_; }
     [[nodiscard]] const FrameTiming& latest() const noexcept {
-        return history_[(write_ - 1u) % history_size];
+        // Before the first push, `write_ - 1` wraps to SIZE_MAX and lands on an
+        // arbitrary slot; callers should gate on count() but we must not hand
+        // back a garbage slot either.
+        return history_[write_ == 0u ? 0u : (write_ - 1u) % history_size];
     }
 
     void clear() noexcept {

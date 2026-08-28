@@ -17,7 +17,7 @@ namespace {
 
 HierarchicalModifierGraph::HierarchicalModifierGraph() {
     // Global level always has at least 1 node (id 0)
-    levels_[static_cast<std::size_t>(ModifierScopeLevel::Global)].ensure(0);
+    (void)levels_[static_cast<std::size_t>(ModifierScopeLevel::Global)].ensure(0);
 }
 
 void HierarchicalModifierGraph::reserve(ModifierScopeLevel level, std::size_t count) {
@@ -31,7 +31,7 @@ void HierarchicalModifierGraph::set_building_parent(BuildingId building, Provinc
     if (!building.valid()) return;
     const auto bid = static_cast<std::size_t>(building.value());
     auto& store = levels_[static_cast<std::size_t>(ModifierScopeLevel::Building)];
-    store.ensure(bid);
+    if (!store.ensure(bid)) return;
     store.nodes[bid].parent_id = province.valid() ? province.value() : 0xffffffffu;
     ++store.nodes[bid].revision;
 }
@@ -40,7 +40,7 @@ void HierarchicalModifierGraph::set_province_parent(ProvinceId province, StateId
     if (!province.valid()) return;
     const auto pid = static_cast<std::size_t>(province.value());
     auto& store = levels_[static_cast<std::size_t>(ModifierScopeLevel::Province)];
-    store.ensure(pid);
+    if (!store.ensure(pid)) return;
     store.nodes[pid].parent_id = state.valid() ? state.value() : 0xffffffffu;
     ++store.nodes[pid].revision;
 }
@@ -49,7 +49,7 @@ void HierarchicalModifierGraph::set_state_parent(StateId state, CountryId countr
     if (!state.valid()) return;
     const auto sid = static_cast<std::size_t>(state.value());
     auto& store = levels_[static_cast<std::size_t>(ModifierScopeLevel::State)];
-    store.ensure(sid);
+    if (!store.ensure(sid)) return;
     store.nodes[sid].parent_id = country.valid() ? country.value() : 0xffffffffu;
     ++store.nodes[sid].revision;
 }
@@ -98,7 +98,7 @@ void HierarchicalModifierGraph::add_modifier(ModifierScopeLevel level, std::uint
     const auto idx = static_cast<std::size_t>(level);
     if (idx >= static_cast<std::size_t>(ModifierScopeLevel::Count)) return;
     auto& store = levels_[idx];
-    store.ensure(scope_id);
+    if (!store.ensure(scope_id)) return;
     store.nodes[scope_id].entries.push_back({key_hash, value, op, source_id});
     ++store.nodes[scope_id].revision;
     if (level == ModifierScopeLevel::Global) {
@@ -232,7 +232,12 @@ ModifierBreakdown HierarchicalModifierGraph::breakdown(
     }
 
     const double subtotal = (b.base + b.flat_add) * std::max(0.0, 1.0 + b.percent_mult);
-    b.final_value = std::clamp(subtotal, b.min_bound, b.max_bound);
+    // Min and Max accumulators are independent, so authored content can leave
+    // min_bound above max_bound. std::clamp requires !(hi < lo) and is
+    // undefined otherwise; resolve the conflict deterministically instead.
+    b.final_value = b.min_bound <= b.max_bound
+                        ? std::clamp(subtotal, b.min_bound, b.max_bound)
+                        : std::max(subtotal, b.min_bound);
     return b;
 }
 

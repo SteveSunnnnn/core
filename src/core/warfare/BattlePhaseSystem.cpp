@@ -59,7 +59,11 @@ void BattlePhaseSystem::advance_battle_day(BattleState& b, float attacker_supply
     if (b.phase_days_elapsed >= 3) {
         b.phase_days_elapsed = 0;
         b.phase = static_cast<BattlePhase>(static_cast<std::uint8_t>(b.phase) + 1);
-        if (b.phase >= BattlePhase::PursuitOrRetreat) {
+        // SkirmishFlanking advances TO PursuitOrRetreat, which still has to be
+        // fought for its own 3 days. Testing `>= PursuitOrRetreat` concluded
+        // the battle the moment that phase was entered, so the phase and its
+        // tactic card were never simulated.
+        if (b.phase >= BattlePhase::Concluded) {
             b.phase = BattlePhase::Concluded;
             b.is_concluded = true;
         }

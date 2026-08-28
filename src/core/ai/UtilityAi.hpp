@@ -9,6 +9,7 @@
 namespace core {
 class World;
 class ScriptRegistry;
+class EconomyDefinitions;
 
 struct AiActionDefinition {
     std::string key;
@@ -120,7 +121,8 @@ public:
     [[nodiscard]] static DiplomaticPlayAiStance evaluate_diplomatic_play(const World& world, CountryId country, DiplomaticPlayId play);
     [[nodiscard]] static bool should_ai_back_down(const World& world, CountryId country, DiplomaticPlayId play);
     [[nodiscard]] static std::vector<CountryId> pick_sway_targets(const World& world, CountryId sponsor, DiplomaticPlayId play);
-    [[nodiscard]] static std::vector<GoodId> evaluate_economic_shortages(const World& world, CountryId country);
+    [[nodiscard]] static std::vector<GoodId> evaluate_economic_shortages(
+        const World& world, CountryId country, const EconomyDefinitions& definitions);
     static void auto_balance_frontlines(World& world, CountryId country, FrontId front);
 };
 

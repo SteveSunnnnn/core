@@ -1,4 +1,4 @@
-# Core 1.0 Victorian Era Technology Tree
+# Core 1.0 Example Technology Tree
 research_rules default {
     base_innovation_milli = 1000
     innovation_per_million_literate_population_milli = 1000
@@ -156,4 +156,3 @@ technology trench_warfare {
         feature = defensive_doctrine
     }
 }
-

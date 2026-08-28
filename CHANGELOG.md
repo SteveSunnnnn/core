@@ -1,5 +1,50 @@
 # Changelog
 
+## Core 1.0 Development — Engine/game boundary cleanup and stale-doc removal — 2026-08-28
+
+- Completed the engine/game split: game composition code (`DesktopApp`,
+  `GameAppController`, `StrategyHudSystem`, `GrandStrategyGui`,
+  `GameProjectConfig`) lives in `src/game` as the `core_game_ui` target; the
+  empty `src/core/platform/` directory was removed and configure-time guards
+  keep `src/core` free of game-layer includes.
+- Removed stale milestone documents: `PERFORMANCE_BUDGET_0_4/0_7/0_8/0_9.md`,
+  `RELEASE_STATUS_1_0_RC_GPU.md`, `VIC3_JOMINI_GAP_MATRIX.md` and the frozen
+  `VALIDATION_1_0.txt` snapshot; `docs/FINAL_ENGINE_AUDIT.md` remains the
+  authoritative verification record.
+- Kept `content/base` and `demo/` as the bundled sample game, loaded through
+  the VFS/script pipeline and outside every engine target.
+- Regenerated `SOURCE_FILES_1_0.txt` / `SOURCE_SHA256_1_0.txt` via
+  `tools/update_source_manifest.py` (354 first-party files).
+
+## Core 1.0 Development — Script-first bootstrap and DPI-safe UI text — 2026-08-28
+
+- Fixed the Vulkan UI coordinate contract: logical UI, scissors and pointer
+  input now share a top-left origin, removing the previous vertical mirror.
+- Added logical-window to swapchain-pixel conversion for high-DPI scissors and
+  viewport constants.
+- Wired the desktop renderer to `.corefont` MSDF glyph metrics, real bearings
+  and advances, derivative-based edge coverage and UTF-8 fallback glyphs. The
+  fixed-cell/5x7 renderer remains diagnostics-only.
+- Extended the font cooker to emit the runtime `COREIMG1` atlas alongside
+  `.corefont` metrics, with optional KTX2 output.
+- Added strict script definitions and transactional binding for goods,
+  building types, production methods and need profiles.
+- Added `GameContentRuntime`, a one-shot owner for symbols and compiled scripts
+  that validates all content domains before installing a new game and binds
+  the effective content hash into saves. The desktop shell uses it whenever
+  `CORE_CONTENT_ROOT` is supplied.
+- Added the script-first engine/content boundary document and new regression
+  coverage for economy binding and full content bootstrap.
+- Standardized topic-neutral engine naming: `StrategyHudSystem`,
+  `MapDecorationRenderer`, `apply_warm_archival_grading` and
+  `decorative_parchment_texture` replace setting-bound identifiers, with no
+  legacy aliases. Built-in examples, tests and base-content headers now follow
+  the same rule.
+- Fixed the font cooker's default charset invocation for current
+  `msdf-atlas-gen`, added a UTF-8/CJK glyph regression, documented that serif,
+  sans-serif and CJK fonts share the same MSDF path, and made the pixel-font
+  diagnostics fallback emit an explicit non-shipping warning.
+
 ## Core 1.0 Development — Deterministic Runtime Hardening & Global Script Persistence — 2026-08-28
 
 - Added the tagged `GLB1` save extension for world-level CoreScript state:
@@ -66,7 +111,7 @@
   - Outputs binary glTF 2.0 (`.glb`), Wavefront (`.obj`), PBR material definition (`.coremat.json`), and LOD manifest (`.corelod.json`).
 - Integrated **Construction Queue UI & Retained Widget Components**:
   - Registered `construction_queue` and `construction_project` contexts and properties in `ScriptedGuiSchema`.
-  - Added `UiDrawList::construction_queue_row` in `StrategyUi.hpp` / `StrategyUi.cpp` rendering Victorian-styled queue cards with wood/leather backgrounds, gilded progress bars, badges, ETA calculations, and pause status indicators.
+  - Added `UiDrawList::construction_queue_row` in `StrategyUi.hpp` / `StrategyUi.cpp` rendering ornamental queue cards with wood/leather backgrounds, gilded progress bars, badges, ETA calculations, and pause status indicators.
 - Added **`CQ01` Atomic Save Game Extension** (`src/core/save/SaveGame.cpp`):
   - Emits and decodes tagged construction queue sections with full backward compatibility and legacy checksum fallbacks.
 - Added comprehensive unit tests in `tests/economy_tests.cpp` and `tests/scripted_gui_tests.cpp`, all verified across both `release-headless` and `dev-headless` with **26/26 CTest suites passing 100%**.
@@ -128,7 +173,7 @@
 - Extended atomic runtime save/load to Gameplay, Journal/Event state, AI cooldowns and active plans using stable keys.
 - Current writes use save schema v4; Core 1.0 schema-v1 and prior runtime schema-v3 are read-only migration formats.
 - Added dedicated strategy-system and runtime-save regression tests; current Release CTest result is 9/9 PASS.
-- This milestone does not claim Clausewitz/Jomini feature parity; see `docs/LOGIC_LAYER_1_0.md`.
+- This milestone does not claim complete production grand-strategy feature coverage; see `docs/LOGIC_LAYER_1_0.md`.
 
 
 ## 1.0 RC-GPU — 2026-08-26

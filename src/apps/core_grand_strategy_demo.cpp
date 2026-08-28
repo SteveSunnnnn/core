@@ -2,12 +2,12 @@
 #include "core/localization/LocalizationStore.hpp"
 #include "core/render/map/VectorMapPipeline.hpp"
 #include "core/render/map/VectorMapTypography.hpp"
-#include "core/render/map/VictorianCartoucheRenderer.hpp"
+#include "core/render/map/MapDecorationRenderer.hpp"
 #include "core/render/vfx/LivingMapVfxSystem.hpp"
 #include "core/render/water/PhysicalWaterPass.hpp"
-#include "core/runtime/GameAppController.hpp"
+#include "game/runtime/GameAppController.hpp"
 #include "core/ui/StrategyUi.hpp"
-#include "core/ui/VictorianHudSystem.hpp"
+#include "game/ui/StrategyHudSystem.hpp"
 #include "core/warfare/BattlePhaseSystem.hpp"
 #include "core/warfare/LogisticsNetwork.hpp"
 
@@ -18,16 +18,16 @@ using namespace core;
 
 int main() {
     std::cout << "===============================================================\n";
-    std::cout << "  CORE GRAND STRATEGY ENGINE - CINEMATIC VICTORIAN SHOWCASE   \n";
+    std::cout << "  CORE GRAND STRATEGY ENGINE - STRATEGY SHOWCASE              \n";
     std::cout << "===============================================================\n\n";
 
     // 1. Initialize Localization Store
     LocalizationStore loc;
     loc.set_language("en");
-    loc.add_entry("en", "GAME_TITLE", "Pax Britannica: Victorian Grand Strategy");
+    loc.add_entry("en", "GAME_TITLE", "Core Grand Strategy");
     loc.add_entry("en", "CORONATION_DESC", "The reign of [Root.GetName] begins with industrial triumph.");
 
-    std::map<std::string, std::string> scopes{{"Root.GetName", "Queen Victoria"}};
+    std::map<std::string, std::string> scopes{{"Root.GetName", "Head of State"}};
     std::cout << "[1/6] Localization Initialized: " << loc.format("GAME_TITLE", scopes) << "\n";
 
     // 2. Initialize Strategic AI & Logistics
@@ -51,19 +51,19 @@ int main() {
     std::cout << "[3/6] Cinematic Physical Water & Living VFX Initialized ("
               << vfx.particle_count() << " live smoke & wake particles)\n";
 
-    // 4. Initialize Vector Map & Victorian Cartouche Frame
+    // 4. Initialize vector map and ornamental frame
     VectorMapSystem map_system;
     VectorBorderMesh border_mesh;
     map_system.generate_rhumb_lines(border_mesh, {500.0f, 500.0f}, 400.0f, 16);
 
     UiDrawList map_ui;
-    VictorianCartoucheRenderer::render_tabletop_wood_frame(map_ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
-    VictorianCartoucheRenderer::render_brass_compass_rose(map_ui, 300.0f, 800.0f, 75.0f);
-    VictorianCartoucheRenderer::render_corner_vignettes(map_ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
+    MapDecorationRenderer::render_tabletop_wood_frame(map_ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
+    MapDecorationRenderer::render_brass_compass_rose(map_ui, 300.0f, 800.0f, 75.0f);
+    MapDecorationRenderer::render_corner_vignettes(map_ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
 
     std::vector<VectorPoint> spine{{200.0f, 200.0f}, {400.0f, 250.0f}, {600.0f, 220.0f}, {800.0f, 300.0f}};
     auto label = VectorMapTypography::layout_curved_label("BRITISH EMPIRE", spine, 22.0f, 0xffd4af37u, 10);
-    std::cout << "[4/6] Victorian Parchment Vector Cartography & Curved Typography Built ("
+    std::cout << "[4/6] Parchment Vector Cartography & Curved Typography Built ("
               << label.glyphs.size() << " curved glyphs, " << map_ui.vertices().size() << " frame vertices)\n";
 
     // 5. Initialize GameAppController & Cabinet HUD
@@ -83,7 +83,7 @@ int main() {
 
     UiDrawList hud_ui;
     app.render_hud(hud_ui, {0.0f, 0.0f, 1920.0f, 1080.0f});
-    std::cout << "[5/6] Master Victorian HUD & Royal Event Modal Generated ("
+    std::cout << "[5/6] Strategy HUD & Event Modal Generated ("
               << hud_ui.vertices().size() << " UI vertices, " << hud_ui.text_runs().size() << " text elements)\n";
 
     // 6. Simulate 30 In-Game Days at 5x Speed

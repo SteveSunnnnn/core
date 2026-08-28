@@ -1091,8 +1091,15 @@ void GrandStrategyStore::run_institutions_weekly(World& world) {
     }
 }
 
-void GrandStrategyStore::run_tech_spread_weekly(World& world) {
+void GrandStrategyStore::run_tech_spread_weekly(World& world, std::uint64_t weekly_tick) {
     (void)world;
+    // Keep the roll fresh every week, exactly as ResearchSystem does: a pinned
+    // week comes from the GameClock, otherwise the internal counter advances.
+    if (weekly_tick == automatic_weekly_tick) {
+        if (weekly_ticks_ != automatic_weekly_tick) ++weekly_ticks_;
+    } else {
+        weekly_ticks_ = weekly_tick;
+    }
     for (std::size_t ti = 0; ti < technologys_.size(); ++ti) {
         auto& tech = technologys_[ti];
         if (tech.unlocked || !tech.country.valid()) continue;
@@ -1113,8 +1120,12 @@ void GrandStrategyStore::run_tech_spread_weekly(World& world) {
         }
 
         if (has_advanced_partner) {
-            // Probabilistic roll (e.g. 25% chance per week)
+            // Probabilistic roll (e.g. 25% chance per week). The week counter
+            // must be part of the sample: a failed roll changes no state, so
+            // without it the hash is identical next week and every technology
+            // that lost the first roll stays locked out forever.
             Fnv1a64 roll_hash;
+            roll_hash.add(weekly_ticks_);
             roll_hash.add(static_cast<std::uint32_t>(tech.country.value()));
             roll_hash.add(tech.key_hash);
             roll_hash.add(static_cast<std::uint32_t>(partner.value()));
@@ -1187,7 +1198,8 @@ void GrandStrategyStore::run_weekly_reference_tick() {
 }
 
 void GrandStrategyStore::run_weekly_reference_tick(World& world,
-                                                   bool include_legacy_technology_spread) {
+                                                   bool include_legacy_technology_spread,
+                                                   std::uint64_t weekly_tick) {
     // Resolve due flows in the world-aware tick. The previous implementation
     // only decremented the timer, so the normal CoreEngine path never moved
     // population when a migration completed.
@@ -1195,7 +1207,7 @@ void GrandStrategyStore::run_weekly_reference_tick(World& world,
     for (auto& record : colonys_) record.progress_ppm = std::min<std::uint32_t>(1'000'000u, record.progress_ppm + 500u);
     run_politics_weekly();
     run_institutions_weekly(world);
-    if (include_legacy_technology_spread) run_tech_spread_weekly(world);
+    if (include_legacy_technology_spread) run_tech_spread_weekly(world, weekly_tick);
     run_state_resistance_weekly(world);
     run_military_weekly(world);
     run_diplomacy_weekly();

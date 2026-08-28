@@ -151,7 +151,10 @@ bool ResearchContentDatabase::parse_rules(const ScriptObject& object, ResearchRu
 
 bool ResearchContentDatabase::ingest(const ScriptParseResult& parsed,
                                      std::vector<ScriptCompileDiagnostic>& diagnostics) {
-    bool ok = true;
+    // Start from parsed.ok(), matching the other content databases: a file with
+    // syntax errors must not contribute technologies when this database is
+    // ingested on its own.
+    bool ok = parsed.ok();
     for (const auto& object : parsed.objects) {
         if (object.type == sym_technology_) {
             TechnologyDefinitionSpec spec;

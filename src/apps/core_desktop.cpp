@@ -1,4 +1,4 @@
-#include "core/platform/DesktopApp.hpp"
+#include "game/platform/DesktopApp.hpp"
 
 int main() {
     core::DesktopApp app;

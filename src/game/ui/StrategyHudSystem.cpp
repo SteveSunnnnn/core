@@ -1,10 +1,10 @@
-#include "core/ui/VictorianHudSystem.hpp"
+#include "game/ui/StrategyHudSystem.hpp"
 #include <algorithm>
 #include <cmath>
 
 namespace core {
 
-void VictorianHudSystem::render_top_bar(UiDrawList& ui, const TopBarData& data, UiRect screen) {
+void StrategyHudSystem::render_top_bar(UiDrawList& ui, const TopBarData& data, UiRect screen) {
     const float bar_h = 38.0f;
     const UiRect bar_rect{0.0f, 0.0f, screen.w, bar_h};
 
@@ -57,9 +57,33 @@ void VictorianHudSystem::render_top_bar(UiDrawList& ui, const TopBarData& data, 
     ui.text(date_display, screen.w - 240.0f, 12.0f, 13.0f, 0xfff4ebd7u);
     std::string speed_str = (data.is_paused ? "[PAUSED] " : "") + std::string("Speed: ") + std::to_string(data.current_speed) + "x";
     ui.text(speed_str, screen.w - 120.0f, 12.0f, 12.0f, data.is_paused ? 0xffe04040u : 0xff40d060u);
+
+    // Manual gold/silver (specie) convertibility switch. Placed in the gap
+    // between the capacity bars and the date readout; only drawn when the
+    // screen is wide enough to clear the date text.
+    if (screen.w >= 1320.0f) {
+        const float btn_w = 150.0f;
+        const float btn_h = 26.0f;
+        const float btn_x = screen.w - 400.0f;
+        const float btn_y = 6.0f;
+        const UiRect toggle_rect{btn_x, btn_y, btn_w, btn_h};
+
+        std::string label;
+        bool lit = false;
+        if (!data.has_player_currency) {
+            label = "NO CURRENCY";
+        } else if (!data.currency_metallic) {
+            label = "FIAT (N/A)";
+        } else {
+            label = data.currency_convertibility_suspended ? "REDEEM: OFF" : "REDEEM: ON";
+            lit = !data.currency_convertibility_suspended;
+        }
+        ui.brass_button(toggle_rect, label, lit);
+        ui.hit(kHudConvertibilityToggleHit, toggle_rect);
+    }
 }
 
-void VictorianHudSystem::render_left_navigation_ribbon(UiDrawList& ui, ActiveHudTab current_tab, UiRect screen) {
+void StrategyHudSystem::render_left_navigation_ribbon(UiDrawList& ui, ActiveHudTab current_tab, UiRect screen) {
     const float ribbon_w = 52.0f;
     const float ribbon_top = 42.0f;
     const float ribbon_h = screen.h - ribbon_top;
@@ -75,7 +99,7 @@ void VictorianHudSystem::render_left_navigation_ribbon(UiDrawList& ui, ActiveHud
     }
 }
 
-void VictorianHudSystem::render_active_drawer(UiDrawList& ui, ActiveHudTab current_tab, UiRect screen) {
+void StrategyHudSystem::render_active_drawer(UiDrawList& ui, ActiveHudTab current_tab, UiRect screen) {
     if (current_tab == ActiveHudTab::None) return;
 
     const float drawer_w = 460.0f;
@@ -97,7 +121,7 @@ void VictorianHudSystem::render_active_drawer(UiDrawList& ui, ActiveHudTab curre
     }
 }
 
-void VictorianHudSystem::render_politics_window(UiDrawList& ui, UiRect r) {
+void StrategyHudSystem::render_politics_window(UiDrawList& ui, UiRect r) {
     // This shell intentionally renders an explicit empty state until a
     // content provider binds real political rows.  Showing fake percentages
     // here made an unbound game look authoritative and was especially
@@ -131,7 +155,7 @@ void VictorianHudSystem::render_politics_window(UiDrawList& ui, UiRect r) {
     }
 }
 
-void VictorianHudSystem::render_buildings_window(UiDrawList& ui, UiRect r) {
+void StrategyHudSystem::render_buildings_window(UiDrawList& ui, UiRect r) {
     ui.leather_panel({r.x + 10.0f, r.y + 10.0f, r.w - 20.0f, 36.0f}, 0xff222a18u);
     ui.text("INDUSTRY & PRODUCTION METHODS", r.x + 20.0f, r.y + 20.0f, 15.0f, 0xffd4af37u);
     for (int i = 0; i < 3; ++i) {
@@ -147,7 +171,7 @@ void VictorianHudSystem::render_buildings_window(UiDrawList& ui, UiRect r) {
     }
 }
 
-void VictorianHudSystem::render_market_window(UiDrawList& ui, UiRect r) {
+void StrategyHudSystem::render_market_window(UiDrawList& ui, UiRect r) {
     ui.leather_panel({r.x + 10.0f, r.y + 10.0f, r.w - 20.0f, 36.0f}, 0xff142228u);
     ui.text("MARKET & COMMODITIES", r.x + 20.0f, r.y + 20.0f, 15.0f, 0xffd4af37u);
     for (int i = 0; i < 6; ++i) {
@@ -159,7 +183,7 @@ void VictorianHudSystem::render_market_window(UiDrawList& ui, UiRect r) {
     }
 }
 
-void VictorianHudSystem::render_pops_window(UiDrawList& ui, UiRect r) {
+void StrategyHudSystem::render_pops_window(UiDrawList& ui, UiRect r) {
     ui.leather_panel({r.x + 10.0f, r.y + 10.0f, r.w - 20.0f, 36.0f}, 0xff261c14u);
     ui.text("POPULATION & STANDARD OF LIVING", r.x + 20.0f, r.y + 20.0f, 15.0f, 0xffd4af37u);
     ui.parchment_panel({r.x + 14.0f, r.y + 55.0f, r.w - 28.0f, 80.0f});
@@ -175,7 +199,7 @@ void VictorianHudSystem::render_pops_window(UiDrawList& ui, UiRect r) {
     }
 }
 
-void VictorianHudSystem::render_tech_window(UiDrawList& ui, UiRect r) {
+void StrategyHudSystem::render_tech_window(UiDrawList& ui, UiRect r) {
     ui.leather_panel({r.x + 10.0f, r.y + 10.0f, r.w - 20.0f, 36.0f}, 0xff18202au);
     ui.text("TECHNOLOGY", r.x + 20.0f, r.y + 20.0f, 15.0f, 0xffd4af37u);
     for (int e = 0; e < 4; ++e) {
@@ -190,7 +214,7 @@ void VictorianHudSystem::render_tech_window(UiDrawList& ui, UiRect r) {
     }
 }
 
-void VictorianHudSystem::render_military_window(UiDrawList& ui, UiRect r) {
+void StrategyHudSystem::render_military_window(UiDrawList& ui, UiRect r) {
     ui.leather_panel({r.x + 10.0f, r.y + 10.0f, r.w - 20.0f, 36.0f}, 0xff2a1414u);
     ui.text("ARMIES & FRONTLINES", r.x + 20.0f, r.y + 20.0f, 15.0f, 0xffd4af37u);
     ui.parchment_panel({r.x + 14.0f, r.y + 55.0f, r.w - 28.0f, 120.0f});
@@ -206,7 +230,7 @@ void VictorianHudSystem::render_military_window(UiDrawList& ui, UiRect r) {
     }
 }
 
-void VictorianHudSystem::render_diplomacy_window(UiDrawList& ui, UiRect r) {
+void StrategyHudSystem::render_diplomacy_window(UiDrawList& ui, UiRect r) {
     ui.leather_panel({r.x + 10.0f, r.y + 10.0f, r.w - 20.0f, 36.0f}, 0xff1a2228u);
     ui.text("DIPLOMATIC PLAYS & PRESTIGE", r.x + 20.0f, r.y + 20.0f, 15.0f, 0xffd4af37u);
 
@@ -223,7 +247,7 @@ void VictorianHudSystem::render_diplomacy_window(UiDrawList& ui, UiRect r) {
     }
 }
 
-void VictorianHudSystem::render_province_inspector(UiDrawList& ui, const ProvinceInspectorData& data, UiRect screen) {
+void StrategyHudSystem::render_province_inspector(UiDrawList& ui, const ProvinceInspectorData& data, UiRect screen) {
     const float card_w = 320.0f;
     const float card_h = 320.0f;
     const UiRect card_rect{screen.w - card_w - 16.0f, screen.h - card_h - 16.0f, card_w, card_h};
@@ -261,7 +285,7 @@ void VictorianHudSystem::render_province_inspector(UiDrawList& ui, const Provinc
     }
 }
 
-void VictorianHudSystem::render_event_modal(UiDrawList& ui, const EventModalState& event, UiRect screen) {
+void StrategyHudSystem::render_event_modal(UiDrawList& ui, const EventModalState& event, UiRect screen) {
     if (!event.is_open) return;
 
     ui.quad(screen, 0x75000000u);
@@ -297,7 +321,7 @@ void VictorianHudSystem::render_event_modal(UiDrawList& ui, const EventModalStat
     }
 }
 
-void VictorianHudSystem::render_tooltip(UiDrawList& ui, float mx, float my, const std::string& text, UiRect screen) {
+void StrategyHudSystem::render_tooltip(UiDrawList& ui, float mx, float my, const std::string& text, UiRect screen) {
     if (text.empty()) return;
 
     const float tw = static_cast<float>(text.size()) * 7.5f + 20.0f;

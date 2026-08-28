@@ -189,11 +189,23 @@ JobDispatchStats EconomySystem::gather_pop_hot(World& world, JobSystem& jobs) {
                     const auto pi = static_cast<std::size_t>(ids[k].value());
                     const auto prov = pop_provinces[pi];
                     const auto lit = pop_literacy[pi];
-                    const auto q = pop_qual[pi];
-                    rows[k] = PopHotRow{pop_population[pi], 0u, pop_employers[pi], pop_need_profiles[pi],
-                                        pop_income[pi], pop_cash[pi], pop_sol[pi],
-                                        lit, q,
-                                        static_cast<std::uint16_t>(prov.valid() ? prov.value() : 0xFFFFu)};
+                const auto q = pop_qual[pi];
+                // Clamp the need profile here so every downstream consumer can
+                // index the per-profile scratch buffers directly. A POP created
+                // at runtime without a profile carries NeedProfileId{} whose
+                // value is 0xFFFFFFFF, which would index ~4G elements past the
+                // end of a markets x profile_count buffer.
+                auto profile = pop_need_profiles[pi];
+                if (!profile.valid() ||
+                    static_cast<std::size_t>(profile.value()) >= definitions_.need_profile_count()) {
+                    profile = definitions_.need_profile_count() > 0u
+                                  ? NeedProfileId{0u}
+                                  : NeedProfileId{};
+                }
+                rows[k] = PopHotRow{pop_population[pi], 0u, pop_employers[pi], profile,
+                                    pop_income[pi], pop_cash[pi], pop_sol[pi],
+                                    lit, q,
+                                    static_cast<std::uint16_t>(prov.valid() ? prov.value() : 0xFFFFu)};
                 }
             }
         });
@@ -429,8 +441,12 @@ JobDispatchStats EconomySystem::consumption(World& world, JobSystem& jobs) {
                     } else {
                         effective_pop = static_cast<std::uint64_t>(row.population) / 4u;
                     }
-                    profile_population[row.need_profile.value()] += effective_pop;
-
+                    // Guarded by the same clamp applied when the hot rows were
+                    // gathered; profile_count == 0 leaves no bucket to write.
+                    if (profile_count > 0u &&
+                        static_cast<std::size_t>(row.need_profile.value()) < profile_count) {
+                        profile_population[row.need_profile.value()] += effective_pop;
+                    }
                 }
                 for (std::size_t profile_index = 0; profile_index < profile_count; ++profile_index) {
                     const auto population = profile_population[profile_index];
@@ -854,10 +870,16 @@ JobDispatchStats EconomySystem::settlement(World& world, JobSystem& jobs) {
                     // CLOSED-LOOP: Compute consumption cost and deduct from POP cash.
                     // Payment is rationed to the fulfilled share of the basket:
                     // shortages mean POPs buy less, not pay phantom prices.
-                    const auto profile_fulfillment = profile_fulfillment_row[row.need_profile.value()];
+                    // Index is clamped at gather time; fall back to a neutral
+                    // fulfillment if no profile bucket exists for this POP.
+                    const auto profile_index = (profile_count > 0u &&
+                                                static_cast<std::size_t>(row.need_profile.value()) < profile_count)
+                                                   ? static_cast<std::size_t>(row.need_profile.value())
+                                                   : 0u;
+                    const auto profile_fulfillment = profile_count > 0u ? profile_fulfillment_row[profile_index] : ppm_scale;
                     const EconomyAmount basket = mul_div_nonnegative(
                         static_cast<EconomyAmount>(row.population),
-                        basket_cost[row.need_profile.value()], 1000);
+                        profile_count > 0u ? basket_cost[profile_index] : 0, 1000);
                     const EconomyAmount rationed_basket = mul_div_nonnegative(basket, profile_fulfillment, ppm_scale);
                     // POP pays for consumption from their cash (cannot go below 0)
                     const EconomyAmount consumption_payment = std::min(rationed_basket, std::max<EconomyAmount>(0, row.cash_milli));

@@ -136,11 +136,15 @@ private:
 
     struct LevelStore {
         std::vector<ScopeNode> nodes;
-        void ensure(std::size_t id) {
-            if (id > 10'000'000u) return;
+        /// Grow to cover `id`. Returns false when the id exceeds the hard cap.
+        /// Callers MUST bail out on false: indexing `nodes[id]` anyway writes
+        /// past the end of the vector.
+        [[nodiscard]] bool ensure(std::size_t id) {
+            if (id > 10'000'000u) return false;
             if (id >= nodes.size()) {
                 nodes.resize(id + 1u);
             }
+            return true;
         }
     };
 

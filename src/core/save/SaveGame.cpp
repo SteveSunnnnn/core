@@ -1226,6 +1226,12 @@ void encode_fx_section(Writer& w, const CurrencyStore& currencies, const Country
         w.i64(c.exchange_rate_ppm);
         w.i64(c.target_rate_ppm);
         w.boolean(c.convertibility_suspended);
+        // Per-tick FX flow accumulators are covered by CurrencyStore::checksum().
+        // Dropping them makes every save taken after an FX round fail
+        // verification on load with "save world checksum mismatch".
+        w.i64(c.trade_demand_milli);
+        w.i64(c.trade_supply_milli);
+        w.i64(c.seigniorage_accrued_milli);
     }
     w.u32(static_cast<std::uint32_t>(countries.size()));
     for (std::size_t i = 0; i < countries.size(); ++i) {
@@ -1260,11 +1266,15 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         const auto rate = r.i64();
         const auto target = r.i64();
         const auto suspended = r.boolean();
+        const auto trade_demand = r.i64();
+        const auto trade_supply = r.i64();
+        const auto seigniorage = r.i64();
         if (key == 0u || !currency_keys.insert(key).second ||
             static_cast<std::uint8_t>(std_val) >
                 static_cast<std::uint8_t>(MonetaryStandard::FiatFloating) ||
             gold_mg == 0u || silver_mg == 0u || rate < 10'000 || rate > 100'000'000 ||
             target < 10'000 || target > 100'000'000 ||
+            trade_demand < 0 || trade_supply < 0 || seigniorage < 0 ||
             (leader_val != 0xFFFFFFFFu && leader_val >= countries.size()))
             throw std::runtime_error("invalid currency record in save");
         currencies.register_currency(key, name, std_val, gold_mg, silver_mg, rate);
@@ -1274,6 +1284,9 @@ DecodedFxState decode_fx_section(Reader& r, CurrencyStore& currencies, CountrySt
         currencies.set_gold_parity_mg(key, gold_mg);
         currencies.set_silver_parity_mg(key, silver_mg);
         currencies.set_convertibility_suspended(key, suspended);
+        currencies.set_trade_demand_milli(key, trade_demand);
+        currencies.set_trade_supply_milli(key, trade_supply);
+        currencies.set_seigniorage_accrued_milli(key, seigniorage);
         if (leader_val != 0xFFFFFFFFu) {
             currencies.set_sovereign_leader(key, CountryId{leader_val}, 0.0);
         }

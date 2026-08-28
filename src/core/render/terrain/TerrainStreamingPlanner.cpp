@@ -30,8 +30,11 @@ std::span<const TerrainUploadRequest> TerrainStreamingPlanner::plan(std::span<co
     std::size_t keep = 0;
     for (; keep < requests_.size(); ++keep) {
         const std::uint64_t next = used + requests_[keep].estimated_bytes;
+        // Always admit the first request even if it alone exceeds the budget,
+        // otherwise a single oversized page starves streaming entirely: the
+        // two guards below used to be equivalent, so keep stayed 0 and no
+        // page was ever uploaded.
         if (next > byte_budget && keep > 0u) break;
-        if (next > byte_budget) break;
         used = next;
     }
     requests_.resize(keep);

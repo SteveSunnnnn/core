@@ -49,8 +49,10 @@ struct EditorBrushState {
 
 // A single cell modification in a paint stroke
 struct EditorCellEdit {
-    std::uint32_t page_x = 0;          // page grid coordinate
-    std::uint32_t page_y = 0;
+    // Signed: world pixel coordinates run negative west/south of the origin,
+    // so page indices do too.
+    std::int64_t page_x = 0;           // page grid coordinate
+    std::int64_t page_y = 0;
     std::uint32_t local_x = 0;         // pixel within 128x128 page
     std::uint32_t local_y = 0;
     std::uint16_t old_value = 0;       // previous encoded province ID

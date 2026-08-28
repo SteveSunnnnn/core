@@ -1,13 +1,13 @@
-#include "core/runtime/GameAppController.hpp"
+#include "game/runtime/GameAppController.hpp"
 #include "core/ui/StrategyUi.hpp"
-#include "core/ui/VictorianHudSystem.hpp"
+#include "game/ui/StrategyHudSystem.hpp"
 #include <cassert>
 #include <iostream>
 
 using namespace core;
 
 int main() {
-    std::cout << "[Master-Tier Victorian HUD & Game Client Tests Starting]...\n";
+    std::cout << "[Strategy HUD & Game Client Tests Starting]...\n";
 
     // 1. Test StrategyUi Master Primitives (Leather, Wax Seal, Parliament Arc, Gauges)
     {
@@ -68,7 +68,7 @@ int main() {
         std::cout << "  [PASS] GameAppController navigation, province picking, and timeflow\n";
     }
 
-    // 3. Test All 7 Authentic Cabinet Windows in Victorian HUD
+    // 3. Test all seven cabinet windows in the strategy HUD
     {
         UiRect screen{0.0f, 0.0f, 1920.0f, 1080.0f};
 
@@ -84,7 +84,7 @@ int main() {
 
         for (auto tab : all_tabs) {
             UiDrawList ui;
-            VictorianHudSystem::render_active_drawer(ui, tab, screen);
+            StrategyHudSystem::render_active_drawer(ui, tab, screen);
             assert(ui.vertices().size() > 0);
             assert(ui.batches().size() > 0);
             assert(ui.text_runs().size() > 0);
@@ -93,10 +93,10 @@ int main() {
         // Test Top Bar, Province Inspector, Event Modal with Wax Seal, and Tooltip
         UiDrawList ui_full;
         TopBarData tb;
-        VictorianHudSystem::render_top_bar(ui_full, tb, screen);
+        StrategyHudSystem::render_top_bar(ui_full, tb, screen);
 
         ProvinceInspectorData pi;
-        VictorianHudSystem::render_province_inspector(ui_full, pi, screen);
+        StrategyHudSystem::render_province_inspector(ui_full, pi, screen);
 
         EventModalState ev;
         ev.event_id = 99;
@@ -105,16 +105,16 @@ int main() {
         ev.description = "Innovations from across the globe gather under the crystal iron roof.";
         ev.choices.push_back({"Grant Imperial Patronage", "Prestige +50", 1});
         ev.choices.push_back({"Decline", "No effect", 2});
-        VictorianHudSystem::render_event_modal(ui_full, ev, screen);
+        StrategyHudSystem::render_event_modal(ui_full, ev, screen);
 
-        VictorianHudSystem::render_tooltip(ui_full, 400.0f, 300.0f, "Province #1: London", screen);
+        StrategyHudSystem::render_tooltip(ui_full, 400.0f, 300.0f, "Province #1: London", screen);
 
         assert(ui_full.vertices().size() > 0);
         assert(ui_full.text_runs().size() > 0);
 
-        std::cout << "  [PASS] All 7 Victorian Cabinet Windows, Top Bar, Inspector, and Wax Seal Event Modal\n";
+        std::cout << "  [PASS] All 7 Cabinet Windows, Top Bar, Inspector, and Event Modal\n";
     }
 
-    std::cout << "=== ALL MASTER-TIER VICTORIAN UI TESTS PASSED (100%) ===\n";
+    std::cout << "=== ALL STRATEGY UI TESTS PASSED (100%) ===\n";
     return 0;
 }

@@ -10,34 +10,34 @@
 using namespace core;
 
 int main() {
-    std::cout << "[Victorian Vector Map and UI Tests Starting]...\n";
+    std::cout << "[Vector Map and UI Tests Starting]...\n";
 
     // 1. Test VectorMapSystem polygons and shared edges
     {
-        VectorMapSystem victorian_map;
+        VectorMapSystem strategy_map;
 
         // Province 1 (Country 1, State 1)
         std::vector<VectorPoint> poly1_pts{{0.0f, 0.0f}, {100.0f, 0.0f}, {100.0f, 100.0f}, {0.0f, 100.0f}};
-        victorian_map.add_province_polygon(ProvinceId{1}, CountryId{1}, StateId{1}, poly1_pts);
+        strategy_map.add_province_polygon(ProvinceId{1}, CountryId{1}, StateId{1}, poly1_pts);
 
         // Province 2 (Country 1, State 2) - Shares x = 100.0 edge with Province 1
         std::vector<VectorPoint> poly2_pts{{100.0f, 0.0f}, {200.0f, 0.0f}, {200.0f, 100.0f}, {100.0f, 100.0f}};
-        victorian_map.add_province_polygon(ProvinceId{2}, CountryId{1}, StateId{2}, poly2_pts);
+        strategy_map.add_province_polygon(ProvinceId{2}, CountryId{1}, StateId{2}, poly2_pts);
 
         // Province 3 (Country 2, State 3) - Shares y = 100.0 edge with Province 1
         std::vector<VectorPoint> poly3_pts{{0.0f, 100.0f}, {100.0f, 100.0f}, {100.0f, 200.0f}, {0.0f, 200.0f}};
-        victorian_map.add_province_polygon(ProvinceId{3}, CountryId{2}, StateId{3}, poly3_pts);
+        strategy_map.add_province_polygon(ProvinceId{3}, CountryId{2}, StateId{3}, poly3_pts);
 
-        assert(victorian_map.polygon_count() == 3);
+        assert(strategy_map.polygon_count() == 3);
 
-        victorian_map.rebuild_shared_edges();
-        assert(victorian_map.edge_count() > 0);
+        strategy_map.rebuild_shared_edges();
+        assert(strategy_map.edge_count() > 0);
 
         bool found_country_border = false;
         bool found_state_border = false;
         bool found_coastline = false;
 
-        for (const auto& e : victorian_map.edges()) {
+        for (const auto& e : strategy_map.edges()) {
             if (e.border_class == VectorBorderClass::Country) {
                 found_country_border = true;
             } else if (e.border_class == VectorBorderClass::State) {
@@ -53,23 +53,23 @@ int main() {
 
         // Generate vector border mesh
         VectorBorderMesh border_mesh;
-        victorian_map.generate_border_mesh(border_mesh, 1.0f);
+        strategy_map.generate_border_mesh(border_mesh, 1.0f);
         assert(border_mesh.index_count() > 0);
         assert(border_mesh.vertex_count() > 0);
 
         // Generate coastline hachures
         VectorBorderMesh hachure_mesh;
-        victorian_map.generate_coastline_hachures(hachure_mesh, 3, 5.0f);
+        strategy_map.generate_coastline_hachures(hachure_mesh, 3, 5.0f);
         assert(hachure_mesh.vertex_count() > 0);
 
         // Generate nautical rhumb lines
         VectorBorderMesh rhumb_mesh;
-        victorian_map.generate_rhumb_lines(rhumb_mesh, {500.0f, 500.0f}, 400.0f, 16);
+        strategy_map.generate_rhumb_lines(rhumb_mesh, {500.0f, 500.0f}, 400.0f, 16);
         assert(rhumb_mesh.vertex_count() == 16 * 4);
 
         // Generate war-goal hatching ribbons
         VectorBorderMesh hatching_mesh;
-        victorian_map.generate_hatching_mesh(ProvinceId{1}, hatching_mesh, 0x808b261fu, 10.0f);
+        strategy_map.generate_hatching_mesh(ProvinceId{1}, hatching_mesh, 0x808b261fu, 10.0f);
         assert(hatching_mesh.vertex_count() > 0);
 
         // Test paper-to-3D terrain level of detail (blend)
@@ -110,7 +110,7 @@ int main() {
         std::cout << "  [PASS] PhysicalWaterEvaluator Gerstner waves, Fresnel, and Beer-Lambert\n";
     }
 
-    // 3. Test Victorian Wood & Parchment UI system
+    // 3. Test ornamental wood and parchment UI materials
     {
         UiDrawList ui;
 
@@ -153,9 +153,9 @@ int main() {
         assert(virtualize_variable_rows(overflowing_offsets, std::numeric_limits<float>::max(),
                                         std::numeric_limits<float>::max()).count == 0u);
 
-        std::cout << "  [PASS] Victorian Wood Panel, Parchment, Brass Button, and Ink Chart\n";
+        std::cout << "  [PASS] Wood Panel, Parchment, Brass Button, and Ink Chart\n";
     }
 
-    std::cout << "=== ALL VICTORIAN VECTOR MAP AND UI TESTS PASSED (100%) ===\n";
+    std::cout << "=== ALL VECTOR MAP AND UI TESTS PASSED (100%) ===\n";
     return 0;
 }

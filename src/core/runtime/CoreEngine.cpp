@@ -3,9 +3,15 @@
 #include <stdexcept>
 namespace core {
 CoreEngine::CoreEngine(CoreEngineConfig config):config_(config),jobs_(config.background_threads),economy_(definitions_),scripts_(ScriptRegistry::make_builtin()),gameplay_(scripts_),on_actions_(scripts_),ai_(scripts_),research_(scripts_),notifications_(scripts_){}
+void CoreEngine::set_new_game_content_hash(std::uint64_t content_hash){
+    if(clock_.tick_index()!=0u||world_.countries.size()!=0u||world_.markets.size()!=0u||
+       world_.buildings.size()!=0u||world_.pops.size()!=0u)
+        throw std::logic_error("content hash must be installed before authoritative world state");
+    config_.content_hash=content_hash;
+}
 void CoreEngine::initialize_economy(){economy_.rebuild_indices(world_);}
 std::uint64_t CoreEngine::queue_command(CommandType type, CountryId country, double value){const auto sequence=commands_.enqueue(type,country,value);replay_.record(clock_.tick_index()+1u,type,country,value);return sequence;}
-void CoreEngine::advance_tick(EconomyTickProfile* profile){commands_.apply_all(world_);clock_.advance_tick();(void)on_actions_.dispatch_due(world_,gameplay_,clock_.tick_index());if(clock_.is_daily_boundary()){gameplay_.update(world_,clock_.tick_index());(void)notifications_.update(clock_.tick_index());}if(clock_.is_weekly_boundary()){economy_.run_weekly(world_,jobs_,profile);const auto weekly_tick=clock_.day_index()/7u;(void)research_.run_weekly(world_,weekly_tick);research_.run_tech_spread_weekly(world_,weekly_tick);world_.grand_strategy.run_weekly_reference_tick(world_,!research_.has_finalized_content());(void)ai_.run_plans(world_,ScopeType::Country,4096u,clock_.tick_index());}if(clock_.is_yearly_boundary())replay_.checkpoint(clock_.tick_index(),engine_checksum());}
+void CoreEngine::advance_tick(EconomyTickProfile* profile){commands_.apply_all(world_);clock_.advance_tick();(void)on_actions_.dispatch_due(world_,gameplay_,clock_.tick_index());if(clock_.is_daily_boundary()){gameplay_.update(world_,clock_.tick_index());(void)notifications_.update(clock_.tick_index());}if(clock_.is_weekly_boundary()){economy_.run_weekly(world_,jobs_,profile);const auto weekly_tick=clock_.day_index()/7u;(void)research_.run_weekly(world_,weekly_tick);research_.run_tech_spread_weekly(world_,weekly_tick);world_.grand_strategy.run_weekly_reference_tick(world_,!research_.has_finalized_content(),weekly_tick);(void)ai_.run_plans(world_,ScopeType::Country,4096u,clock_.tick_index());}if(clock_.is_yearly_boundary())replay_.checkpoint(clock_.tick_index(),engine_checksum());}
 void CoreEngine::advance_ticks(std::uint64_t count){for(std::uint64_t i=0;i<count;++i)advance_tick();}
 SaveGameBlob CoreEngine::make_save() const{return SaveGameCodec::encode(world_,clock_,gameplay_,ai_,notifications_,on_actions_,config_.content_hash,config_.world_pack_hash);}
 void CoreEngine::restore(std::span<const std::byte> save){SaveGameCodec::decode(save,world_,clock_,gameplay_,ai_,notifications_,on_actions_,definitions_,config_.content_hash,config_.world_pack_hash);economy_.rebuild_indices(world_);commands_.clear();replay_.clear();}

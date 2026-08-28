@@ -68,7 +68,7 @@ public:
     void add_province_polygon(ProvinceId province, CountryId country, StateId state, std::span<const VectorPoint> contour);
     void rebuild_shared_edges();
 
-    // Generate Victorian antique parchment border geometry (illuminated gold country borders, iron gall ink lines)
+    // Generate antique parchment border geometry (illuminated gold country borders, iron gall ink lines)
     void generate_border_mesh(VectorBorderMesh& out_mesh, float zoom_scale = 1.0f) const;
 
     // Generate antique coastline wave hachures (parallel engraved wave lines around coast)

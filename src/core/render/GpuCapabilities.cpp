@@ -12,6 +12,10 @@ bool at_least_vulkan_13(const GpuCapabilities& gpu) noexcept {
     return gpu.api_major > 1u || (gpu.api_major == 1u && gpu.api_minor >= 3u);
 }
 
+bool at_least_vulkan_14(const GpuCapabilities& gpu) noexcept {
+    return gpu.api_major > 1u || (gpu.api_major == 1u && gpu.api_minor >= 4u);
+}
+
 void require(bool condition, const char* name, DeviceSelectionResult& out) {
     if (!condition) {
         out.missing_required.emplace_back(name);
@@ -39,7 +43,7 @@ DeviceSelectionResult evaluate_gpu(const GpuCapabilities& gpu) {
 
     if (gpu.type == GpuType::Discrete) out.score += 500;
     if (gpu.type == GpuType::Integrated) out.score += 100;
-    if (gpu.api_major > 1u || (gpu.api_major == 1u && gpu.api_minor >= 4u)) out.score += 150;
+    if (at_least_vulkan_14(gpu)) out.score += 150;
     if (gpu.descriptor_indexing) out.score += 250;
     if (gpu.draw_indirect_count) out.score += 200;
     if (gpu.sampler_anisotropy) out.score += 50;
@@ -55,7 +59,9 @@ DeviceSelectionResult evaluate_gpu(const GpuCapabilities& gpu) {
         out.tier = GpuTier::Recommended;
     }
     if (out.tier == GpuTier::Recommended && gpu.device_local_bytes >= 8ull * gib &&
-        gpu.dedicated_compute_queue && gpu.dedicated_transfer_queue && gpu.api_minor >= 4u) {
+        // Was `gpu.api_minor >= 4u` alone, which is also true for a hypothetical
+        // Vulkan 2.0 device reporting minor 0 — test the major version too.
+        gpu.dedicated_compute_queue && gpu.dedicated_transfer_queue && at_least_vulkan_14(gpu)) {
         out.tier = GpuTier::HighEnd;
     }
 

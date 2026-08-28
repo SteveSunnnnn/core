@@ -76,7 +76,7 @@ struct ScopeSelector {
 };
 
 // Generic iterator vocabulary: ordered/limit/order_by are engine-level
-// primitives, not Vic3-specific content. Ordering is driven by a scripted
+// primitives, not game-specific content. Ordering is driven by a scripted
 // value so any domain (economy, politics, warfare) can reuse the same
 // deterministic traversal without hard-coding domain keys.
 enum class ScopeIteratorMode : std::uint8_t { Any, Every, Random, Ordered };
@@ -490,4 +490,3 @@ private:
 };
 
 } // namespace core
-

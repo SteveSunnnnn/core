@@ -1,9 +1,9 @@
-#include "core/render/map/VictorianCartoucheRenderer.hpp"
+#include "core/render/map/MapDecorationRenderer.hpp"
 #include <cmath>
 
 namespace core {
 
-void VictorianCartoucheRenderer::render_tabletop_wood_frame(UiDrawList& ui, UiRect r, float thick) {
+void MapDecorationRenderer::render_tabletop_wood_frame(UiDrawList& ui, UiRect r, float thick) {
     if (r.w <= 0.0f || r.h <= 0.0f) return;
 
     // Outer Dark Mahogany Bevel
@@ -25,7 +25,7 @@ void VictorianCartoucheRenderer::render_tabletop_wood_frame(UiDrawList& ui, UiRe
     ui.quad({r.x + r.w - thick * 0.5f - 3.0f, r.y + r.h - thick * 0.5f - 3.0f, 6.0f, 6.0f}, 0xffe6c250u);
 }
 
-void VictorianCartoucheRenderer::render_brass_compass_rose(UiDrawList& ui, float cx, float cy, float radius) {
+void MapDecorationRenderer::render_brass_compass_rose(UiDrawList& ui, float cx, float cy, float radius) {
     if (radius <= 0.0f) return;
 
     // Brass outer ring
@@ -46,7 +46,7 @@ void VictorianCartoucheRenderer::render_brass_compass_rose(UiDrawList& ui, float
     ui.text("N", cx - 4.0f, cy - radius - 14.0f, 12.0f, 0xff8c261fu);
 }
 
-void VictorianCartoucheRenderer::render_corner_vignettes(UiDrawList& ui, UiRect map_rect, float sz) {
+void MapDecorationRenderer::render_corner_vignettes(UiDrawList& ui, UiRect map_rect, float sz) {
     if (sz <= 0.0f) return;
 
     // Top-Left Vignette

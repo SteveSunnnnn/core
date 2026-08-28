@@ -1,4 +1,4 @@
-# Core 1.0 Victorian Era Pulse & Action Hooks
+# Core 1.0 Pulse & Action Hooks
 on_action on_yearly_pulse {
     scope = country
     action = {

@@ -14,9 +14,11 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace core {
@@ -122,15 +124,63 @@ struct LivingVertex {
     }
 }
 
-[[nodiscard]] VkRect2D ui_scissor(UiRect rect, VkExtent2D extent) noexcept {
+[[nodiscard]] std::uint32_t decode_utf8(std::string_view text, std::size_t& index) noexcept {
+    if (index >= text.size()) return 0xfffdu;
+    const auto byte = static_cast<unsigned char>(text[index]);
+    if (byte < 0x80u) {
+        ++index;
+        return byte;
+    }
+    auto continuation = [&](std::size_t offset) {
+        return index + offset < text.size() &&
+               (static_cast<unsigned char>(text[index + offset]) & 0xc0u) == 0x80u;
+    };
+    if ((byte & 0xe0u) == 0xc0u && continuation(1)) {
+        const auto b1 = static_cast<unsigned char>(text[index + 1u]);
+        const auto cp = (static_cast<std::uint32_t>(byte & 0x1fu) << 6u) |
+                        static_cast<std::uint32_t>(b1 & 0x3fu);
+        index += 2u;
+        return cp >= 0x80u ? cp : 0xfffdu;
+    }
+    if ((byte & 0xf0u) == 0xe0u && continuation(1) && continuation(2)) {
+        const auto b1 = static_cast<unsigned char>(text[index + 1u]);
+        const auto b2 = static_cast<unsigned char>(text[index + 2u]);
+        const auto cp = (static_cast<std::uint32_t>(byte & 0x0fu) << 12u) |
+                        (static_cast<std::uint32_t>(b1 & 0x3fu) << 6u) |
+                        static_cast<std::uint32_t>(b2 & 0x3fu);
+        index += 3u;
+        return cp >= 0x800u && !(cp >= 0xd800u && cp <= 0xdfffu) ? cp : 0xfffdu;
+    }
+    if ((byte & 0xf8u) == 0xf0u && continuation(1) && continuation(2) && continuation(3)) {
+        const auto b1 = static_cast<unsigned char>(text[index + 1u]);
+        const auto b2 = static_cast<unsigned char>(text[index + 2u]);
+        const auto b3 = static_cast<unsigned char>(text[index + 3u]);
+        const auto cp = (static_cast<std::uint32_t>(byte & 0x07u) << 18u) |
+                        (static_cast<std::uint32_t>(b1 & 0x3fu) << 12u) |
+                        (static_cast<std::uint32_t>(b2 & 0x3fu) << 6u) |
+                        static_cast<std::uint32_t>(b3 & 0x3fu);
+        index += 4u;
+        return cp >= 0x10000u && cp <= 0x10ffffu ? cp : 0xfffdu;
+    }
+    ++index;
+    return 0xfffdu;
+}
+
+[[nodiscard]] VkRect2D ui_scissor(UiRect rect,
+                                  VkExtent2D extent,
+                                  float scale_x,
+                                  float scale_y) noexcept {
     const auto full = VkRect2D{{0, 0}, extent};
     if (!std::isfinite(rect.x) || !std::isfinite(rect.y) ||
         !std::isfinite(rect.w) || !std::isfinite(rect.h) ||
         rect.w <= 0.0f || rect.h <= 0.0f) return full;
-    const auto x0 = std::clamp(rect.x, 0.0f, static_cast<float>(extent.width));
-    const auto y0 = std::clamp(rect.y, 0.0f, static_cast<float>(extent.height));
-    const auto x1 = std::clamp(rect.x + rect.w, x0, static_cast<float>(extent.width));
-    const auto y1 = std::clamp(rect.y + rect.h, y0, static_cast<float>(extent.height));
+    if (!std::isfinite(scale_x) || !std::isfinite(scale_y) || scale_x <= 0.0f || scale_y <= 0.0f) {
+        return full;
+    }
+    const auto x0 = std::clamp(std::floor(rect.x * scale_x), 0.0f, static_cast<float>(extent.width));
+    const auto y0 = std::clamp(std::floor(rect.y * scale_y), 0.0f, static_cast<float>(extent.height));
+    const auto x1 = std::clamp(std::ceil((rect.x + rect.w) * scale_x), x0, static_cast<float>(extent.width));
+    const auto y1 = std::clamp(std::ceil((rect.y + rect.h) * scale_y), y0, static_cast<float>(extent.height));
     return VkRect2D{
         {static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0)},
         {static_cast<std::uint32_t>(x1 - x0), static_cast<std::uint32_t>(y1 - y0)}};
@@ -652,14 +702,110 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
             "vkCreatePipelineLayout(political)");
 
     VkPushConstantRange ui_push{};
-    ui_push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    ui_push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     ui_push.offset = 0;
-    ui_push.size = sizeof(float) * 2u;
+    ui_push.size = sizeof(float) * 4u;
     VkPipelineLayoutCreateInfo ui_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     ui_layout_info.pushConstantRangeCount = 1;
     ui_layout_info.pPushConstantRanges = &ui_push;
     vkcheck(vkCreatePipelineLayout(device_, &ui_layout_info, nullptr, &ui_layout_),
             "vkCreatePipelineLayout(ui)");
+
+    // Textured UI (the client-supplied font atlas and the paper world map)
+    // uses a separate pipeline layout so solid quads retain the original
+    // zero-descriptor hot path.  Both descriptor layouts are intentionally
+    // identical, which keeps the draw-list contract backend agnostic.
+    VkDescriptorSetLayoutBinding ui_texture_binding{};
+    ui_texture_binding.binding = 0;
+    ui_texture_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ui_texture_binding.descriptorCount = 1;
+    ui_texture_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo ui_texture_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    ui_texture_layout_info.bindingCount = 1;
+    ui_texture_layout_info.pBindings = &ui_texture_binding;
+    vkcheck(vkCreateDescriptorSetLayout(device_, &ui_texture_layout_info, nullptr, &ui_font_descriptor_layout_),
+            "vkCreateDescriptorSetLayout(ui font)");
+    vkcheck(vkCreateDescriptorSetLayout(device_, &ui_texture_layout_info, nullptr, &ui_world_map_descriptor_layout_),
+            "vkCreateDescriptorSetLayout(ui map)");
+    VkPipelineLayoutCreateInfo ui_textured_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    ui_textured_layout_info.setLayoutCount = 1;
+    ui_textured_layout_info.pSetLayouts = &ui_font_descriptor_layout_;
+    ui_textured_layout_info.pushConstantRangeCount = 1;
+    ui_textured_layout_info.pPushConstantRanges = &ui_push;
+    vkcheck(vkCreatePipelineLayout(device_, &ui_textured_layout_info, nullptr, &ui_textured_layout_),
+            "vkCreatePipelineLayout(ui textured)");
+
+    if (!ui_font_atlas_path_.empty()) {
+        load_ui_font_metrics();
+        create_ui_image(ui_font_atlas_path_, ui_font_image_, ui_font_image_memory_,
+                        ui_font_view_, ui_font_sampler_, ui_font_width_, ui_font_height_);
+        if (ui_font_metrics_ &&
+            (ui_font_metrics_->width() != ui_font_width_ || ui_font_metrics_->height() != ui_font_height_)) {
+            throw std::runtime_error("UI font metrics dimensions do not match atlas image");
+        }
+        if (ui_font_image_ != VK_NULL_HANDLE) {
+            VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+            VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            pool_info.maxSets = 1;
+            pool_info.poolSizeCount = 1;
+            pool_info.pPoolSizes = &pool_size;
+            vkcheck(vkCreateDescriptorPool(device_, &pool_info, nullptr, &ui_font_descriptor_pool_),
+                    "vkCreateDescriptorPool(ui font)");
+            VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            allocate.descriptorPool = ui_font_descriptor_pool_;
+            allocate.descriptorSetCount = 1;
+            allocate.pSetLayouts = &ui_font_descriptor_layout_;
+            vkcheck(vkAllocateDescriptorSets(device_, &allocate, &ui_font_descriptor_set_),
+                    "vkAllocateDescriptorSets(ui font)");
+            VkDescriptorImageInfo image_info{};
+            image_info.sampler = ui_font_sampler_;
+            image_info.imageView = ui_font_view_;
+            image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = ui_font_descriptor_set_;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo = &image_info;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
+    } else {
+        std::cerr << "CORE_UI_FONT_WARNING: no MSDF font package configured; "
+                     "using the diagnostics-only 5x7 fallback. Set CORE_UI_FONT_ATLAS "
+                     "and CORE_UI_FONT_METRICS for shipping UI.\n";
+    }
+    if (!ui_world_map_path_.empty()) {
+        std::uint32_t map_width = 0;
+        std::uint32_t map_height = 0;
+        create_ui_image(ui_world_map_path_, ui_world_map_image_, ui_world_map_memory_,
+                        ui_world_map_view_, ui_world_map_sampler_, map_width, map_height);
+        if (ui_world_map_image_ != VK_NULL_HANDLE) {
+            VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+            VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            pool_info.maxSets = 1;
+            pool_info.poolSizeCount = 1;
+            pool_info.pPoolSizes = &pool_size;
+            vkcheck(vkCreateDescriptorPool(device_, &pool_info, nullptr, &ui_world_map_descriptor_pool_),
+                    "vkCreateDescriptorPool(ui map)");
+            VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            allocate.descriptorPool = ui_world_map_descriptor_pool_;
+            allocate.descriptorSetCount = 1;
+            allocate.pSetLayouts = &ui_world_map_descriptor_layout_;
+            vkcheck(vkAllocateDescriptorSets(device_, &allocate, &ui_world_map_descriptor_set_),
+                    "vkAllocateDescriptorSets(ui map)");
+            VkDescriptorImageInfo image_info{};
+            image_info.sampler = ui_world_map_sampler_;
+            image_info.imageView = ui_world_map_view_;
+            image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = ui_world_map_descriptor_set_;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo = &image_info;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
+    }
 
     // 3D passes render into an MSAA RGBA16F target; the tonemap pass samples
     // the resolved copy and writes the (possibly non-sRGB) swapchain.
@@ -728,6 +874,8 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     const auto living_fragment = load_shader_module(shader_dir_ / "living.frag.spv");
     const auto ui_vertex = load_shader_module(shader_dir_ / "ui.vert.spv");
     const auto ui_fragment = load_shader_module(shader_dir_ / "ui.frag.spv");
+    const auto ui_textured_fragment = load_shader_module(shader_dir_ / "ui_textured.frag.spv");
+    const auto ui_msdf_fragment = load_shader_module(shader_dir_ / "ui_msdf.frag.spv");
 
     auto create_pipeline = [&](VkShaderModule vertex,
                                VkShaderModule fragment,
@@ -816,8 +964,12 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     ui_input.vertexAttributeDescriptionCount = 3;
     ui_input.pVertexAttributeDescriptions = ui_attributes;
     ui_pipeline_ = create_pipeline(ui_vertex, ui_fragment, ui_layout_, true, &ui_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
+    ui_textured_pipeline_ = create_pipeline(ui_vertex, ui_textured_fragment, ui_textured_layout_, true, &ui_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
+    ui_msdf_pipeline_ = create_pipeline(ui_vertex, ui_msdf_fragment, ui_textured_layout_, true, &ui_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
 
     vkDestroyShaderModule(device_, ui_fragment, nullptr);
+    vkDestroyShaderModule(device_, ui_textured_fragment, nullptr);
+    vkDestroyShaderModule(device_, ui_msdf_fragment, nullptr);
     vkDestroyShaderModule(device_, ui_vertex, nullptr);
     vkDestroyShaderModule(device_, living_fragment, nullptr);
     vkDestroyShaderModule(device_, living_vertex, nullptr);
@@ -851,6 +1003,259 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
                        ui_vertices.data(), ui_vertices_, ui_vertices_memory_);
 
     live_renderer_enabled_ = true;
+}
+
+void VulkanDesktopBackend::load_ui_font_metrics() {
+    ui_font_metrics_.reset();
+    ui_font_slots_.clear();
+    ui_font_cell_ = 0;
+    ui_font_columns_ = 0;
+
+    auto metrics_path = ui_font_metrics_path_;
+    if (metrics_path.empty()) {
+        metrics_path = ui_font_atlas_path_;
+        const auto stem = metrics_path.stem().string();
+        if (stem.size() > 6u && stem.ends_with("_atlas")) {
+            metrics_path.replace_filename(stem.substr(0u, stem.size() - 6u) + ".corefont");
+        } else {
+            metrics_path.replace_extension(".corefont");
+        }
+    }
+    if (std::filesystem::is_regular_file(metrics_path)) {
+        ui_font_metrics_ = FontAtlas::read(metrics_path);
+        return;
+    }
+
+    // Compatibility with the temporary fixed-cell atlas format used by early
+    // desktop previews. New content should always provide .corefont metrics so
+    // glyph bearings, advances and MSDF coverage survive DPI and font changes.
+    auto slot_path = ui_font_atlas_path_;
+    slot_path.replace_extension(".map");
+    if (std::filesystem::is_regular_file(slot_path)) {
+        load_font_slots(slot_path);
+        return;
+    }
+    throw std::runtime_error("UI font atlas has neither .corefont metrics nor a legacy .map sidecar");
+}
+
+void VulkanDesktopBackend::load_font_slots(const std::filesystem::path& path) {
+    ui_font_slots_.clear();
+    ui_font_width_ = 0;
+    ui_font_height_ = 0;
+    ui_font_cell_ = 0;
+    ui_font_columns_ = 0;
+    std::ifstream input(path);
+    if (!input) {
+        throw std::runtime_error("cannot open UI font slot table: " + path.string());
+    }
+    std::string line;
+    bool header = false;
+    while (std::getline(input, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream row(line);
+        if (!header) {
+            std::string magic;
+            row >> magic >> ui_font_width_ >> ui_font_height_ >> ui_font_cell_ >> ui_font_columns_;
+            if (magic != "CORE_FONT_ATLAS" || ui_font_width_ == 0u || ui_font_height_ == 0u ||
+                ui_font_cell_ == 0u || ui_font_columns_ == 0u) {
+                throw std::runtime_error("invalid UI font atlas header");
+            }
+            header = true;
+            const auto cell_width = static_cast<std::uint64_t>(ui_font_cell_) * ui_font_columns_;
+            if (cell_width > ui_font_width_ || ui_font_width_ % ui_font_cell_ != 0u ||
+                ui_font_height_ % ui_font_cell_ != 0u) {
+                throw std::runtime_error("UI font atlas grid exceeds image dimensions");
+            }
+            continue;
+        }
+        std::uint32_t codepoint = 0;
+        std::uint32_t slot = 0;
+        if (!(row >> codepoint >> slot) || codepoint > 0x10ffffu || slot >= 1'000'000u) {
+            throw std::runtime_error("invalid UI font atlas slot");
+        }
+        if (!ui_font_slots_.emplace(codepoint, slot).second) {
+            throw std::runtime_error("duplicate UI font atlas codepoint");
+        }
+        const auto slot_column = static_cast<std::uint64_t>(slot) % ui_font_columns_;
+        const auto slot_row = static_cast<std::uint64_t>(slot) / ui_font_columns_;
+        if ((slot_column + 1u) * ui_font_cell_ > ui_font_width_ ||
+            (slot_row + 1u) * ui_font_cell_ > ui_font_height_) {
+            throw std::runtime_error("UI font atlas slot exceeds image dimensions");
+        }
+    }
+    if (!header || ui_font_slots_.empty()) throw std::runtime_error("empty UI font atlas slot table");
+}
+
+void VulkanDesktopBackend::create_ui_image(const std::filesystem::path& path,
+                                           VkImage& image,
+                                           VkDeviceMemory& memory,
+                                           VkImageView& view,
+                                           VkSampler& sampler,
+                                           std::uint32_t& width,
+                                           std::uint32_t& height) {
+    image = VK_NULL_HANDLE;
+    memory = VK_NULL_HANDLE;
+    view = VK_NULL_HANDLE;
+    sampler = VK_NULL_HANDLE;
+    width = 0;
+    height = 0;
+    if (path.empty()) return;
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) throw std::runtime_error("cannot open UI image: " + path.string());
+    const auto end = input.tellg();
+    if (end < static_cast<std::streamoff>(24) ||
+        static_cast<std::uint64_t>(end) > 256ull * 1024ull * 1024ull) {
+        throw std::runtime_error("invalid UI image size: " + path.string());
+    }
+    std::vector<std::byte> bytes(static_cast<std::size_t>(end));
+    input.seekg(0, std::ios::beg);
+    input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!input) throw std::runtime_error("failed reading UI image: " + path.string());
+    auto read_u32 = [&](std::size_t offset) {
+        if (offset + 4u > bytes.size()) throw std::runtime_error("truncated UI image header");
+        return static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[offset])) |
+               (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[offset + 1u])) << 8u) |
+               (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[offset + 2u])) << 16u) |
+               (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[offset + 3u])) << 24u);
+    };
+    const char expected_magic[] = {'C','O','R','E','I','M','G','1'};
+    for (std::size_t i = 0; i < sizeof(expected_magic); ++i) {
+        if (std::to_integer<char>(bytes[i]) != expected_magic[i])
+            throw std::runtime_error("invalid UI image magic: " + path.string());
+    }
+    width = read_u32(8);
+    height = read_u32(12);
+    const auto payload_size = static_cast<std::uint64_t>(read_u32(16)) |
+                              (static_cast<std::uint64_t>(read_u32(20)) << 32u);
+    if (width == 0u || height == 0u || width > 8192u || height > 8192u ||
+        static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * 4ull != payload_size ||
+        payload_size > 256ull * 1024ull * 1024ull || bytes.size() != 24u + payload_size) {
+        throw std::runtime_error("invalid UI image dimensions or payload: " + path.string());
+    }
+    const auto* pixels = bytes.data() + 24u;
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+    try {
+        VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        buffer_info.size = static_cast<VkDeviceSize>(payload_size);
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        vkcheck(vkCreateBuffer(device_, &buffer_info, nullptr, &staging), "vkCreateBuffer(ui image staging)");
+        VkMemoryRequirements staging_requirements{};
+        vkGetBufferMemoryRequirements(device_, staging, &staging_requirements);
+        VkMemoryAllocateInfo staging_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        staging_allocate.allocationSize = staging_requirements.size;
+        staging_allocate.memoryTypeIndex = find_memory_type(
+            staging_requirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        vkcheck(vkAllocateMemory(device_, &staging_allocate, nullptr, &staging_memory),
+                "vkAllocateMemory(ui image staging)");
+        vkcheck(vkBindBufferMemory(device_, staging, staging_memory, 0),
+                "vkBindBufferMemory(ui image staging)");
+        void* mapped = nullptr;
+        vkcheck(vkMapMemory(device_, staging_memory, 0, staging_requirements.size, 0, &mapped),
+                "vkMapMemory(ui image staging)");
+        std::memcpy(mapped, pixels, static_cast<std::size_t>(payload_size));
+        vkUnmapMemory(device_, staging_memory);
+
+        VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image_info.imageType = VK_IMAGE_TYPE_2D;
+        image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+        image_info.extent = {width, height, 1u};
+        image_info.mipLevels = 1;
+        image_info.arrayLayers = 1;
+        image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+        image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        vkcheck(vkCreateImage(device_, &image_info, nullptr, &image), "vkCreateImage(ui image)");
+        VkMemoryRequirements image_requirements{};
+        vkGetImageMemoryRequirements(device_, image, &image_requirements);
+        VkMemoryAllocateInfo image_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        image_allocate.allocationSize = image_requirements.size;
+        image_allocate.memoryTypeIndex = find_memory_type(image_requirements.memoryTypeBits,
+                                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        vkcheck(vkAllocateMemory(device_, &image_allocate, nullptr, &memory),
+                "vkAllocateMemory(ui image)");
+        vkcheck(vkBindImageMemory(device_, image, memory, 0), "vkBindImageMemory(ui image)");
+
+        VkCommandBufferAllocateInfo command_allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        command_allocate.commandPool = command_pool_;
+        command_allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        command_allocate.commandBufferCount = 1;
+        VkCommandBuffer command = VK_NULL_HANDLE;
+        vkcheck(vkAllocateCommandBuffers(device_, &command_allocate, &command),
+                "vkAllocateCommandBuffers(ui image)");
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkcheck(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer(ui image)");
+        VkImageMemoryBarrier to_transfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        to_transfer.srcAccessMask = 0;
+        to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        to_transfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        to_transfer.image = image;
+        to_transfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {width, height, 1u};
+        vkCmdCopyBufferToImage(command, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        VkImageMemoryBarrier to_shader{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        to_shader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        to_shader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        to_shader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        to_shader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        to_shader.image = image;
+        to_shader.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_shader);
+        vkcheck(vkEndCommandBuffer(command), "vkEndCommandBuffer(ui image)");
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &command;
+        vkcheck(vkQueueSubmit(graphics_queue_, 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit(ui image)");
+        vkcheck(vkQueueWaitIdle(graphics_queue_), "vkQueueWaitIdle(ui image)");
+        vkFreeCommandBuffers(device_, command_pool_, 1, &command);
+
+        VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view_info.image = image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkcheck(vkCreateImageView(device_, &view_info, nullptr, &view), "vkCreateImageView(ui image)");
+        VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sampler_info.magFilter = VK_FILTER_LINEAR;
+        sampler_info.minFilter = VK_FILTER_LINEAR;
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.maxLod = 1.0f;
+        vkcheck(vkCreateSampler(device_, &sampler_info, nullptr, &sampler), "vkCreateSampler(ui image)");
+        vkDestroyBuffer(device_, staging, nullptr);
+        vkFreeMemory(device_, staging_memory, nullptr);
+    } catch (...) {
+        if (staging != VK_NULL_HANDLE) vkDestroyBuffer(device_, staging, nullptr);
+        if (staging_memory != VK_NULL_HANDLE) vkFreeMemory(device_, staging_memory, nullptr);
+        destroy_ui_image(image, memory, view, sampler);
+        throw;
+    }
+}
+
+void VulkanDesktopBackend::destroy_ui_image(VkImage& image, VkDeviceMemory& memory,
+                                            VkImageView& view, VkSampler& sampler) noexcept {
+    if (device_ == VK_NULL_HANDLE) return;
+    if (sampler != VK_NULL_HANDLE) vkDestroySampler(device_, sampler, nullptr);
+    if (view != VK_NULL_HANDLE) vkDestroyImageView(device_, view, nullptr);
+    if (image != VK_NULL_HANDLE) vkDestroyImage(device_, image, nullptr);
+    if (memory != VK_NULL_HANDLE) vkFreeMemory(device_, memory, nullptr);
+    sampler = VK_NULL_HANDLE;
+    view = VK_NULL_HANDLE;
+    image = VK_NULL_HANDLE;
+    memory = VK_NULL_HANDLE;
 }
 
 void VulkanDesktopBackend::destroy_live_validation_renderer() {
@@ -910,8 +1315,9 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
         living_vertices_memory_ = VK_NULL_HANDLE;
     }
 
-    const std::array<VkPipeline*, 5> pipelines{{
-        &ui_pipeline_, &living_pipeline_, &political_pipeline_, &ocean_pipeline_, &terrain_pipeline_}};
+    const std::array<VkPipeline*, 7> pipelines{{
+        &ui_pipeline_, &ui_textured_pipeline_, &ui_msdf_pipeline_, &living_pipeline_,
+        &political_pipeline_, &ocean_pipeline_, &terrain_pipeline_}};
     for (auto* pipeline : pipelines) {
         if (*pipeline != VK_NULL_HANDLE) {
             vkDestroyPipeline(device_, *pipeline, nullptr);
@@ -921,6 +1327,10 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
     if (ui_layout_ != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
         ui_layout_ = VK_NULL_HANDLE;
+    }
+    if (ui_textured_layout_ != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device_, ui_textured_layout_, nullptr);
+        ui_textured_layout_ = VK_NULL_HANDLE;
     }
     if (political_layout_ != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device_, political_layout_, nullptr);
@@ -947,6 +1357,29 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
         vkDestroySampler(device_, hdr_sampler_, nullptr);
         hdr_sampler_ = VK_NULL_HANDLE;
     }
+    if (ui_font_descriptor_pool_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device_, ui_font_descriptor_pool_, nullptr);
+        ui_font_descriptor_pool_ = VK_NULL_HANDLE;
+        ui_font_descriptor_set_ = VK_NULL_HANDLE;
+    }
+    if (ui_world_map_descriptor_pool_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device_, ui_world_map_descriptor_pool_, nullptr);
+        ui_world_map_descriptor_pool_ = VK_NULL_HANDLE;
+        ui_world_map_descriptor_set_ = VK_NULL_HANDLE;
+    }
+    if (ui_font_descriptor_layout_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device_, ui_font_descriptor_layout_, nullptr);
+        ui_font_descriptor_layout_ = VK_NULL_HANDLE;
+    }
+    if (ui_world_map_descriptor_layout_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device_, ui_world_map_descriptor_layout_, nullptr);
+        ui_world_map_descriptor_layout_ = VK_NULL_HANDLE;
+    }
+    destroy_ui_image(ui_font_image_, ui_font_image_memory_, ui_font_view_, ui_font_sampler_);
+    destroy_ui_image(ui_world_map_image_, ui_world_map_memory_, ui_world_map_view_, ui_world_map_sampler_);
+    ui_font_slots_.clear();
+    ui_font_metrics_.reset();
+    ui_font_width_ = ui_font_height_ = ui_font_cell_ = ui_font_columns_ = 0;
     live_renderer_enabled_ = false;
 }
 
@@ -954,6 +1387,14 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
     ui_staging_vertices_.clear();
     ui_staging_indices_.clear();
     ui_staging_batches_.clear();
+
+    int logical_width = 0;
+    int logical_height = 0;
+    if (window_ != nullptr) SDL_GetWindowSize(window_, &logical_width, &logical_height);
+    ui_logical_width_ = static_cast<float>(std::max(logical_width, 1));
+    ui_logical_height_ = static_cast<float>(std::max(logical_height, 1));
+    ui_scale_x_ = static_cast<float>(std::max(extent_.width, 1u)) / ui_logical_width_;
+    ui_scale_y_ = static_cast<float>(std::max(extent_.height, 1u)) / ui_logical_height_;
 
     const auto source_vertices = ui.vertices();
     const auto source_indices = ui.indices();
@@ -977,50 +1418,136 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
         }
         const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
         if (count != 0u) {
-            ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(batch.scissor, extent_)});
+            ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(batch.scissor, extent_, ui_scale_x_, ui_scale_y_),
+                                                     batch.kind, batch.texture});
         }
     }
 
-    // Text runs are intentionally kept out of UiDrawList's geometry arrays so
-    // other renderers can choose a real font atlas.  The desktop fallback uses
-    // a tiny deterministic 5x7 bitmap font, which keeps the validation shell
-    // readable without shipping a proprietary font or texture dependency.
+    // Text runs stay out of UiDrawList's geometry arrays so each backend can
+    // choose its own atlas. Production clients should install a .corefont MSDF
+    // package; the fixed-cell and 5x7 branches exist only for old tools.
     for (const auto& run : ui.text_runs()) {
         if (!std::isfinite(run.x) || !std::isfinite(run.y) || !std::isfinite(run.size) || run.size <= 0.0f) continue;
         const auto first = static_cast<std::uint32_t>(ui_staging_indices_.size());
-        const float cell = std::max(1.0f, run.size / 7.0f);
-        float x = run.x;
-        float y = run.y;
         const auto color = ui_gpu_vertex(UiVertex{0.0f, 0.0f, 0.0f, 0.0f, run.rgba});
-        for (const unsigned char byte : run.utf8) {
-            if (byte == '\n') {
-                x = run.x;
-                y += cell * 9.0f;
-                continue;
-            }
-            if (byte >= 0x80u) {
-                x += cell * 6.0f;
-                continue;
-            }
-            const auto rows = glyph_rows(static_cast<char>(byte));
-            for (std::uint32_t row = 0; row < rows.size(); ++row) {
-                for (std::uint32_t column = 0; column < 5u; ++column) {
-                    if ((rows[row] & static_cast<std::uint8_t>(1u << (4u - column))) == 0u) continue;
+        if (ui_font_image_ != VK_NULL_HANDLE && ui_font_metrics_) {
+            const auto& atlas = *ui_font_metrics_;
+            float pen_x = run.x;
+            float baseline_y = run.y + run.size * 0.82f;
+            std::size_t index = 0;
+            while (index < run.utf8.size()) {
+                const auto codepoint = decode_utf8(run.utf8, index);
+                if (codepoint == static_cast<std::uint32_t>('\n')) {
+                    pen_x = run.x;
+                    baseline_y += run.size * 1.25f;
+                    continue;
+                }
+                const FontGlyph* glyph = atlas.find(codepoint);
+                if (glyph == nullptr) glyph = atlas.find(0xfffdu);
+                if (glyph == nullptr) glyph = atlas.find(static_cast<std::uint32_t>('?'));
+                if (glyph == nullptr) continue;
+
+                const float x0 = pen_x + glyph->plane_left * run.size;
+                const float y0 = baseline_y - glyph->plane_top * run.size;
+                const float x1 = pen_x + glyph->plane_right * run.size;
+                const float y1 = baseline_y - glyph->plane_bottom * run.size;
+                if (x1 > x0 && y1 > y0) {
+                    const float u0 = glyph->atlas_left / static_cast<float>(atlas.width());
+                    const float u1 = glyph->atlas_right / static_cast<float>(atlas.width());
+                    const float v0 = 1.0f - glyph->atlas_top / static_cast<float>(atlas.height());
+                    const float v1 = 1.0f - glyph->atlas_bottom / static_cast<float>(atlas.height());
                     const auto base = static_cast<std::uint32_t>(ui_staging_vertices_.size());
-                    const float px = x + static_cast<float>(column) * cell;
-                    const float py = y + static_cast<float>(row) * cell;
-                    ui_staging_vertices_.push_back(UiGpuVertex{px, py, 0.0f, 0.0f, color.r, color.g, color.b, color.a});
-                    ui_staging_vertices_.push_back(UiGpuVertex{px + cell, py, 1.0f, 0.0f, color.r, color.g, color.b, color.a});
-                    ui_staging_vertices_.push_back(UiGpuVertex{px + cell, py + cell, 1.0f, 1.0f, color.r, color.g, color.b, color.a});
-                    ui_staging_vertices_.push_back(UiGpuVertex{px, py + cell, 0.0f, 1.0f, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{x0, y0, u0, v0, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{x1, y0, u1, v0, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{x1, y1, u1, v1, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{x0, y1, u0, v1, color.r, color.g, color.b, color.a});
                     ui_staging_indices_.insert(ui_staging_indices_.end(), {base + 0u, base + 1u, base + 2u,
                                                                              base + 0u, base + 2u, base + 3u});
                 }
+                pen_x += glyph->advance * run.size;
             }
-            x += cell * 6.0f;
+            const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
+            if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{
+                first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
+                UiBatchKind::MsdfText, atlas.texture_hash()});
+        } else if (ui_font_image_ != VK_NULL_HANDLE && ui_font_cell_ != 0u && ui_font_columns_ != 0u &&
+            !ui_font_slots_.empty()) {
+            float x = run.x;
+            float y = run.y;
+            std::size_t index = 0;
+            while (index < run.utf8.size()) {
+                const auto codepoint = decode_utf8(run.utf8, index);
+                if (codepoint == static_cast<std::uint32_t>('\n')) {
+                    x = run.x;
+                    y += run.size * 1.35f;
+                    continue;
+                }
+                auto slot = ui_font_slots_.find(codepoint);
+                if (slot == ui_font_slots_.end()) slot = ui_font_slots_.find(static_cast<std::uint32_t>('?'));
+                const bool wide = codepoint >= 0x2e80u;
+                const float advance = run.size * (wide ? 1.02f : 0.66f);
+                if (slot == ui_font_slots_.end()) {
+                    x += advance;
+                    continue;
+                }
+                const auto slot_index = slot->second;
+                const auto column = slot_index % ui_font_columns_;
+                const auto row_index = slot_index / ui_font_columns_;
+                const float u0 = static_cast<float>(column * ui_font_cell_) /
+                                 static_cast<float>(std::max(ui_font_width_, 1u));
+                const float v0 = static_cast<float>(row_index * ui_font_cell_) /
+                                 static_cast<float>(std::max(ui_font_height_, 1u));
+                const float u1 = static_cast<float>((column + 1u) * ui_font_cell_) /
+                                 static_cast<float>(std::max(ui_font_width_, 1u));
+                const float v1 = static_cast<float>((row_index + 1u) * ui_font_cell_) /
+                                 static_cast<float>(std::max(ui_font_height_, 1u));
+                const auto base = static_cast<std::uint32_t>(ui_staging_vertices_.size());
+                ui_staging_vertices_.push_back(UiGpuVertex{x, y, u0, v0, color.r, color.g, color.b, color.a});
+                ui_staging_vertices_.push_back(UiGpuVertex{x + advance, y, u1, v0, color.r, color.g, color.b, color.a});
+                ui_staging_vertices_.push_back(UiGpuVertex{x + advance, y + run.size, u1, v1, color.r, color.g, color.b, color.a});
+                ui_staging_vertices_.push_back(UiGpuVertex{x, y + run.size, u0, v1, color.r, color.g, color.b, color.a});
+                ui_staging_indices_.insert(ui_staging_indices_.end(), {base + 0u, base + 1u, base + 2u,
+                                                                         base + 0u, base + 2u, base + 3u});
+                x += advance;
+            }
+            const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
+            if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
+                                                                       UiBatchKind::Textured, kUiFontTextureKey});
+        } else {
+            const float cell = std::max(1.0f, run.size / 7.0f);
+            float x = run.x;
+            float y = run.y;
+            for (const unsigned char byte : run.utf8) {
+                if (byte == '\n') {
+                    x = run.x;
+                    y += cell * 9.0f;
+                    continue;
+                }
+                if (byte >= 0x80u) {
+                    x += cell * 6.0f;
+                    continue;
+                }
+                const auto rows = glyph_rows(static_cast<char>(byte));
+                for (std::uint32_t row = 0; row < rows.size(); ++row) {
+                    for (std::uint32_t column = 0; column < 5u; ++column) {
+                        if ((rows[row] & static_cast<std::uint8_t>(1u << (4u - column))) == 0u) continue;
+                        const auto base = static_cast<std::uint32_t>(ui_staging_vertices_.size());
+                        const float px = x + static_cast<float>(column) * cell;
+                        const float py = y + static_cast<float>(row) * cell;
+                        ui_staging_vertices_.push_back(UiGpuVertex{px, py, 0.0f, 0.0f, color.r, color.g, color.b, color.a});
+                        ui_staging_vertices_.push_back(UiGpuVertex{px + cell, py, 1.0f, 0.0f, color.r, color.g, color.b, color.a});
+                        ui_staging_vertices_.push_back(UiGpuVertex{px + cell, py + cell, 1.0f, 1.0f, color.r, color.g, color.b, color.a});
+                        ui_staging_vertices_.push_back(UiGpuVertex{px, py + cell, 0.0f, 1.0f, color.r, color.g, color.b, color.a});
+                        ui_staging_indices_.insert(ui_staging_indices_.end(), {base + 0u, base + 1u, base + 2u,
+                                                                                 base + 0u, base + 2u, base + 3u});
+                    }
+                }
+                x += cell * 6.0f;
+            }
+            const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
+            if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
+                                                                       UiBatchKind::Solid, 0});
         }
-        const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
-        if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(run.scissor, extent_)});
     }
 
     if (!ui_staging_vertices_.empty() && !ui_staging_indices_.empty() && device_ != VK_NULL_HANDLE) {
@@ -1101,18 +1628,44 @@ void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
     VkRect2D full{{0, 0}, extent_};
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &full);
-    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(command, 0, 1, &frame.vertex_buffer, &offset);
     vkCmdBindIndexBuffer(command, frame.index_buffer, 0, VK_INDEX_TYPE_UINT32);
-    const std::array<float, 2> inv_viewport{{
-        1.0f / static_cast<float>(std::max(extent_.width, 1u)),
-        1.0f / static_cast<float>(std::max(extent_.height, 1u))}};
-    vkCmdPushConstants(command, ui_layout_, VK_SHADER_STAGE_VERTEX_BIT,
-                       0, sizeof(inv_viewport), inv_viewport.data());
+    VkPipeline bound_pipeline = VK_NULL_HANDLE;
     for (const auto& batch : ui_staging_batches_) {
         if (batch.index_count == 0u) continue;
+        const bool world_texture = batch.kind == UiBatchKind::Textured &&
+                                   batch.texture == kUiWorldMapTextureKey &&
+                                   ui_world_map_descriptor_set_ != VK_NULL_HANDLE;
+        const bool msdf_text = batch.kind == UiBatchKind::MsdfText &&
+                               ui_font_metrics_.has_value() &&
+                               ui_font_descriptor_set_ != VK_NULL_HANDLE;
+        const bool font_texture = batch.kind == UiBatchKind::Textured &&
+                                  batch.texture == kUiFontTextureKey &&
+                                  ui_font_descriptor_set_ != VK_NULL_HANDLE;
+        const bool sampled = world_texture || font_texture || msdf_text;
+        const auto pipeline = msdf_text ? ui_msdf_pipeline_ :
+                              (sampled ? ui_textured_pipeline_ : ui_pipeline_);
+        if (pipeline == VK_NULL_HANDLE) continue;
+        if (pipeline != bound_pipeline) {
+            vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            const std::array<float, 4> ui_constants{{
+                1.0f / std::max(ui_logical_width_, 1.0f),
+                1.0f / std::max(ui_logical_height_, 1.0f),
+                msdf_text ? ui_font_metrics_->px_range() : 0.0f,
+                0.0f}};
+            const auto layout = sampled ? ui_textured_layout_ : ui_layout_;
+            vkCmdPushConstants(command, layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(ui_constants), ui_constants.data());
+            bound_pipeline = pipeline;
+        }
         vkCmdSetScissor(command, 0, 1, &batch.scissor);
+        if (sampled) {
+            const auto descriptor = world_texture ? ui_world_map_descriptor_set_ : ui_font_descriptor_set_;
+            vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_textured_layout_,
+                                    0, 1, &descriptor, 0, nullptr);
+        }
         vkCmdDrawIndexed(command, batch.index_count, 1, batch.first_index, 0, 0);
     }
 }

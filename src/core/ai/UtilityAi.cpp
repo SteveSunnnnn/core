@@ -1,5 +1,6 @@
 #include "core/ai/UtilityAi.hpp"
 #include "core/base/Hash.hpp"
+#include "core/economy/EconomyDefinitions.hpp"
 #include "core/scripting/ScopeResolver.hpp"
 #include "core/simulation/World.hpp"
 #include <algorithm>
@@ -393,7 +394,8 @@ std::vector<CountryId> StrategicAiEvaluator::pick_sway_targets(const World& worl
     return targets;
 }
 
-std::vector<GoodId> StrategicAiEvaluator::evaluate_economic_shortages(const World& world, CountryId country) {
+std::vector<GoodId> StrategicAiEvaluator::evaluate_economic_shortages(
+    const World& world, CountryId country, const EconomyDefinitions& definitions) {
     std::vector<GoodId> shortages;
     for (std::size_t mi = 0; mi < world.markets.size(); ++mi) {
         const auto market = MarketId{static_cast<MarketId::rep_type>(mi)};
@@ -401,7 +403,14 @@ std::vector<GoodId> StrategicAiEvaluator::evaluate_economic_shortages(const Worl
             const auto gc = world.markets.good_count();
             for (std::size_t gi = 0; gi < gc; ++gi) {
                 const auto good = GoodId{static_cast<GoodId::rep_type>(gi)};
-                if (world.markets.price(market, good) > 1000) {
+                // Judge scarcity against each good's own base price. The old
+                // flat `> 1000` test treated expensive industrial goods as
+                // permanently scarce (their base price alone clears it) while
+                // ignoring a cheap raw material that had risen tenfold.
+                const auto base = definitions.good(good).base_price_milli;
+                if (base <= 0) continue;
+                const auto price = world.markets.price(market, good);
+                if (price * 100 > base * 150) {
                     shortages.push_back(good);
                 }
             }

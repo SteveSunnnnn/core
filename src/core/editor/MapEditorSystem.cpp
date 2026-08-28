@@ -67,16 +67,27 @@ void MapEditorSystem::apply_brush_at(float world_x, float world_y) {
                 continue;
             }
 
-            const auto chunk_x = static_cast<std::uint32_t>(std::max(0, px) / 128);
-            const auto chunk_y = static_cast<std::uint32_t>(std::max(0, py) / 128);
-            const auto local_x = static_cast<std::uint32_t>(std::abs(px) % 128);
-            const auto local_y = static_cast<std::uint32_t>(std::abs(py) % 128);
+            // Floor division plus a non-negative modulo. World pixels go
+            // negative west/south of the origin, and the previous `max(0, px)`
+            // collapsed every negative coordinate onto page 0 while `abs(px)`
+            // mirrored the local coordinate, so strokes in the negative
+            // half-plane painted the wrong cells.
+            constexpr int kPageSize = 128;
+            const int chunk_x = px >= 0 ? px / kPageSize : -((kPageSize - 1 - px) / kPageSize);
+            const int chunk_y = py >= 0 ? py / kPageSize : -((kPageSize - 1 - py) / kPageSize);
+            const auto local_x = static_cast<std::uint32_t>(px - chunk_x * kPageSize);
+            const auto local_y = static_cast<std::uint32_t>(py - chunk_y * kPageSize);
 
             EditorCellEdit edit;
             edit.page_x = chunk_x;
             edit.page_y = chunk_y;
             edit.local_x = local_x;
             edit.local_y = local_y;
+            // NOTE: undo/redo swaps old_value with new_value. old_value is still
+            // a placeholder because this system holds no reference to the
+            // province page store and therefore cannot read the cell being
+            // overwritten; undoing will clear the cell until the store is
+            // wired in and the previous value is captured here.
             edit.old_value = 0;
             edit.new_value = static_cast<std::uint16_t>(brush_.paint_province.valid() ? brush_.paint_province.value() + 1 : 1);
             current_stroke_.edits.push_back(edit);

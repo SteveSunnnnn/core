@@ -3,7 +3,7 @@
 // Game content (countries, laws, goods, etc.) is never hard-coded here -
 // C++ only provides storage, stable identity, save/checksum/migration and
 // deterministic execution. This header closes the P0 gap identified in
-// docs/VIC3_JOMINI_GAP_MATRIX.md:6 without introducing Vic3-specific enums
+// the external capability audit without introducing game-specific enums
 // or balance into the engine core.
 //
 // Usage: each high-cardinality store (PopStore, BuildingStore, future
@@ -84,7 +84,10 @@ public:
     [[nodiscard]] std::uint64_t combined_checksum() const noexcept {
         // FNV-1a over per-store checksums in registration order - stable and
         // order-sensitive so store-insertion bugs are OOS-visible.
-        std::uint64_t h = 1469598103934665603ULL;
+        // Must match core::Fnv1a64's offset basis (see core/base/Hash.hpp).
+        // The constant here was missing a digit, which made combined_checksum()
+        // a different hash family from every per-store checksum.
+        std::uint64_t h = 14695981039346656037ULL;
         for (auto& s : stores_) {
             if (!s.checksum) continue;
             std::uint64_t c = s.checksum();

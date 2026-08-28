@@ -90,8 +90,21 @@ NotificationInstanceId NotificationRuntime::emit(std::uint32_t definition_id, co
         }
     }
 
-    if (instances_.size() >= max_instances ||
-        next_instance_id_ == NotificationInstanceId::invalid_value) return {};
+    if (next_instance_id_ == NotificationInstanceId::invalid_value) return {};
+    if (instances_.size() >= max_instances) {
+        // Nothing transitions out of Expired or Dismissed and nothing was ever
+        // removed, so the table grew without bound until it hit max_instances
+        // — after which emit() silently dropped every new notification for the
+        // rest of the game. Reclaim terminal instances instead. Read and
+        // Actioned are kept because the UI still queries them for history.
+        // This only runs at the cap, so a just-expired notification stays
+        // inspectable for the normal lifetime of a game.
+        std::erase_if(instances_, [](const NotificationInstance& instance) {
+            return instance.state == NotificationState::Expired ||
+                   instance.state == NotificationState::Dismissed;
+        });
+        if (instances_.size() >= max_instances) return {};
+    }
     NotificationInstance instance;
     instance.id = NotificationInstanceId{next_instance_id_++};
     instance.definition = definition_id;

@@ -574,6 +574,50 @@ void test_script_profiler() {
     assert(json.find("0x") != std::string::npos);
 }
 
+void test_ordered_iterator_condition_every_semantics() {
+    // `ordered_X` under a trigger must evaluate the block against *every*
+    // element in the sorted/limited window (matching the effect side), not
+    // short-circuit on the first match. Regression guard for the condition/effect
+    // semantic inconsistency.
+    RuntimeFixture fixture;
+    const auto registry = ScriptRegistry::make_builtin();
+    SymbolTable symbols;
+    const auto programs = compile(symbols, registry, R"CORE(
+        script ordered_all_match {
+            scope = country
+            trigger = {
+                ordered_pop = {
+                    limit = 2
+                    pop_size_above = 50
+                }
+            }
+        }
+        script ordered_window_has_nonmatch {
+            scope = country
+            trigger = {
+                ordered_pop = {
+                    limit = 2
+                    pop_size_above = 150
+                }
+            }
+        }
+    )CORE");
+    ScriptVm vm{registry, &programs};
+    auto context = ScriptExecutionContext::rooted(ScopeRef::country(fixture.first));
+    const auto* all_match = programs.find_script(symbols.find("ordered_all_match"));
+    const auto* nonmatch = programs.find_script(symbols.find("ordered_window_has_nonmatch"));
+    assert(all_match != nullptr && nonmatch != nullptr);
+
+    // Both pops (sizes 100 and 200) exceed 50, so the whole ordered window
+    // matches -> condition TRUE.
+    assert(vm.evaluate(*all_match, fixture.world, context));
+
+    // pop_size_above = 150: the size-100 pop does NOT match, so the window is
+    // not universally matching. Under "every" semantics this is FALSE; the old
+    // "any" behaviour would have returned TRUE (the size-200 pop did match).
+    assert(!vm.evaluate(*nonmatch, fixture.world, context));
+}
+
 } // namespace
 
 int main() {
@@ -588,6 +632,7 @@ int main() {
     test_dynamic_variable_map();
     test_weighted_random_list();
     test_script_profiler();
+    test_ordered_iterator_condition_every_semantics();
     std::cout << "CoreScript runtime tests passed\n";
 }
 

@@ -3,7 +3,7 @@
 #include "core/base/StrongId.hpp"
 #include "core/render/StrategicCamera.hpp"
 #include "core/simulation/GameClock.hpp"
-#include "core/ui/VictorianHudSystem.hpp"
+#include "game/ui/StrategyHudSystem.hpp"
 #include "core/ui/TooltipStack.hpp"
 #include "core/editor/MapEditorSystem.hpp"
 #include <cstdint>

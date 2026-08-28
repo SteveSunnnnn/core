@@ -35,6 +35,10 @@ int main(int argc, char** argv) {
                   << " scripted_values=" << definitions.scripts().value_count()
                   << " localization_languages=" << definitions.localization().language_count()
                   << " localization_entries=" << definitions.localization().entry_count()
+                  << " goods=" << definitions.goods().size()
+                  << " building_types=" << definitions.building_types().size()
+                  << " production_methods=" << definitions.production_methods().size()
+                  << " need_profiles=" << definitions.need_profiles().size()
                   << " technologies=" << definitions.research_content().technologies().size()
                   << " notifications=" << definitions.notification_content().notifications().size() << '\n'
                   << "compiled_bytes=" << definitions.scripts().instruction_bytes()

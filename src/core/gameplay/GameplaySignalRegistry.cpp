@@ -60,13 +60,16 @@ std::size_t GameplaySignalRegistry::emit(World&, ScriptedGameplayRuntime&,
     return subscribers_.size();
 }
 
-std::span<const GameplaySignalSubscriber> GameplaySignalRegistry::subscribers_for(GameplaySignalId id) const noexcept {
+std::vector<GameplaySignalSubscriber> GameplaySignalRegistry::subscribers_for(GameplaySignalId id) const {
     // Linear scan is fine: subscriber count is content-bounded (<10k)
     // and dispatch is not in the per-POP hot path.
-    static thread_local std::vector<GameplaySignalSubscriber> scratch;
-    scratch.clear();
-    for (auto& s : subscribers_) if (s.signal == id) scratch.push_back(s);
-    return scratch;
+    //
+    // Returned by value on purpose. This used to hand out a span over a
+    // thread_local scratch buffer, so the next call (or a nested one in the
+    // same iteration) silently invalidated the result still held by the caller.
+    std::vector<GameplaySignalSubscriber> out;
+    for (const auto& s : subscribers_) if (s.signal == id) out.push_back(s);
+    return out;
 }
 
 } // namespace core

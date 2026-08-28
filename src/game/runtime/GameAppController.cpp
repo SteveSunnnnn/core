@@ -1,4 +1,4 @@
-#include "core/runtime/GameAppController.hpp"
+#include "game/runtime/GameAppController.hpp"
 #include <algorithm>
 
 namespace core {
@@ -166,19 +166,19 @@ void GameAppController::render_hud(UiDrawList& ui, UiRect screen) {
     tb.date_script_key = "hud_format_date";
     // Other fields (country_name, ranking_title) are resolved by caller from
     // LocalizationStore / ScriptVm before render; engine never injects "British Empire".
-    VictorianHudSystem::render_top_bar(ui, tb, screen);
+    StrategyHudSystem::render_top_bar(ui, tb, screen);
 
-    VictorianHudSystem::render_left_navigation_ribbon(ui, active_tab_, screen);
-    VictorianHudSystem::render_active_drawer(ui, active_tab_, screen);
+    StrategyHudSystem::render_left_navigation_ribbon(ui, active_tab_, screen);
+    StrategyHudSystem::render_active_drawer(ui, active_tab_, screen);
 
     if (selected_province_) {
         ProvinceInspectorData pi;
         pi.province = *selected_province_;
-        VictorianHudSystem::render_province_inspector(ui, pi, screen);
+        StrategyHudSystem::render_province_inspector(ui, pi, screen);
     }
 
     if (!active_events_.empty()) {
-        VictorianHudSystem::render_event_modal(ui, active_events_.back(), screen);
+        StrategyHudSystem::render_event_modal(ui, active_events_.back(), screen);
     }
 
     // Render in-engine WYSIWYG map editor overlays if active

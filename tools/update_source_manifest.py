@@ -30,7 +30,6 @@ ROOT_FILES = (
     "README.md",
     "SECURITY.md",
     "THIRD_PARTY.md",
-    "VALIDATION_1_0.txt",
     "demo/README.md",
 )
 

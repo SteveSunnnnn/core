@@ -89,8 +89,8 @@ public:
     [[nodiscard]] static Vec3 aces_filmic(const Vec3& hdr_color, float exposure = 1.0f) noexcept;
     [[nodiscard]] static float aces_filmic(float x) noexcept;
 
-    // Victorian Oil Painting / Daguerreotype Film Color Grading
-    [[nodiscard]] static Vec3 apply_victorian_grading(const Vec3& ldr_color, float vignette_factor = 0.0f) noexcept;
+    // Warm archival painting / early-photography color grading
+    [[nodiscard]] static Vec3 apply_warm_archival_grading(const Vec3& ldr_color, float vignette_factor = 0.0f) noexcept;
 };
 
 } // namespace core

@@ -3,9 +3,13 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 #include <vulkan/vulkan.h>
 
+#include "core/ui/FontAtlas.hpp"
 #include "core/ui/StrategyUi.hpp"
 
 struct SDL_Window;
@@ -34,11 +38,19 @@ public:
     VulkanDesktopBackend& operator=(const VulkanDesktopBackend&) = delete;
 
     void initialize(SDL_Window* window, bool enable_validation);
+    // Optional client-owned UI resources.  Paths are read before initialize()
+    // and are never part of authoritative simulation state.
+    void set_ui_font_atlas(std::filesystem::path image_path,
+                           std::filesystem::path metrics_path = {}) {
+        ui_font_atlas_path_ = std::move(image_path);
+        ui_font_metrics_path_ = std::move(metrics_path);
+    }
+    void set_ui_world_map(std::filesystem::path path) { ui_world_map_path_ = std::move(path); }
     void draw_frame();
     // Stage a UI draw list for the next frame. Solid and polyline batches are
-    // rendered through the UI pipeline with per-batch scissor; textured/MSDF
-    // batches currently use a deterministic solid-color fallback until the
-    // backend's texture atlas is bound.
+    // rendered through the zero-descriptor UI pipeline; client-owned textured
+    // batches use stable keys and are sampled when their optional resources
+    // have been installed.
     void submit_ui(const UiDrawList& ui);
     void wait_idle();
     void write_report(const std::filesystem::path& path) const;
@@ -71,6 +83,17 @@ private:
 
     void create_live_validation_renderer();
     void destroy_live_validation_renderer();
+    void create_ui_image(const std::filesystem::path& path,
+                         VkImage& image,
+                         VkDeviceMemory& memory,
+                         VkImageView& view,
+                         VkSampler& sampler,
+                         std::uint32_t& width,
+                         std::uint32_t& height);
+    void destroy_ui_image(VkImage& image, VkDeviceMemory& memory,
+                          VkImageView& view, VkSampler& sampler) noexcept;
+    void load_font_slots(const std::filesystem::path& path);
+    void load_ui_font_metrics();
     void create_hdr_targets();
     void destroy_hdr_targets();
     void record_live_validation_draws(VkCommandBuffer command) const;
@@ -125,6 +148,9 @@ private:
     VkPipeline political_pipeline_ = VK_NULL_HANDLE;
     VkPipeline living_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline ui_textured_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline ui_msdf_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout ui_textured_layout_ = VK_NULL_HANDLE;
     VkPipeline tonemap_pipeline_ = VK_NULL_HANDLE;
     VkBuffer living_vertices_ = VK_NULL_HANDLE;
     VkDeviceMemory living_vertices_memory_ = VK_NULL_HANDLE;
@@ -132,6 +158,37 @@ private:
     VkDeviceMemory living_instance_memory_ = VK_NULL_HANDLE;
     VkBuffer ui_vertices_ = VK_NULL_HANDLE;
     VkDeviceMemory ui_vertices_memory_ = VK_NULL_HANDLE;
+
+    // Optional atlas-backed UI resources.  The map is an ordinary RGBA image;
+    // fonts prefer Core's MSDF metrics and retain the legacy fixed-cell map as
+    // a compatibility fallback for older client content.
+    std::filesystem::path ui_font_atlas_path_;
+    std::filesystem::path ui_font_metrics_path_;
+    std::filesystem::path ui_world_map_path_;
+    VkImage ui_font_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory ui_font_image_memory_ = VK_NULL_HANDLE;
+    VkImageView ui_font_view_ = VK_NULL_HANDLE;
+    VkSampler ui_font_sampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout ui_font_descriptor_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool ui_font_descriptor_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet ui_font_descriptor_set_ = VK_NULL_HANDLE;
+    VkImage ui_world_map_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory ui_world_map_memory_ = VK_NULL_HANDLE;
+    VkImageView ui_world_map_view_ = VK_NULL_HANDLE;
+    VkSampler ui_world_map_sampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout ui_world_map_descriptor_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool ui_world_map_descriptor_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet ui_world_map_descriptor_set_ = VK_NULL_HANDLE;
+    std::uint32_t ui_font_width_ = 0;
+    std::uint32_t ui_font_height_ = 0;
+    std::uint32_t ui_font_cell_ = 0;
+    std::uint32_t ui_font_columns_ = 0;
+    std::unordered_map<std::uint32_t, std::uint32_t> ui_font_slots_;
+    std::optional<FontAtlas> ui_font_metrics_;
+    float ui_logical_width_ = 1.0f;
+    float ui_logical_height_ = 1.0f;
+    float ui_scale_x_ = 1.0f;
+    float ui_scale_y_ = 1.0f;
 
     // HDR scene target with MSAA and its resolved 1x copy consumed by the
     // tonemap pass. Recreated with the swapchain extent.
@@ -154,6 +211,8 @@ private:
         std::uint32_t first_index;
         std::uint32_t index_count;
         VkRect2D scissor;
+        UiBatchKind kind = UiBatchKind::Solid;
+        std::uint64_t texture = 0;
     };
     struct UiFrameBuffer {
         VkBuffer vertex_buffer = VK_NULL_HANDLE;

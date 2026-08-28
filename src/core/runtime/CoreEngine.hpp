@@ -42,6 +42,9 @@ public:
     [[nodiscard]] NotificationRuntime& notifications() noexcept { return notifications_; }
     [[nodiscard]] const NotificationRuntime& notifications() const noexcept { return notifications_; }
 
+    // Content identity is fixed before authoritative state is created. Runtime
+    // bootstrap uses this to bind the effective script/mod hash into saves.
+    void set_new_game_content_hash(std::uint64_t content_hash);
     void initialize_economy();
     std::uint64_t queue_command(CommandType type, CountryId country, double value);
     void advance_tick(EconomyTickProfile* economy_profile = nullptr);

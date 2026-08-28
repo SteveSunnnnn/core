@@ -125,7 +125,7 @@ void UiDrawList::panel(UiRect rect, std::uint32_t background_rgba, std::uint32_t
         quad({rect.x + 1.0f, rect.y + 1.0f, rect.w - 2.0f, rect.h - 2.0f}, background_rgba, scissor);
 }
 
-// ── Master Victorian Wood Material ──
+// ── Ornamental Wood Material ──
 void UiDrawList::wood_panel(UiRect rect, UiRect scissor) {
     if (rect.w <= 0.0f || rect.h <= 0.0f) return;
 
@@ -162,7 +162,7 @@ void UiDrawList::wood_panel(UiRect rect, UiRect scissor) {
     }
 }
 
-// ── Master Victorian Aged Vellum Parchment Material ──
+// ── Aged Vellum Parchment Material ──
 void UiDrawList::parchment_panel(UiRect rect, UiRect scissor) {
     if (rect.w <= 0.0f || rect.h <= 0.0f) return;
 

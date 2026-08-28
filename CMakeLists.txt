@@ -20,6 +20,19 @@ option(CORE_BUILD_STRESS_TESTS "Build long-running Core stress tests" OFF)
 
 find_package(Threads REQUIRED)
 
+# Enforce the one-way product boundary at configure time. Engine code may
+# expose reusable capabilities, but it must never depend on this repository's
+# game client or authored content adapters.
+file(GLOB_RECURSE CORE_BOUNDARY_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.hpp")
+foreach(core_source IN LISTS CORE_BOUNDARY_SOURCES)
+    file(READ "${core_source}" core_source_text)
+    if(core_source_text MATCHES "#[ \t]*include[ \t]*[<\"]game/")
+        message(FATAL_ERROR "Engine/game boundary violation: ${core_source} includes game code")
+    endif()
+endforeach()
+
 add_library(core_runtime
     src/core/jobs/JobSystem.cpp
     src/core/economy/EconomyDefinitions.cpp
@@ -103,12 +116,12 @@ add_library(core_runtime
     src/core/save/AsyncSavePipeline.cpp
     src/core/save/ReplayJournal.cpp
     src/core/runtime/CoreEngine.cpp
+    src/core/runtime/GameContentRuntime.cpp
     src/core/runtime/DebugConsole.cpp
-    src/core/runtime/GameAppController.cpp
     src/core/localization/LocalizationStore.cpp
     src/core/ai/StrategicAiPlanner.cpp
     src/core/render/map/VectorMapTypography.cpp
-    src/core/render/map/VictorianCartoucheRenderer.cpp
+    src/core/render/map/MapDecorationRenderer.cpp
     src/core/warfare/LogisticsNetwork.cpp
     src/core/warfare/BattlePhaseSystem.cpp
     src/core/render/vfx/LivingMapVfxSystem.cpp
@@ -116,10 +129,10 @@ add_library(core_runtime
     src/core/assets/ArchitectureKit.cpp
     src/core/assets/Material.cpp
     src/core/ui/StrategyUi.cpp
-    src/core/ui/VictorianHudSystem.cpp
     src/core/ui/TooltipStack.cpp
     src/core/ui/ScriptedGui.cpp
     src/core/ui/ScriptedGuiRuntime.cpp
+    src/core/ui/ScriptedGuiPainter.cpp
     src/core/ui/FontAtlas.cpp
     src/core/editor/MapEditorSystem.cpp
     src/core/editor/GuiLayoutEditor.cpp
@@ -199,8 +212,18 @@ add_executable(core_economy_demo src/apps/core_economy_demo.cpp)
 target_link_libraries(core_economy_demo PRIVATE core_runtime)
 add_executable(core_living_demo src/apps/core_living_demo.cpp)
 target_link_libraries(core_living_demo PRIVATE core_runtime)
+add_library(core_game_ui STATIC
+    src/game/content/GameProjectConfig.cpp
+    src/game/runtime/GameAppController.cpp
+    src/game/ui/StrategyHudSystem.cpp
+    src/game/ui/GrandStrategyGui.cpp
+)
+target_include_directories(core_game_ui PUBLIC src)
+target_compile_features(core_game_ui PUBLIC cxx_std_23)
+target_link_libraries(core_game_ui PUBLIC core_runtime)
+core_apply_warnings(core_game_ui)
 add_executable(core_grand_strategy_demo src/apps/core_grand_strategy_demo.cpp)
-target_link_libraries(core_grand_strategy_demo PRIVATE core_runtime)
+target_link_libraries(core_grand_strategy_demo PRIVATE core_game_ui)
 if(UNIX AND NOT APPLE)
     target_link_libraries(core_runtime PRIVATE dl)
 endif()
@@ -219,10 +242,10 @@ if(CORE_BUILD_DESKTOP)
     FetchContent_MakeAvailable(SDL3)
     add_executable(core_desktop
         src/apps/core_desktop.cpp
-        src/core/platform/DesktopApp.cpp
+        src/game/platform/DesktopApp.cpp
         src/core/render/vulkan/VulkanDesktopBackend.cpp
     )
-    target_link_libraries(core_desktop PRIVATE core_runtime SDL3::SDL3 Vulkan::Vulkan)
+    target_link_libraries(core_desktop PRIVATE core_game_ui SDL3::SDL3 Vulkan::Vulkan)
     core_apply_warnings(core_desktop)
 endif()
 
@@ -321,7 +344,7 @@ if(CORE_BUILD_TESTS)
     target_link_libraries(core_grand_strategy_advanced_tests PRIVATE core_runtime)
     add_test(NAME core_grand_strategy_advanced_tests COMMAND core_grand_strategy_advanced_tests)
     add_executable(core_game_client_hud_tests tests/game_client_hud_tests.cpp)
-    target_link_libraries(core_game_client_hud_tests PRIVATE core_runtime)
+    target_link_libraries(core_game_client_hud_tests PRIVATE core_game_ui)
     add_test(NAME core_game_client_hud_tests COMMAND core_game_client_hud_tests)
     add_executable(core_tooltip_stack_tests tests/tooltip_stack_tests.cpp)
     target_link_libraries(core_tooltip_stack_tests PRIVATE core_runtime)

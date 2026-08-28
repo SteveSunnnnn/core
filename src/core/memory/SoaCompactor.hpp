@@ -77,8 +77,10 @@ void compact_column(std::vector<T>& column, const CompactionMap& map) {
     column.resize(map.compacted_size);
 }
 
-/// Apply compaction to the pool itself — resets free-list, resizes arrays.
+/// Apply compaction to the pool itself — permutes generations, resets
+/// free-list, resizes arrays.
 inline void apply_compaction(SlotPool& pool, const CompactionMap& map) {
+    pool.remap_generations(map.old_to_new, map.compacted_size);
     pool.apply_compaction(map.compacted_size);
 }
 

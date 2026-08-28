@@ -4,6 +4,7 @@
 #include "core/economy/EconomicTypes.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <vector>
@@ -240,6 +241,12 @@ class World;
 
 class GrandStrategyStore {
 public:
+    /// Sentinel meaning "derive the week from the internal counter". Callers
+    /// that own a GameClock (CoreEngine) should pass the real week instead so
+    /// the RNG stream stays aligned across save/load.
+    static constexpr std::uint64_t automatic_weekly_tick =
+        std::numeric_limits<std::uint64_t>::max();
+
 #define CORE_GS_ADD(NAME, ID, TYPE) ID add_##NAME(TYPE record); [[nodiscard]] std::span<const TYPE> NAME##s() const noexcept { return NAME##s_; }
     CORE_GS_ADD(technology, TechnologyId, TechnologyRecord)
     CORE_GS_ADD(law, LawId, LawRecord)
@@ -285,7 +292,7 @@ public:
     [[nodiscard]] std::span<DiplomaticRelationRecord> diplomatic_relations_mut() noexcept { return diplomatic_relations_; }
 
     void run_institutions_weekly(World& world);
-    void run_tech_spread_weekly(World& world);
+    void run_tech_spread_weekly(World& world, std::uint64_t weekly_tick = automatic_weekly_tick);
     void run_state_resistance_weekly(World& world);
 
 
@@ -356,7 +363,8 @@ public:
     void run_military_weekly(World& world);
     void run_weekly_reference_tick();
     void run_weekly_reference_tick(World& world,
-                                   bool include_legacy_technology_spread = true);
+                                   bool include_legacy_technology_spread = true,
+                                   std::uint64_t weekly_tick = automatic_weekly_tick);
     [[nodiscard]] bool validate(std::size_t countries, std::size_t markets, std::size_t provinces,
                                 std::size_t states, std::size_t buildings, std::size_t goods) const noexcept;
     [[nodiscard]] std::uint64_t checksum() const noexcept;
@@ -408,6 +416,12 @@ private:
     std::vector<CommanderRecord> commanders_;
     std::vector<SeaZoneRecord> sea_zones_;
     std::vector<NavalBattleRecord> naval_battles_;
+
+    /// Week counter feeding the technology-spread roll. Mirrors
+    /// ResearchSystem::weekly_ticks_: CoreEngine pins it to the persisted
+    /// GameClock week so a reloaded save keeps drawing new samples, and the
+    /// automatic fallback keeps advancing it for callers that omit it.
+    std::uint64_t weekly_ticks_ = 0u;
 };
 
 } // namespace core

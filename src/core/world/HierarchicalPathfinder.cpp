@@ -86,13 +86,17 @@ void HierarchicalMapGraph::extract_portals() {
     for (std::uint32_t pi = 0; pi < p_count; ++pi) {
         const ProvinceId p{pi};
         const auto s_local = province_states_[pi];
-        if (!s_local.valid()) continue;
+        // Must use the same cap as the max_state_id scan above: state_portal_
+        // offsets_ is sized from max_state_id, so a state id at or above the
+        // cap would index past the end of that array (here and later in
+        // state_portals()).
+        if (!s_local.valid() || s_local.value() >= 1'000'000u) continue;
 
         for (const auto& neighbor : adjacency_->neighbors(p)) {
             const auto ni = neighbor.province;
             if (ni >= p_count) continue;
             const auto s_remote = province_states_[ni];
-            if (!s_remote.valid() || s_remote == s_local) continue;
+            if (!s_remote.valid() || s_remote == s_local || s_remote.value() >= 1'000'000u) continue;
             if ((neighbor.flags & AdjacencyImpassable) != 0) continue;
 
             Portal portal;

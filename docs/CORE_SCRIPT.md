@@ -2,7 +2,7 @@
 
 CoreScript is Core's typed, moddable content language. This document describes the
 current Core 1.0 development implementation; it does not declare a new product
-version, and it does not claim full Jomini parity.
+version, and it does not claim complete grand-strategy content-runtime coverage.
 
 Source text is parsed and linked during content loading. Simulation code receives
 compact primitive IDs, stable keys and compiled instruction trees, so primitive
@@ -189,7 +189,7 @@ live event context followed by identical continuation.
 ## Remaining major gaps
 
 CoreScript is a substantial foundation, but it is not yet a complete general
-Clausewitz/Jomini content runtime. Important missing work includes:
+a production-scale grand-strategy content runtime. Important missing work includes:
 
 - broader scope registration for politics, diplomacy, warfare, companies, characters
   and other domain objects;

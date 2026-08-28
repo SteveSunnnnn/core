@@ -890,6 +890,28 @@ static void test_material_closed_loop_conservation() {
     assert(serial_world.checksum() == parallel_world.checksum());
 }
 
+static void test_manual_convertibility_toggle() {
+    CurrencyStore store;
+    const CurrencyKey gold = economy_stable_key("currency.gold_toggle");
+    const CurrencyKey fiat = economy_stable_key("currency.fiat_toggle");
+    store.register_currency(gold, "Gold Toggle", MonetaryStandard::GoldStandard, 1000, 15500, 1'000'000);
+    store.register_currency(fiat, "Fiat Toggle", MonetaryStandard::FiatFloating, 1000, 15500, 1'000'000);
+
+    // Gold standard currency: manual suspend then resume via the shared helper.
+    assert(!store.convertibility_suspended(gold));
+    assert(store.toggle_convertibility(gold));   // suspends
+    assert(store.convertibility_suspended(gold));
+    assert(store.toggle_convertibility(gold));   // resumes
+    assert(!store.convertibility_suspended(gold));
+
+    // Fiat currency has no specie to suspend: the manual toggle is a no-op, and
+    // an unknown currency is likewise a no-op.
+    assert(!store.convertibility_suspended(fiat));
+    assert(!store.toggle_convertibility(fiat));
+    assert(!store.convertibility_suspended(fiat));
+    assert(!store.toggle_convertibility(economy_stable_key("currency.nonexistent")));
+}
+
 int main() {
     test_fixed_point_math();
     test_headline_tax_rate_drives_income_tax_policy();
@@ -905,6 +927,7 @@ int main() {
     test_monetary_sovereignty_and_seigniorage();
     test_bimetallism_and_greshams_law();
     test_gdp_real_numeraire_and_domestic_wages();
+    test_manual_convertibility_toggle();
     test_gold_points_specie_arbitrage_and_drain();
     test_sovereign_debt_issuance_credit_rating_and_default();
     test_bank_balance_sheet_credit_service_and_default();

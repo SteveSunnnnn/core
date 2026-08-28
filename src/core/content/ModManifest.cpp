@@ -150,6 +150,11 @@ void set_error(std::string* error, std::string message) {
     std::string result;
     result.reserve(raw.size());
     bool escaped = false;
+    // Track the closing quote explicitly. The old test inspected raw[i - 1]
+    // after the loop, which for a lone `"` never entered the loop and happened
+    // to point at the opening quote — so it was accepted as an empty value and
+    // failed later with a misleading "invalid mod id".
+    bool closed = false;
     std::size_t i = 1u;
     for (; i < raw.size(); ++i) {
         const char c = raw[i];
@@ -169,12 +174,13 @@ void set_error(std::string* error, std::string message) {
             escaped = true;
         } else if (c == '"') {
             ++i;
+            closed = true;
             break;
         } else {
             result.push_back(c);
         }
     }
-    if (escaped || i > raw.size() || raw.empty() || raw[i - 1u] != '"') {
+    if (escaped || !closed) {
         error = "unterminated quoted value";
         return std::nullopt;
     }

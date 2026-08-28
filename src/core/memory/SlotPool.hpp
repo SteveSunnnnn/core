@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <bit>
 #include <cassert>
 #include <cstddef>
@@ -151,6 +152,26 @@ public:
     [[nodiscard]] bool should_compact() const noexcept {
         if (free_list_.size() <= 1024) return false;
         return free_list_.size() > (alive_count_ / 4);
+    }
+
+    /// Permute generation counters so each survivor keeps its identity after
+    /// external compaction. Must be called BEFORE apply_compaction(), while
+    /// generations_ still holds the pre-compaction layout.
+    ///
+    /// Without this, `generations_` is merely truncated: slot N keeps the
+    /// generation of whatever used to live at index N. A handle minted after
+    /// compaction then carries a foreign generation, so stale handles issued
+    /// before compaction are revived (ABA) while live handles are rejected.
+    void remap_generations(std::span<const std::uint32_t> old_to_new, std::size_t new_size) {
+        if (new_size > generations_.size()) return;
+        std::vector<std::uint32_t> remapped(new_size, 1u);
+        const std::size_t old_size = std::min(old_to_new.size(), generations_.size());
+        for (std::size_t old_index = 0; old_index < old_size; ++old_index) {
+            const auto dst = old_to_new[old_index];
+            if (dst == 0xFFFFFFFFu || dst >= new_size) continue;
+            remapped[dst] = generations_[old_index];
+        }
+        generations_.swap(remapped);
     }
 
     /// Reset pool state after external compaction shrinks the arrays.

@@ -56,7 +56,7 @@ public:
                      GameplaySignalId signal, std::uint64_t tick) const;
 
     [[nodiscard]] std::span<const GameplaySignalDefinition> signals() const noexcept { return signals_; }
-    [[nodiscard]] std::span<const GameplaySignalSubscriber> subscribers_for(GameplaySignalId id) const noexcept;
+    [[nodiscard]] std::vector<GameplaySignalSubscriber> subscribers_for(GameplaySignalId id) const;
 
     void clear() noexcept { signals_.clear(); subscribers_.clear(); lookup_.clear(); }
 

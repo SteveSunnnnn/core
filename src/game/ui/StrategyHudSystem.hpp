@@ -47,7 +47,18 @@ struct TopBarData {
     std::string date_loc_key = "DATE_FORMAT";
     std::uint8_t current_speed = 1;
     bool is_paused = true;
+
+    // Gold/silver (specie) convertibility manual switch, sourced by the host
+    // app from the player country's primary currency.
+    bool has_player_currency = false;                 // player resolves to a currency
+    bool currency_metallic = false;                   // standard is Gold/Silver/Bimetallism
+    bool currency_convertibility_suspended = false;   // current suspension state
 };
+
+// Stable hit-region id for the manual specie-convertibility toggle button drawn
+// in the top bar. Host apps match this id from `UiDrawList::hit_test` to apply
+// the toggle. Distinct from any other HUD hit region.
+inline constexpr std::uint64_t kHudConvertibilityToggleHit = 0x54534C54'00000001ull;
 
 struct ProvinceInspectorData {
     ProvinceId province{};
@@ -98,9 +109,9 @@ struct EventModalState {
     bool is_open = false;
 };
 
-class VictorianHudSystem {
+class StrategyHudSystem {
 public:
-    VictorianHudSystem() = default;
+    StrategyHudSystem() = default;
 
     static void render_top_bar(UiDrawList& ui, const TopBarData& data, UiRect screen_rect);
     static void render_left_navigation_ribbon(UiDrawList& ui, ActiveHudTab current_tab, UiRect screen_rect);

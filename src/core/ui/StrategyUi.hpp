@@ -18,6 +18,11 @@ struct UiInsets { float left=0, top=0, right=0, bottom=0; };
 struct UiNineSlice { UiRect outer_uv{0,0,1,1}; UiRect inner_uv{0,0,1,1}; UiInsets border{}; };
 struct UiVertex { float x=0, y=0, u=0, v=0; std::uint32_t rgba=0xffffffffu; };
 enum class UiBatchKind : std::uint8_t { Solid, Textured, MsdfText, Polyline };
+// Stable client-owned texture key reserved for a full-world political map.
+// Render clients may bind a different image to this key without making the
+// simulation or UI draw-list data depend on a particular game/content pack.
+inline constexpr std::uint64_t kUiWorldMapTextureKey = 0x434f5245574d4150ull; // "COREWMAP"
+inline constexpr std::uint64_t kUiFontTextureKey = 0x434f5245464e54ull; // "COREFNT"
 struct UiBatch { UiBatchKind kind=UiBatchKind::Solid; std::uint32_t first_index=0, index_count=0; std::uint64_t texture=0; UiRect scissor{}; };
 struct UiHitRegion { std::uint64_t id=0; UiRect rect{}; };
 struct UiTextRun { std::string utf8; float x=0, y=0, size=16; std::uint32_t rgba=0xffffffffu; UiRect scissor{}; };
@@ -43,7 +48,7 @@ public:
     void nine_slice(UiRect rect, const UiNineSlice& slice, std::uint32_t rgba,
                     std::uint64_t texture, UiRect scissor = {});
 
-    // Master-Tier Victorian Materials & Panels
+    // Ornamental strategy-game materials and panels
     void panel(UiRect rect, std::uint32_t background_rgba, std::uint32_t border_rgba,
                std::uint32_t shadow_rgba = 0x40000000u, float shadow_offset = 3.0f,
                UiRect scissor = {});

@@ -34,9 +34,9 @@ it is not a claim of drop-in parity.
   deterministic checksums, and malformed-input regression coverage.
 
 For verified behavior and known boundaries, read
-[`docs/FINAL_ENGINE_AUDIT.md`](docs/FINAL_ENGINE_AUDIT.md). The broader
-capability comparison is maintained in
-[`docs/VIC3_JOMINI_GAP_MATRIX.md`](docs/VIC3_JOMINI_GAP_MATRIX.md).
+[`docs/FINAL_ENGINE_AUDIT.md`](docs/FINAL_ENGINE_AUDIT.md). The engine/game
+layering rules are described in
+[`docs/ENGINE_GAME_BOUNDARY_AUDIT.md`](docs/ENGINE_GAME_BOUNDARY_AUDIT.md).
 
 ## Requirements
 
