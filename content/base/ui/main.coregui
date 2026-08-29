@@ -1,50 +1,165 @@
-# Game-owned scripted page. Core compiles generic widgets and bindings only.
+# Grand Strategy HUD presentation. Gameplay data and commands stay in the
+# game-owned provider; this file owns composition, icon roles and hierarchy.
 
-ui_text hud.country        { en = "Country"          zh_cn = "国家" }
-ui_text hud.rank           { en = "Power rank"       zh_cn = "强国排名" }
-ui_text hud.treasury       { en = "Treasury"         zh_cn = "国库" }
-ui_text hud.balance        { en = "Weekly balance"   zh_cn = "每周结余" }
-ui_text hud.population     { en = "Population"       zh_cn = "人口" }
-ui_text hud.gdp            { en = "Gross domestic product" zh_cn = "国内生产总值" }
-ui_text hud.date           { en = "Date"             zh_cn = "日期" }
-ui_text hud.nav.politics   { en = "POL"              zh_cn = "政" }
-ui_text hud.nav.buildings  { en = "BLD"              zh_cn = "建" }
-ui_text hud.nav.market     { en = "MKT"              zh_cn = "市" }
-ui_text hud.nav.population { en = "POP"              zh_cn = "民" }
-ui_text hud.nav.technology { en = "TEC"              zh_cn = "科" }
-ui_text hud.nav.military   { en = "MIL"              zh_cn = "军" }
-ui_text hud.nav.diplomacy  { en = "DIP"              zh_cn = "外" }
-ui_text hud.page.politics  { en = "Politics"         zh_cn = "政治" }
-ui_text hud.page.buildings { en = "Buildings"        zh_cn = "建筑" }
-ui_text hud.page.market    { en = "National Market"  zh_cn = "全国市场" }
-ui_text hud.page.population { en = "Population"      zh_cn = "人口" }
-ui_text hud.page.technology { en = "Technology"      zh_cn = "科技" }
-ui_text hud.page.military  { en = "Military"         zh_cn = "军事" }
-ui_text hud.page.diplomacy { en = "Diplomacy"        zh_cn = "外交" }
-ui_text hud.politics.government { en = "Government overview" zh_cn = "政府概览" }
-ui_text hud.politics.legitimacy { en = "Legitimacy and institutions" zh_cn = "合法性与机构" }
-ui_text hud.politics.movements { en = "Political movements" zh_cn = "政治运动" }
-ui_text hud.buildings.queue { en = "Construction queue" zh_cn = "建造队列" }
-ui_text hud.buildings.production { en = "Production methods" zh_cn = "生产方式" }
-ui_text hud.buildings.investment { en = "Investment pool" zh_cn = "投资池" }
-ui_text hud.market.goods { en = "Goods and prices" zh_cn = "商品与价格" }
-ui_text hud.market.routes { en = "Trade routes" zh_cn = "贸易路线" }
-ui_text hud.market.balance { en = "Market balance and impact" zh_cn = "市场平衡与影响" }
-ui_text hud.population.strata { en = "Population strata" zh_cn = "人口阶层" }
-ui_text hud.population.needs { en = "Income, taxes and needs" zh_cn = "收入、税收与需求" }
-ui_text hud.population.trends { en = "Loyalists and radicals" zh_cn = "效忠派与激进派" }
-ui_text hud.technology.research { en = "Current research" zh_cn = "当前研究" }
-ui_text hud.technology.tree { en = "Production · Military · Society" zh_cn = "生产 · 军事 · 社会" }
-ui_text hud.military.army { en = "Army and mobilization" zh_cn = "陆军与动员" }
-ui_text hud.military.fronts { en = "Fronts and headquarters" zh_cn = "战线与司令部" }
-ui_text hud.diplomacy.plays { en = "Diplomatic plays" zh_cn = "外交博弈" }
-ui_text hud.diplomacy.relations { en = "Relations and interests" zh_cn = "关系与利益" }
-ui_text hud.selection { en = "Selected location" zh_cn = "所选地区" }
-ui_text hud.state { en = "State" zh_cn = "地区" }
-ui_text hud.infrastructure { en = "Infrastructure" zh_cn = "基础设施" }
-ui_text hud.none_selected { en = "No location selected" zh_cn = "未选择地区" }
-ui_text hud.situation { en = "Current situation" zh_cn = "当前局势" }
-ui_text hud.journal { en = "Journal and notifications" zh_cn = "日志与通知" }
+ui_text hud.country        { en = "PLAYER NATION"      zh_cn = "玩家国家" }
+ui_text hud.rank           { en = "RANK"              zh_cn = "排名" }
+ui_text hud.treasury       { en = "TREASURY"          zh_cn = "国库" }
+ui_text hud.balance        { en = "WEEKLY"            zh_cn = "每周结余" }
+ui_text hud.population     { en = "POPULATION"        zh_cn = "人口" }
+ui_text hud.gdp            { en = "GDP"               zh_cn = "国内生产总值" }
+ui_text hud.time           { en = "NATIONAL TIME"     zh_cn = "国家时间" }
+
+ui_text hud.tip.country    { en = "Player Nation|National identity and diplomatic status" zh_cn = "玩家国家|国家身份与外交地位" }
+ui_text hud.tip.rank       { en = "Power Rank|Standing among the world's recognized powers" zh_cn = "强国排名|在世界列强中的地位" }
+ui_text hud.tip.treasury   { en = "Treasury|Current national treasury balance" zh_cn = "国库|当前国家财政余额" }
+ui_text hud.tip.balance    { en = "Weekly Balance|Projected weekly income after expenses" zh_cn = "每周结余|扣除支出后的预计周收入" }
+ui_text hud.tip.population { en = "Population|Total population of the player nation" zh_cn = "人口|玩家国家的总人口" }
+ui_text hud.tip.gdp        { en = "Gross Domestic Product|Estimated value of national output" zh_cn = "国内生产总值|国家产出的估算价值" }
+ui_text hud.tip.time       { en = "Date and Game Speed|Pause or select simulation speed" zh_cn = "日期与游戏速度|暂停或选择模拟速度" }
+
+ui_text hud.nav.politics   { en = "Politics"          zh_cn = "政治" }
+ui_text hud.nav.buildings  { en = "Buildings"         zh_cn = "建筑" }
+ui_text hud.nav.market     { en = "Market"            zh_cn = "市场" }
+ui_text hud.nav.economy    { en = "Economy"           zh_cn = "经济" }
+ui_text hud.nav.population { en = "Population"        zh_cn = "人口" }
+ui_text hud.nav.technology { en = "Technology"        zh_cn = "科技" }
+ui_text hud.nav.military   { en = "Military"          zh_cn = "军事" }
+ui_text hud.nav.diplomacy  { en = "Diplomacy"         zh_cn = "外交" }
+ui_text hud.tip.politics   { en = "Politics|Government, institutions and political movements" zh_cn = "政治|政府、机构与政治运动" }
+ui_text hud.tip.buildings  { en = "Buildings|Construction and national production" zh_cn = "建筑|建设与国家生产" }
+ui_text hud.tip.market     { en = "Market|Goods, prices and trade routes" zh_cn = "市场|商品、价格与贸易路线" }
+ui_text hud.tip.economy    { en = "Economy|Treasury, currency, banking and sovereign credit" zh_cn = "经济|国库、货币、银行与主权信用" }
+ui_text hud.tip.population { en = "Population|Strata, needs and political sentiment" zh_cn = "人口|阶层、需求与政治态度" }
+ui_text hud.tip.technology { en = "Technology|Research and innovation" zh_cn = "科技|研究与创新" }
+ui_text hud.tip.military   { en = "Military|Armed forces, fronts and mobilization" zh_cn = "军事|武装力量、战线与动员" }
+ui_text hud.tip.diplomacy  { en = "Diplomacy|Relations, interests and diplomatic plays" zh_cn = "外交|关系、利益与外交博弈" }
+
+ui_text hud.page.politics   { en = "POLITICS"          zh_cn = "政治" }
+ui_text hud.page.buildings  { en = "BUILDINGS"         zh_cn = "建筑" }
+ui_text hud.page.market     { en = "NATIONAL MARKET"   zh_cn = "全国市场" }
+ui_text hud.page.economy    { en = "NATIONAL ECONOMY"  zh_cn = "国民经济" }
+ui_text hud.page.population { en = "POPULATION"        zh_cn = "人口" }
+ui_text hud.page.technology { en = "TECHNOLOGY"        zh_cn = "科技" }
+ui_text hud.page.military   { en = "MILITARY"          zh_cn = "军事" }
+ui_text hud.page.diplomacy  { en = "DIPLOMACY"         zh_cn = "外交" }
+
+ui_text hud.politics.government { en = "Government Overview" zh_cn = "政府概览" }
+ui_text hud.politics.legitimacy { en = "Legitimacy & Institutions" zh_cn = "合法性与机构" }
+ui_text hud.politics.movements  { en = "Political Movements" zh_cn = "政治运动" }
+ui_text hud.tip.politics.government { en = "Government Overview|Inspect the executive, laws and current governing structure" zh_cn = "政府概览|查看行政机构、法律与当前政府结构" }
+ui_text hud.tip.politics.legitimacy { en = "Legitimacy & Institutions|Review legitimacy and the strength of national institutions" zh_cn = "合法性与机构|查看政府合法性与国家机构水平" }
+ui_text hud.tip.politics.movements { en = "Political Movements|Review organized support, opposition and reform pressure" zh_cn = "政治运动|查看有组织的支持、反对与改革压力" }
+ui_text hud.buildings.queue     { en = "Construction Queue" zh_cn = "建造队列" }
+ui_text hud.buildings.production { en = "Production Methods" zh_cn = "生产方式" }
+ui_text hud.buildings.investment { en = "Investment Pool" zh_cn = "投资池" }
+ui_text hud.market.goods        { en = "Goods & Prices" zh_cn = "商品与价格" }
+ui_text hud.market.routes       { en = "Trade Routes" zh_cn = "贸易路线" }
+ui_text hud.market.balance      { en = "Market Balance & Impact" zh_cn = "市场平衡与影响" }
+
+ui_text hud.economy.tab.treasury { en = "TREASURY" zh_cn = "国库" }
+ui_text hud.economy.tab.currency { en = "CURRENCY" zh_cn = "货币" }
+ui_text hud.economy.tab.banking  { en = "BANKING" zh_cn = "银行" }
+ui_text hud.economy.tab.debt     { en = "DEBT" zh_cn = "债务" }
+ui_text hud.economy.treasury_position { en = "TREASURY POSITION" zh_cn = "国库状况" }
+ui_text hud.economy.fiscal_commitments { en = "FISCAL COMMITMENTS" zh_cn = "财政承诺" }
+ui_text hud.economy.currency_regime { en = "CURRENCY REGIME" zh_cn = "货币制度" }
+ui_text hud.economy.reserves_issuance { en = "RESERVES & ISSUANCE" zh_cn = "储备与发行" }
+ui_text hud.economy.bank_position { en = "BANK BALANCE SHEET" zh_cn = "银行资产负债" }
+ui_text hud.economy.credit_conditions { en = "CREDIT CONDITIONS" zh_cn = "信贷环境" }
+ui_text hud.economy.sovereign_credit { en = "SOVEREIGN CREDIT" zh_cn = "主权信用" }
+ui_text hud.economy.debt_capacity { en = "DEBT CAPACITY" zh_cn = "债务能力" }
+ui_text hud.economy.current_treasury { en = "Current Treasury" zh_cn = "当前国库" }
+ui_text hud.economy.weekly_balance { en = "External Balance" zh_cn = "国际收支" }
+ui_text hud.economy.foreign_reserves { en = "Foreign Reserves" zh_cn = "外汇储备" }
+ui_text hud.economy.national_debt { en = "National Debt" zh_cn = "国家债务" }
+ui_text hud.economy.weekly_service { en = "Weekly Debt Service" zh_cn = "每周偿债" }
+ui_text hud.economy.borrowing_capacity { en = "Borrowing Capacity" zh_cn = "举债能力" }
+ui_text hud.economy.default_status { en = "Payment Status" zh_cn = "偿付状态" }
+ui_text hud.economy.currency_name { en = "Primary Currency" zh_cn = "主要货币" }
+ui_text hud.economy.monetary_standard { en = "Monetary Standard" zh_cn = "货币本位" }
+ui_text hud.economy.exchange_rate { en = "Exchange Rate" zh_cn = "汇率" }
+ui_text hud.economy.convertibility { en = "Specie Convertibility" zh_cn = "金属兑换" }
+ui_text hud.economy.monetary_sovereign { en = "Monetary Sovereign" zh_cn = "货币主权国" }
+ui_text hud.economy.gold_parity { en = "Gold Parity" zh_cn = "黄金平价" }
+ui_text hud.economy.silver_parity { en = "Silver Parity" zh_cn = "白银平价" }
+ui_text hud.economy.seigniorage { en = "Accrued Seigniorage" zh_cn = "累计铸币税" }
+ui_text hud.economy.bank_status { en = "Institution Status" zh_cn = "机构状态" }
+ui_text hud.economy.bank_reserves { en = "Reserves" zh_cn = "准备金" }
+ui_text hud.economy.bank_deposits { en = "Deposits" zh_cn = "存款" }
+ui_text hud.economy.bank_equity { en = "Equity" zh_cn = "资本金" }
+ui_text hud.economy.bank_loans { en = "Commercial Loans" zh_cn = "商业贷款" }
+ui_text hud.economy.bank_bonds { en = "Sovereign Bonds" zh_cn = "主权债券" }
+ui_text hud.economy.bank_npl { en = "Non-performing Loans" zh_cn = "不良贷款" }
+ui_text hud.economy.bank_lendable { en = "Lendable Capacity" zh_cn = "可贷能力" }
+ui_text hud.economy.reserve_requirement { en = "Reserve Requirement" zh_cn = "准备金要求" }
+ui_text hud.economy.deposit_rate { en = "Deposit Rate" zh_cn = "存款利率" }
+ui_text hud.economy.loan_rate { en = "Loan Rate" zh_cn = "贷款利率" }
+ui_text hud.economy.debt_to_gdp { en = "Debt / GDP" zh_cn = "债务 / GDP" }
+ui_text hud.economy.credit_rating { en = "Credit Rating" zh_cn = "信用评级" }
+ui_text hud.economy.bond_yield { en = "Bond Yield" zh_cn = "国债收益率" }
+ui_text hud.economy.records_hint { en = "Figures are drawn from the current national ledger." zh_cn = "数据取自当前国家账簿。" }
+ui_text hud.technology.research { en = "Current Research" zh_cn = "当前研究" }
+ui_text hud.technology.tree     { en = "Production · Military · Society" zh_cn = "生产 · 军事 · 社会" }
+ui_text hud.military.army       { en = "Army & Mobilization" zh_cn = "陆军与动员" }
+ui_text hud.military.fronts     { en = "Fronts & Headquarters" zh_cn = "战线与司令部" }
+ui_text hud.diplomacy.plays     { en = "Diplomatic Plays" zh_cn = "外交博弈" }
+ui_text hud.diplomacy.relations { en = "Relations & Interests" zh_cn = "关系与利益" }
+
+ui_text hud.population.total    { en = "TOTAL POPULATION" zh_cn = "总人口" }
+ui_text hud.population.strata   { en = "POPULATION STRATA" zh_cn = "人口阶层" }
+ui_text hud.population.upper    { en = "Upper Strata" zh_cn = "上层阶层" }
+ui_text hud.population.middle   { en = "Middle Strata" zh_cn = "中层阶层" }
+ui_text hud.population.lower    { en = "Lower Strata" zh_cn = "下层阶层" }
+ui_text hud.population.needs    { en = "INCOME, TAXES & NEEDS" zh_cn = "收入、税收与需求" }
+ui_text hud.population.income   { en = "Average Income" zh_cn = "平均收入" }
+ui_text hud.population.tax      { en = "Tax Burden" zh_cn = "税收负担" }
+ui_text hud.population.fulfilled { en = "Needs Fulfilled" zh_cn = "需求满足度" }
+ui_text hud.population.trends   { en = "LOYALISTS & RADICALS" zh_cn = "效忠派与激进派" }
+ui_text hud.population.loyalists { en = "Loyalists" zh_cn = "效忠派" }
+ui_text hud.population.radicals  { en = "Radicals" zh_cn = "激进派" }
+ui_text hud.population.records   { en = "DEMOGRAPHIC RECORDS" zh_cn = "人口档案" }
+ui_text hud.population.records_hint { en = "Census trends will appear as records accumulate." zh_cn = "人口普查趋势将在数据积累后显示。" }
+ui_text hud.value.zero           { en = "0" zh_cn = "0" }
+ui_text hud.value.dash           { en = "—" zh_cn = "—" }
+
+ui_text hud.selection            { en = "SELECTED LOCATION" zh_cn = "所选地区" }
+ui_text hud.outliner             { en = "OUTLINER" zh_cn = "概览" }
+ui_text hud.none_selected        { en = "No location selected" zh_cn = "未选择地区" }
+ui_text hud.none_selected.line1  { en = "Select a location on the map" zh_cn = "在地图上选择一个地区" }
+ui_text hud.none_selected.line2  { en = "to inspect local information." zh_cn = "以查看当地信息。" }
+ui_text hud.location.summary     { en = "LOCATION SUMMARY" zh_cn = "地区概览" }
+ui_text hud.infrastructure      { en = "Infrastructure" zh_cn = "基础设施" }
+ui_text hud.journal             { en = "JOURNAL & ALERTS" zh_cn = "日志与提醒" }
+ui_text hud.no_notifications    { en = "No current notifications." zh_cn = "当前没有通知。" }
+ui_text hud.journal.hint        { en = "Important developments will appear here." zh_cn = "重要动态将显示在此处。" }
+ui_text hud.outliner.objectives { en = "OBJECTIVES" zh_cn = "目标" }
+ui_text hud.outliner.no_objectives { en = "No active objectives" zh_cn = "没有进行中的目标" }
+ui_text hud.outliner.alerts     { en = "STRATEGIC ALERTS" zh_cn = "战略提醒" }
+ui_text hud.outliner.no_alerts  { en = "The national ledger is clear" zh_cn = "国家账簿暂无提醒" }
+ui_text hud.tip.location.empty  { en = "Selected Location|Choose a province on the map to open its administrative record" zh_cn = "所选地区|在地图上选择省份以打开其行政档案" }
+ui_text hud.tip.outliner.objectives { en = "Objectives|Pinned national objectives and their current progress" zh_cn = "目标|固定的国家目标及其当前进度" }
+ui_text hud.tip.outliner.journal { en = "Journal|Important national developments and active alerts" zh_cn = "日志|重要国家动态与当前提醒" }
+ui_text hud.tool.map            { en = "Political Map|Return to the primary political map mode" zh_cn = "政治地图|返回主要政治地图模式" }
+ui_text hud.tool.lens           { en = "Map Lenses|Inspect thematic overlays and strategic information" zh_cn = "地图透镜|查看专题图层与战略信息" }
+ui_text hud.tool.market         { en = "Market Lens|Inspect prices, access and trade connections" zh_cn = "市场透镜|查看价格、市场准入与贸易联系" }
+ui_text hud.tool.population     { en = "Population Lens|Inspect population distribution and conditions" zh_cn = "人口透镜|查看人口分布与生活状况" }
+ui_text hud.tool.diplomacy      { en = "Diplomatic Lens|Inspect relations, interests and influence" zh_cn = "外交透镜|查看关系、利益与影响力" }
+ui_text hud.tool.build          { en = "Construction Lens|Inspect buildings and construction opportunities" zh_cn = "建设透镜|查看建筑与建设机会" }
+ui_text hud.tool.settings       { en = "Map Options|Configure map display and overlays" zh_cn = "地图选项|设置地图显示与图层" }
+
+ui_text hud.pause               { en = "II" zh_cn = "II" }
+ui_text hud.speed.1             { en = "1" zh_cn = "1" }
+ui_text hud.speed.2             { en = "2" zh_cn = "2" }
+ui_text hud.speed.3             { en = "3" zh_cn = "3" }
+ui_text hud.speed.4             { en = "4" zh_cn = "4" }
+ui_text hud.speed.5             { en = "5" zh_cn = "5" }
+ui_text showcase.title          { en = "COMPONENT QUALITY SHOWCASE" zh_cn = "组件质量展示" }
+ui_text showcase.normal         { en = "NORMAL" zh_cn = "普通" }
+ui_text showcase.hover          { en = "HOVER" zh_cn = "悬停" }
+ui_text showcase.pressed        { en = "PRESSED" zh_cn = "按下" }
+ui_text showcase.selected       { en = "SELECTED" zh_cn = "选中" }
+ui_text showcase.disabled       { en = "DISABLED" zh_cn = "禁用" }
+ui_text showcase.focused        { en = "FOCUSED" zh_cn = "聚焦" }
 
 scripted_gui main_hud {
     context = hud
@@ -53,122 +168,419 @@ scripted_gui main_hud {
         id = hud_root
         gap = 0
         children = {
-            row = {
-                id = top_bar
-                height = 58
-                gap = 0
-                children = {
-                    panel = { id = country_card width = 210 children = { column = { id = country_stack gap = 0 children = {
-                        label = { id = country_caption height = 18 text = hud.country }
-                        label = { id = country_value height = 22 text = { bind = country_name } }
-                    } } } }
-                    panel = { id = rank_card width = 95 children = { column = { id = rank_stack gap = 0 children = {
-                        label = { id = rank_caption height = 18 text = hud.rank }
-                        label = { id = rank_value height = 22 text = { bind = rank } }
-                    } } } }
-                    panel = { id = treasury_card width = 155 children = { column = { id = treasury_stack gap = 0 children = {
-                        label = { id = treasury_caption height = 18 text = hud.treasury }
-                        label = { id = treasury_value height = 22 text = { bind = treasury } }
-                    } } } }
-                    panel = { id = balance_card width = 155 children = { column = { id = balance_stack gap = 0 children = {
-                        label = { id = balance_caption height = 18 text = hud.balance }
-                        label = { id = balance_value height = 22 text = { bind = balance } }
-                    } } } }
-                    panel = { id = population_card width = 155 children = { column = { id = population_stack gap = 0 children = {
-                        label = { id = population_caption height = 18 text = hud.population }
-                        label = { id = population_value height = 22 text = { bind = population } }
-                    } } } }
-                    panel = { id = gdp_card width = 205 children = { column = { id = gdp_stack gap = 0 children = {
-                        label = { id = gdp_caption height = 18 text = hud.gdp }
-                        label = { id = gdp_value height = 22 text = { bind = gdp } }
-                    } } } }
-                    spacer = { id = top_spacer grow = 1 }
-                    panel = { id = date_card width = 150 children = { column = { id = date_stack gap = 0 children = {
-                        label = { id = date_caption height = 18 text = hud.date }
-                        label = { id = date_value height = 22 text = { bind = date } }
-                    } } } }
-                    panel = { id = speed_card width = 64 children = { label = { id = speed_value text = { bind = speed } } } }
-                }
-            }
-            row = {
-                id = main_workspace
-                grow = 1
-                gap = 0
-                children = {
-                    panel = { id = navigation width = 74 children = { column = { id = navigation_stack gap = 5 children = {
-                        button = { id = nav_politics height = 48 text = hud.nav.politics command = open_politics selected = { bind = politics_active } }
-                        button = { id = nav_buildings height = 48 text = hud.nav.buildings command = open_buildings selected = { bind = buildings_active } }
-                        button = { id = nav_market height = 48 text = hud.nav.market command = open_market selected = { bind = market_active } }
-                        button = { id = nav_population height = 48 text = hud.nav.population command = open_population selected = { bind = population_active } }
-                        button = { id = nav_technology height = 48 text = hud.nav.technology command = open_technology selected = { bind = technology_active } }
-                        button = { id = nav_military height = 48 text = hud.nav.military command = open_military selected = { bind = military_active } }
-                        button = { id = nav_diplomacy height = 48 text = hud.nav.diplomacy command = open_diplomacy selected = { bind = diplomacy_active } }
-                    } } } }
-                    stack = { id = page_drawer width = 430 children = {
-                        panel = { id = politics_page visible = { bind = politics_active } children = { column = { id = politics_column gap = 8 children = {
-                            label = { id = politics_title height = 36 text = hud.page.politics }
-                            button = { id = government_card height = 82 text = hud.politics.government }
-                            button = { id = legitimacy_card height = 82 text = hud.politics.legitimacy }
-                            button = { id = movements_card height = 82 text = hud.politics.movements }
-                            spacer = { id = politics_space grow = 1 }
-                            panel = { id = situation_card height = 120 children = { column = { id = situation_stack gap = 4 children = {
-                                label = { id = situation_title height = 28 text = hud.situation }
-                                label = { id = journal_title height = 24 text = hud.journal }
-                            } } } }
-                        } } } }
-                        panel = { id = buildings_page visible = { bind = buildings_active } children = { column = { id = buildings_column gap = 8 children = {
-                            label = { id = buildings_title height = 36 text = hud.page.buildings }
-                            button = { id = queue_card height = 96 text = hud.buildings.queue }
-                            button = { id = production_card height = 96 text = hud.buildings.production }
-                            button = { id = investment_card height = 96 text = hud.buildings.investment }
-                        } } } }
-                        panel = { id = market_page visible = { bind = market_active } children = { column = { id = market_column gap = 8 children = {
-                            label = { id = market_title height = 36 text = hud.page.market }
-                            button = { id = goods_card height = 96 text = hud.market.goods }
-                            button = { id = routes_card height = 96 text = hud.market.routes }
-                            button = { id = market_balance_card height = 96 text = hud.market.balance }
-                        } } } }
-                        panel = { id = population_page visible = { bind = population_active } children = { column = { id = pop_column gap = 8 children = {
-                            label = { id = pop_title height = 36 text = hud.page.population }
-                            button = { id = strata_card height = 96 text = hud.population.strata }
-                            button = { id = needs_card height = 96 text = hud.population.needs }
-                            button = { id = trends_card height = 96 text = hud.population.trends }
-                        } } } }
-                        panel = { id = technology_page visible = { bind = technology_active } children = { column = { id = tech_column gap = 8 children = {
-                            label = { id = tech_title height = 36 text = hud.page.technology }
-                            button = { id = research_card height = 110 text = hud.technology.research }
-                            button = { id = tree_card height = 110 text = hud.technology.tree }
-                        } } } }
-                        panel = { id = military_page visible = { bind = military_active } children = { column = { id = military_column gap = 8 children = {
-                            label = { id = military_title height = 36 text = hud.page.military }
-                            button = { id = army_card height = 110 text = hud.military.army }
-                            button = { id = fronts_card height = 110 text = hud.military.fronts }
-                        } } } }
-                        panel = { id = diplomacy_page visible = { bind = diplomacy_active } children = { column = { id = diplomacy_column gap = 8 children = {
-                            label = { id = diplomacy_title height = 36 text = hud.page.diplomacy }
-                            button = { id = plays_card height = 110 text = hud.diplomacy.plays }
-                            button = { id = relations_card height = 110 text = hud.diplomacy.relations }
-                        } } } }
+            panel = { id = top_bar_surface style = top height = 82 children = {
+                row = { id = top_bar gap = 0 children = {
+                    panel = { id = country_card style = country width = 238 tooltip = hud.tip.country children = {
+                        row = { id = country_row gap = 8 children = {
+                            module = { id = country_flag width = 86 module = dynamic_flag }
+                            column = { id = country_stack grow = 1 gap = 0 children = {
+                                label = { id = country_caption style = secondary height = 20 text = hud.country }
+                                label = { id = country_value style = primary height = 30 text = { bind = country_name } }
+                            } }
+                        } }
                     } }
-                    spacer = { id = map_view grow = 1 }
-                    panel = { id = right_context width = 318 children = { column = { id = context_column gap = 7 children = {
-                        label = { id = selection_title height = 34 text = hud.selection }
-                        label = { id = selected_name height = 28 text = { bind = selected_name } }
-                        label = { id = selected_state height = 24 text = { bind = selected_state } }
-                        panel = { id = selected_stats height = 112 children = { column = { id = selected_stats_column gap = 2 children = {
-                            label = { id = selected_population_caption height = 22 text = hud.population }
-                            label = { id = selected_population_value height = 22 text = { bind = selected_population } }
-                            label = { id = selected_infra_caption height = 22 text = hud.infrastructure }
-                            label = { id = selected_infra_value height = 22 text = { bind = selected_infrastructure } }
-                        } } } }
+                    panel = { id = rank_card style = stat width = 110 tooltip = hud.tip.rank children = {
+                        row = { id = rank_row gap = 8 children = {
+                            image = { id = rank_icon style = medallion width = 40 icon = icon.rank }
+                            column = { id = rank_stack grow = 1 gap = 0 children = {
+                                label = { id = rank_value style = primary height = 28 text = { bind = rank } }
+                                label = { id = rank_caption style = secondary height = 20 text = hud.rank }
+                            } }
+                        } }
+                    } }
+                    panel = { id = treasury_card style = stat width = 140 tooltip = hud.tip.treasury children = {
+                        row = { id = treasury_row gap = 8 children = {
+                            image = { id = treasury_icon style = medallion width = 40 icon = icon.treasury }
+                            column = { id = treasury_stack grow = 1 gap = 0 children = {
+                                label = { id = treasury_value style = primary height = 28 text = { bind = treasury } }
+                                label = { id = treasury_caption style = secondary height = 20 text = hud.treasury }
+                            } }
+                        } }
+                    } }
+                    panel = { id = balance_card style = stat width = 145 tooltip = hud.tip.balance children = {
+                        row = { id = balance_row gap = 8 children = {
+                            image = { id = balance_icon style = medallion width = 40 icon = icon.balance }
+                            column = { id = balance_stack grow = 1 gap = 0 children = {
+                                label = { id = balance_value style = positive height = 28 text = { bind = balance } }
+                                label = { id = balance_caption style = secondary height = 20 text = hud.balance }
+                            } }
+                        } }
+                    } }
+                    panel = { id = population_card style = stat width = 150 tooltip = hud.tip.population children = {
+                        row = { id = population_row gap = 8 children = {
+                            image = { id = population_icon style = medallion width = 40 icon = icon.population }
+                            column = { id = population_stack grow = 1 gap = 0 children = {
+                                label = { id = population_value style = primary height = 28 text = { bind = population } }
+                                label = { id = population_caption style = secondary height = 20 text = hud.population }
+                            } }
+                        } }
+                    } }
+                    panel = { id = gdp_card style = stat width = 118 tooltip = hud.tip.gdp children = {
+                        row = { id = gdp_row gap = 8 children = {
+                            image = { id = gdp_icon style = medallion width = 40 icon = icon.gdp }
+                            column = { id = gdp_stack grow = 1 gap = 0 children = {
+                                label = { id = gdp_value style = primary height = 28 text = { bind = gdp } }
+                                label = { id = gdp_caption style = secondary height = 20 text = hud.gdp }
+                            } }
+                        } }
+                    } }
+                    spacer = { id = top_spacer grow = 1 }
+                    panel = { id = time_cluster style = time width = 320 tooltip = hud.tip.time children = {
+                        row = { id = time_row gap = 8 children = {
+                            image = { id = calendar_icon style = medallion width = 40 icon = icon.calendar }
+                            column = { id = date_stack width = 104 gap = 0 children = {
+                                label = { id = time_caption style = secondary height = 18 text = hud.time }
+                                label = { id = date_value style = primary height = 30 text = { bind = date } }
+                            } }
+                            row = { id = speed_controls grow = 1 gap = 2 children = {
+                                button = { id = pause_button style = time width = 22 text = hud.pause command = toggle_pause selected = { bind = paused_active } }
+                                button = { id = speed_1 style = time width = 22 text = hud.speed.1 command = set_speed_1 selected = { bind = speed_1_active } }
+                                button = { id = speed_2 style = time width = 22 text = hud.speed.2 command = set_speed_2 selected = { bind = speed_2_active } }
+                                button = { id = speed_3 style = time width = 22 text = hud.speed.3 command = set_speed_3 selected = { bind = speed_3_active } }
+                                button = { id = speed_4 style = time width = 22 text = hud.speed.4 command = set_speed_4 selected = { bind = speed_4_active } }
+                                button = { id = speed_5 style = time width = 22 text = hud.speed.5 command = set_speed_5 selected = { bind = speed_5_active } }
+                            } }
+                        } }
+                    } }
+                } }
+            } }
+
+            stack = { id = viewport_stage grow = 1 children = {
+            row = { id = main_workspace grow = 1 gap = 0 children = {
+                panel = { id = navigation style = dock width = 66 children = {
+                    column = { id = navigation_stack gap = 2 children = {
+                        button = { id = nav_politics style = medallion height = 58 icon = icon.politics command = open_politics selected = { bind = politics_active } tooltip = hud.tip.politics }
+                        button = { id = nav_buildings style = medallion height = 58 icon = icon.buildings command = open_buildings selected = { bind = buildings_active } tooltip = hud.tip.buildings }
+                        button = { id = nav_market style = medallion height = 58 icon = icon.market command = open_market selected = { bind = market_active } tooltip = hud.tip.market }
+                        button = { id = nav_economy style = medallion height = 58 icon = icon.economy command = open_economy selected = { bind = economy_active } tooltip = hud.tip.economy }
+                        button = { id = nav_population style = medallion height = 58 icon = icon.population command = open_population selected = { bind = population_active } tooltip = hud.tip.population }
+                        button = { id = nav_technology style = medallion height = 58 icon = icon.technology command = open_technology selected = { bind = technology_active } tooltip = hud.tip.technology }
+                        button = { id = nav_military style = medallion height = 58 icon = icon.military command = open_military selected = { bind = military_active } tooltip = hud.tip.military }
+                        button = { id = nav_diplomacy style = medallion height = 58 icon = icon.diplomacy command = open_diplomacy selected = { bind = diplomacy_active } tooltip = hud.tip.diplomacy }
+                    } }
+                } }
+
+                stack = { id = page_drawer width = 390 children = {
+                    panel = { id = politics_page style = hud text = hud.page.politics visible = { bind = politics_active } children = {
+                        column = { id = politics_column gap = 7 children = {
+                            button = { id = government_card style = menu_row height = 68 icon = icon.politics text = hud.politics.government selected = yes tooltip = hud.tip.politics.government }
+                            button = { id = legitimacy_card style = menu_row height = 68 icon = icon.rank text = hud.politics.legitimacy tooltip = hud.tip.politics.legitimacy }
+                            button = { id = movements_card style = menu_row height = 68 icon = icon.population text = hud.politics.movements tooltip = hud.tip.politics.movements }
+                            spacer = { id = politics_space grow = 1 }
+                        } }
+                    } }
+                    panel = { id = buildings_page style = hud text = hud.page.buildings visible = { bind = buildings_active } children = {
+                        column = { id = buildings_column gap = 7 children = {
+                            button = { id = queue_card style = section height = 70 icon = icon.buildings text = hud.buildings.queue }
+                            button = { id = production_card style = section height = 70 icon = icon.gdp text = hud.buildings.production }
+                            button = { id = investment_card style = section height = 70 icon = icon.treasury text = hud.buildings.investment }
+                            spacer = { id = buildings_space grow = 1 }
+                        } }
+                    } }
+                    panel = { id = market_page style = hud text = hud.page.market visible = { bind = market_active } children = {
+                        column = { id = market_column gap = 7 children = {
+                            button = { id = goods_card style = section height = 70 icon = icon.market text = hud.market.goods }
+                            button = { id = routes_card style = section height = 70 icon = icon.diplomacy text = hud.market.routes }
+                            button = { id = market_balance_card style = section height = 70 icon = icon.balance text = hud.market.balance }
+                            spacer = { id = market_space grow = 1 }
+                        } }
+                    } }
+                    panel = { id = economy_page style = hud text = hud.page.economy visible = { bind = economy_active } children = {
+                        column = { id = economy_column gap = 8 children = {
+                            row = { id = economy_tabs height = 32 gap = 3 children = {
+                                button = { id = economy_treasury_tab style = tab grow = 1 text = hud.economy.tab.treasury command = open_economy_treasury selected = { bind = treasury_page_active } }
+                                button = { id = economy_currency_tab style = tab grow = 1 text = hud.economy.tab.currency command = open_economy_currency selected = { bind = currency_page_active } }
+                                button = { id = economy_banking_tab style = tab grow = 1 text = hud.economy.tab.banking command = open_economy_banking selected = { bind = banking_page_active } }
+                                button = { id = economy_debt_tab style = tab grow = 1 text = hud.economy.tab.debt command = open_economy_debt selected = { bind = debt_page_active } }
+                            } }
+                            stack = { id = economy_pages grow = 1 children = {
+                                column = { id = economy_treasury_page gap = 8 visible = { bind = treasury_page_active } children = {
+                                    panel = { id = treasury_position style = section text = hud.economy.treasury_position height = 166 children = {
+                                        column = { id = treasury_position_rows gap = 2 children = {
+                                            row = { id = econ_treasury_row height = 25 children = { label = { id = econ_treasury_label style = secondary grow = 1 text = hud.economy.current_treasury } label = { id = econ_treasury_value style = primary width = 104 text = { bind = treasury } } } }
+                                            row = { id = econ_balance_row height = 25 children = { label = { id = econ_balance_label style = secondary grow = 1 text = hud.economy.weekly_balance } label = { id = econ_balance_value style = primary width = 104 text = { bind = balance } } } }
+                                            row = { id = econ_reserves_row height = 25 children = { label = { id = econ_reserves_label style = secondary grow = 1 text = hud.economy.foreign_reserves } label = { id = econ_reserves_value style = primary width = 104 text = { bind = foreign_reserves } } } }
+                                            row = { id = econ_debt_row height = 25 children = { label = { id = econ_debt_label style = secondary grow = 1 text = hud.economy.national_debt } label = { id = econ_debt_value style = primary width = 104 text = { bind = national_debt } } } }
+                                        } }
+                                    } }
+                                    panel = { id = fiscal_commitments style = section text = hud.economy.fiscal_commitments height = 142 children = {
+                                        column = { id = fiscal_commitment_rows gap = 2 children = {
+                                            row = { id = econ_service_row height = 25 children = { label = { id = econ_service_label style = secondary grow = 1 text = hud.economy.weekly_service } label = { id = econ_service_value style = primary width = 104 text = { bind = weekly_debt_service } } } }
+                                            row = { id = econ_capacity_row height = 25 children = { label = { id = econ_capacity_label style = secondary grow = 1 text = hud.economy.borrowing_capacity } label = { id = econ_capacity_value style = primary width = 104 text = { bind = borrowing_capacity } } } }
+                                            row = { id = econ_payment_row height = 25 children = { label = { id = econ_payment_label style = secondary grow = 1 text = hud.economy.default_status } label = { id = econ_payment_value style = primary width = 132 text = { bind = default_status } } } }
+                                        } }
+                                    } }
+                                    spacer = { id = economy_treasury_space grow = 1 }
+                                } }
+                                column = { id = economy_currency_page gap = 8 visible = { bind = currency_page_active } children = {
+                                    panel = { id = currency_regime style = section text = hud.economy.currency_regime height = 192 children = {
+                                        column = { id = currency_regime_rows gap = 2 children = {
+                                            row = { id = currency_name_row height = 25 children = { label = { id = currency_name_label style = secondary grow = 1 text = hud.economy.currency_name } label = { id = currency_name_value style = primary width = 132 text = { bind = currency_name } } } }
+                                            row = { id = standard_row height = 25 children = { label = { id = standard_label style = secondary grow = 1 text = hud.economy.monetary_standard } label = { id = standard_value style = primary width = 132 text = { bind = monetary_standard } } } }
+                                            row = { id = exchange_rate_row height = 25 children = { label = { id = exchange_rate_label style = secondary grow = 1 text = hud.economy.exchange_rate } label = { id = exchange_rate_value style = primary width = 100 text = { bind = exchange_rate } } } }
+                                            row = { id = convertibility_row height = 25 children = { label = { id = convertibility_label style = secondary grow = 1 text = hud.economy.convertibility } label = { id = convertibility_value style = primary width = 132 text = { bind = convertibility } } } }
+                                            row = { id = sovereign_row height = 25 children = { label = { id = sovereign_label style = secondary grow = 1 text = hud.economy.monetary_sovereign } label = { id = sovereign_value style = primary width = 100 text = { bind = monetary_sovereign } } } }
+                                        } }
+                                    } }
+                                    panel = { id = reserves_issuance style = section text = hud.economy.reserves_issuance height = 166 children = {
+                                        column = { id = reserves_issuance_rows gap = 2 children = {
+                                            row = { id = gold_parity_row height = 25 children = { label = { id = gold_parity_label style = secondary grow = 1 text = hud.economy.gold_parity } label = { id = gold_parity_value style = primary width = 104 text = { bind = gold_parity } } } }
+                                            row = { id = silver_parity_row height = 25 children = { label = { id = silver_parity_label style = secondary grow = 1 text = hud.economy.silver_parity } label = { id = silver_parity_value style = primary width = 104 text = { bind = silver_parity } } } }
+                                            row = { id = issuance_reserves_row height = 25 children = { label = { id = issuance_reserves_label style = secondary grow = 1 text = hud.economy.foreign_reserves } label = { id = issuance_reserves_value style = primary width = 104 text = { bind = foreign_reserves } } } }
+                                            row = { id = seigniorage_row height = 25 children = { label = { id = seigniorage_label style = secondary grow = 1 text = hud.economy.seigniorage } label = { id = seigniorage_value style = primary width = 104 text = { bind = seigniorage } } } }
+                                        } }
+                                    } }
+                                    spacer = { id = economy_currency_space grow = 1 }
+                                } }
+                                column = { id = economy_banking_page gap = 8 visible = { bind = banking_page_active } children = {
+                                    panel = { id = bank_position style = section text = hud.economy.bank_position height = 192 children = {
+                                        column = { id = bank_position_rows gap = 2 children = {
+                                            row = { id = bank_status_row height = 25 children = { label = { id = bank_status_label style = secondary grow = 1 text = hud.economy.bank_status } label = { id = bank_status_value style = primary width = 132 text = { bind = bank_status } } } }
+                                            row = { id = bank_reserves_row height = 25 children = { label = { id = bank_reserves_label style = secondary grow = 1 text = hud.economy.bank_reserves } label = { id = bank_reserves_value style = primary width = 104 text = { bind = bank_reserves } } } }
+                                            row = { id = bank_deposits_row height = 25 children = { label = { id = bank_deposits_label style = secondary grow = 1 text = hud.economy.bank_deposits } label = { id = bank_deposits_value style = primary width = 104 text = { bind = bank_deposits } } } }
+                                            row = { id = bank_equity_row height = 25 children = { label = { id = bank_equity_label style = secondary grow = 1 text = hud.economy.bank_equity } label = { id = bank_equity_value style = primary width = 104 text = { bind = bank_equity } } } }
+                                            row = { id = bank_loans_row height = 25 children = { label = { id = bank_loans_label style = secondary grow = 1 text = hud.economy.bank_loans } label = { id = bank_loans_value style = primary width = 104 text = { bind = bank_loans } } } }
+                                        } }
+                                    } }
+                                    panel = { id = credit_conditions style = section text = hud.economy.credit_conditions height = 218 children = {
+                                        column = { id = credit_condition_rows gap = 2 children = {
+                                            row = { id = bank_bonds_row height = 25 children = { label = { id = bank_bonds_label style = secondary grow = 1 text = hud.economy.bank_bonds } label = { id = bank_bonds_value style = primary width = 104 text = { bind = bank_bonds } } } }
+                                            row = { id = bank_npl_row height = 25 children = { label = { id = bank_npl_label style = secondary grow = 1 text = hud.economy.bank_npl } label = { id = bank_npl_value style = primary width = 104 text = { bind = bank_nonperforming } } } }
+                                            row = { id = bank_lendable_row height = 25 children = { label = { id = bank_lendable_label style = secondary grow = 1 text = hud.economy.bank_lendable } label = { id = bank_lendable_value style = primary width = 104 text = { bind = bank_lendable } } } }
+                                            row = { id = reserve_requirement_row height = 25 children = { label = { id = reserve_requirement_label style = secondary grow = 1 text = hud.economy.reserve_requirement } label = { id = reserve_requirement_value style = primary width = 104 text = { bind = reserve_requirement } } } }
+                                            row = { id = deposit_rate_row height = 25 children = { label = { id = deposit_rate_label style = secondary grow = 1 text = hud.economy.deposit_rate } label = { id = deposit_rate_value style = primary width = 104 text = { bind = deposit_rate } } } }
+                                            row = { id = loan_rate_row height = 25 children = { label = { id = loan_rate_label style = secondary grow = 1 text = hud.economy.loan_rate } label = { id = loan_rate_value style = primary width = 104 text = { bind = loan_rate } } } }
+                                        } }
+                                    } }
+                                    spacer = { id = economy_banking_space grow = 1 }
+                                } }
+                                column = { id = economy_debt_page gap = 8 visible = { bind = debt_page_active } children = {
+                                    panel = { id = sovereign_credit style = section text = hud.economy.sovereign_credit height = 192 children = {
+                                        column = { id = sovereign_credit_rows gap = 2 children = {
+                                            row = { id = debt_total_row height = 25 children = { label = { id = debt_total_label style = secondary grow = 1 text = hud.economy.national_debt } label = { id = debt_total_value style = primary width = 104 text = { bind = national_debt } } } }
+                                            row = { id = debt_gdp_row height = 25 children = { label = { id = debt_gdp_label style = secondary grow = 1 text = hud.economy.debt_to_gdp } label = { id = debt_gdp_value style = primary width = 104 text = { bind = debt_to_gdp } } } }
+                                            row = { id = credit_rating_row height = 25 children = { label = { id = credit_rating_label style = secondary grow = 1 text = hud.economy.credit_rating } label = { id = credit_rating_value style = primary width = 104 text = { bind = credit_rating } } } }
+                                            row = { id = bond_yield_row height = 25 children = { label = { id = bond_yield_label style = secondary grow = 1 text = hud.economy.bond_yield } label = { id = bond_yield_value style = primary width = 104 text = { bind = bond_yield } } } }
+                                            row = { id = debt_payment_row height = 25 children = { label = { id = debt_payment_label style = secondary grow = 1 text = hud.economy.default_status } label = { id = debt_payment_value style = primary width = 132 text = { bind = default_status } } } }
+                                        } }
+                                    } }
+                                    panel = { id = debt_capacity style = section text = hud.economy.debt_capacity height = 142 children = {
+                                        column = { id = debt_capacity_rows gap = 2 children = {
+                                            row = { id = debt_service_row height = 25 children = { label = { id = debt_service_label style = secondary grow = 1 text = hud.economy.weekly_service } label = { id = debt_service_value style = primary width = 104 text = { bind = weekly_debt_service } } } }
+                                            row = { id = debt_borrowing_row height = 25 children = { label = { id = debt_borrowing_label style = secondary grow = 1 text = hud.economy.borrowing_capacity } label = { id = debt_borrowing_value style = primary width = 104 text = { bind = borrowing_capacity } } } }
+                                            row = { id = bank_bond_holdings_row height = 25 children = { label = { id = bank_bond_holdings_label style = secondary grow = 1 text = hud.economy.bank_bonds } label = { id = bank_bond_holdings_value style = primary width = 104 text = { bind = bank_bonds } } } }
+                                        } }
+                                    } }
+                                    spacer = { id = economy_debt_space grow = 1 }
+                                } }
+                            } }
+                            panel = { id = economy_records style = footer height = 58 children = {
+                                row = { id = economy_records_row gap = 8 children = {
+                                    image = { id = economy_records_icon style = empty width = 30 icon = icon.journal }
+                                    label = { id = economy_records_hint style = secondary grow = 1 text = hud.economy.records_hint }
+                                } }
+                            } }
+                        } }
+                    } }
+                    panel = { id = population_page style = hud text = hud.page.population visible = { bind = population_active } children = {
+                        column = { id = pop_column gap = 8 children = {
+                            panel = { id = population_summary style = section height = 70 children = {
+                                row = { id = population_summary_row gap = 12 children = {
+                                    image = { id = population_summary_icon width = 48 icon = icon.population }
+                                    column = { id = population_summary_stack grow = 1 gap = 0 children = {
+                                        label = { id = population_total_caption style = secondary height = 20 text = hud.population.total }
+                                        label = { id = population_total_value style = primary height = 34 text = { bind = population } }
+                                    } }
+                                } }
+                            } }
+                            panel = { id = strata_section style = section text = hud.population.strata height = 112 children = {
+                                column = { id = strata_rows gap = 2 children = {
+                                    row = { id = upper_row height = 24 children = { label = { id = upper_label style = secondary grow = 1 text = hud.population.upper } label = { id = upper_value style = primary width = 64 text = hud.value.zero } } }
+                                    row = { id = middle_row height = 24 children = { label = { id = middle_label style = secondary grow = 1 text = hud.population.middle } label = { id = middle_value style = primary width = 64 text = hud.value.zero } } }
+                                    row = { id = lower_row height = 24 children = { label = { id = lower_label style = secondary grow = 1 text = hud.population.lower } label = { id = lower_value style = primary width = 64 text = hud.value.zero } } }
+                                } }
+                            } }
+                            panel = { id = needs_section style = section text = hud.population.needs height = 112 children = {
+                                column = { id = needs_rows gap = 2 children = {
+                                    row = { id = income_row height = 24 children = { label = { id = income_label style = secondary grow = 1 text = hud.population.income } label = { id = income_value style = primary width = 64 text = hud.value.dash } } }
+                                    row = { id = tax_row height = 24 children = { label = { id = tax_label style = secondary grow = 1 text = hud.population.tax } label = { id = tax_value style = primary width = 64 text = hud.value.dash } } }
+                                    row = { id = fulfilled_row height = 24 children = { label = { id = fulfilled_label style = secondary grow = 1 text = hud.population.fulfilled } label = { id = fulfilled_value style = primary width = 64 text = hud.value.dash } } }
+                                } }
+                            } }
+                            panel = { id = trends_section style = section text = hud.population.trends height = 90 children = {
+                                column = { id = trends_rows gap = 2 children = {
+                                    row = { id = loyalist_row height = 24 children = { label = { id = loyalist_label style = secondary grow = 1 text = hud.population.loyalists } label = { id = loyalist_value style = primary width = 64 text = hud.value.zero } } }
+                                    row = { id = radical_row height = 24 children = { label = { id = radical_label style = secondary grow = 1 text = hud.population.radicals } label = { id = radical_value style = primary width = 64 text = hud.value.zero } } }
+                                } }
+                            } }
+                            spacer = { id = population_space grow = 1 }
+                            panel = { id = population_records style = footer height = 64 children = {
+                                row = { id = population_records_row gap = 10 children = {
+                                    image = { id = population_records_icon style = empty width = 34 icon = icon.journal }
+                                    column = { id = population_records_stack grow = 1 gap = 0 children = {
+                                        label = { id = population_records_title style = section height = 24 text = hud.population.records }
+                                        label = { id = population_records_hint style = secondary height = 22 text = hud.population.records_hint }
+                                    } }
+                                } }
+                            } }
+                        } }
+                    } }
+                    panel = { id = technology_page style = hud text = hud.page.technology visible = { bind = technology_active } children = {
+                        column = { id = tech_column gap = 7 children = {
+                            button = { id = research_card style = section height = 74 icon = icon.technology text = hud.technology.research }
+                            button = { id = tree_card style = section height = 74 icon = icon.gdp text = hud.technology.tree }
+                            spacer = { id = tech_space grow = 1 }
+                        } }
+                    } }
+                    panel = { id = military_page style = hud text = hud.page.military visible = { bind = military_active } children = {
+                        column = { id = military_column gap = 7 children = {
+                            button = { id = army_card style = section height = 74 icon = icon.military text = hud.military.army }
+                            button = { id = fronts_card style = section height = 74 icon = icon.location text = hud.military.fronts }
+                            spacer = { id = military_space grow = 1 }
+                        } }
+                    } }
+                    panel = { id = diplomacy_page style = hud text = hud.page.diplomacy visible = { bind = diplomacy_active } children = {
+                        column = { id = diplomacy_column gap = 7 children = {
+                            button = { id = plays_card style = section height = 74 icon = icon.diplomacy text = hud.diplomacy.plays }
+                            button = { id = relations_card style = section height = 74 icon = icon.country text = hud.diplomacy.relations }
+                            spacer = { id = diplomacy_space grow = 1 }
+                        } }
+                    } }
+                } }
+
+                spacer = { id = map_view grow = 1 }
+
+                panel = { id = right_context style = outliner text = hud.outliner width = 300 children = {
+                    column = { id = context_column gap = 7 children = {
+                        panel = { id = location_empty style = outliner_group text = hud.selection height = 142 visible = { bind = no_location_selected } tooltip = hud.tip.location.empty children = {
+                            row = { id = location_empty_row gap = 9 children = {
+                                image = { id = location_empty_icon style = icon_inset width = 46 icon = icon.location }
+                                column = { id = location_empty_stack grow = 1 gap = 1 children = {
+                                    label = { id = location_empty_title style = primary height = 28 text = hud.none_selected }
+                                    label = { id = location_empty_line1 style = secondary height = 22 text = hud.none_selected.line1 }
+                                    label = { id = location_empty_line2 style = secondary height = 22 text = hud.none_selected.line2 }
+                                } }
+                            } }
+                        } }
+                        panel = { id = location_details style = outliner_group text = hud.selection height = 318 visible = { bind = location_selected } children = {
+                            column = { id = location_detail_rows gap = 5 children = {
+                                panel = { id = location_identity style = outliner_row height = 68 tooltip = hud.tip.location.empty children = {
+                                    row = { id = location_identity_row gap = 8 children = {
+                                        image = { id = location_icon style = empty width = 34 icon = icon.location }
+                                        column = { id = location_identity_stack grow = 1 gap = 0 children = {
+                                            label = { id = selected_name style = primary height = 28 text = { bind = selected_name } }
+                                            label = { id = selected_state style = secondary height = 20 text = { bind = selected_state } }
+                                        } }
+                                    } }
+                                } }
+                                panel = { id = location_population style = outliner_row height = 52 children = {
+                                    row = { id = location_population_row children = {
+                                        image = { id = location_population_icon style = empty width = 28 icon = icon.population }
+                                        label = { id = selected_population_caption style = secondary grow = 1 text = hud.population.total }
+                                        label = { id = selected_population_value style = primary width = 82 text = { bind = selected_population } }
+                                    } }
+                                } }
+                                panel = { id = location_infrastructure style = outliner_row height = 52 children = {
+                                    row = { id = location_infrastructure_row children = {
+                                        image = { id = infrastructure_icon style = empty width = 28 icon = icon.infrastructure }
+                                        label = { id = selected_infra_caption style = secondary grow = 1 text = hud.infrastructure }
+                                        label = { id = selected_infra_value style = primary width = 70 text = { bind = selected_infrastructure } }
+                                    } }
+                                } }
+                            } }
+                        } }
+                        panel = { id = objectives_group style = outliner_group text = hud.outliner.objectives height = 96 children = {
+                            panel = { id = objectives_empty_row style = outliner_row tooltip = hud.tip.outliner.objectives children = {
+                                row = { id = objectives_empty_content gap = 7 children = {
+                                    image = { id = objectives_icon style = empty width = 28 icon = icon.rank }
+                                    label = { id = objectives_empty_label style = secondary grow = 1 text = hud.outliner.no_objectives }
+                                } }
+                            } }
+                        } }
+                        panel = { id = journal_group style = outliner_group text = hud.journal height = 132 children = {
+                            column = { id = journal_rows gap = 3 children = {
+                                panel = { id = journal_empty_row style = outliner_row height = 43 tooltip = hud.tip.outliner.journal children = {
+                                    row = { id = journal_empty_content gap = 7 children = {
+                                        image = { id = journal_icon style = empty width = 28 icon = icon.journal }
+                                        label = { id = journal_empty style = primary grow = 1 text = hud.no_notifications }
+                                    } }
+                                } }
+                                panel = { id = alert_empty_row style = outliner_row height = 43 tooltip = hud.tip.outliner.journal children = {
+                                    row = { id = alert_empty_content gap = 7 children = {
+                                        image = { id = alert_icon style = empty width = 28 icon = icon.diplomacy }
+                                        label = { id = alert_empty style = secondary grow = 1 text = hud.outliner.no_alerts }
+                                    } }
+                                } }
+                            } }
+                        } }
                         spacer = { id = context_spacer grow = 1 }
-                        panel = { id = journal_card height = 150 children = { column = { id = journal_stack gap = 4 children = {
-                            label = { id = journal_header height = 30 text = hud.journal }
-                            label = { id = journal_empty height = 24 text = hud.none_selected }
-                        } } } }
-                    } } } }
-                }
-            }
+                    } }
+                } }
+            } }
+            column = { id = bottom_tool_overlay children = {
+                spacer = { id = bottom_tool_space grow = 1 }
+                row = { id = bottom_tool_anchor height = 82 children = {
+                    spacer = { id = bottom_tool_left grow = 1 }
+                    panel = { id = bottom_tool_housing style = utility width = 420 height = 76 children = {
+                        row = { id = bottom_tool_buttons gap = 2 children = {
+                            button = { id = tool_settings style = tool_utility width = 44 icon = icon.infrastructure tooltip = hud.tool.settings }
+                            button = { id = tool_build style = tool_secondary width = 50 icon = icon.buildings tooltip = hud.tool.build }
+                            button = { id = tool_diplomacy style = tool_secondary width = 50 icon = icon.diplomacy tooltip = hud.tool.diplomacy }
+                            button = { id = tool_map style = tool_primary width = 58 icon = icon.location selected = yes tooltip = hud.tool.map }
+                            button = { id = tool_population style = tool_secondary width = 50 icon = icon.population tooltip = hud.tool.population }
+                            button = { id = tool_market style = tool_secondary width = 50 icon = icon.market tooltip = hud.tool.market }
+                            button = { id = tool_lens style = tool_utility width = 44 icon = icon.technology tooltip = hud.tool.lens }
+                        } }
+                    } }
+                    spacer = { id = bottom_tool_right grow = 1 }
+                } }
+            } }
+            } }
+        }
+    }
+}
+
+# Non-production component inspection surface. It is compiled with the HUD
+# but never mounted by the game, allowing automated snapshots to compare all
+# persistent interaction states in one stable layout.
+scripted_gui component_showcase {
+    context = hud
+    root = {
+        type = panel
+        id = showcase_root
+        style = wood
+        width = 1180
+        height = 720
+        text = showcase.title
+        children = {
+            column = { id = showcase_columns gap = 14 children = {
+                panel = { id = showcase_button_section style = section text = showcase.title height = 180 children = {
+                    row = { id = showcase_button_states gap = 10 children = {
+                        button = { id = showcase_normal style = section grow = 1 text = showcase.normal icon = icon.politics }
+                        button = { id = showcase_hover style = section grow = 1 text = showcase.hover icon = icon.politics hovered = yes }
+                        button = { id = showcase_pressed style = section grow = 1 text = showcase.pressed icon = icon.politics pressed = yes }
+                        button = { id = showcase_selected style = section grow = 1 text = showcase.selected icon = icon.politics selected = yes }
+                        button = { id = showcase_disabled style = section grow = 1 text = showcase.disabled icon = icon.politics enabled = no }
+                        button = { id = showcase_focused style = section grow = 1 text = showcase.focused icon = icon.politics focused = yes }
+                    } }
+                } }
+                panel = { id = showcase_medallion_section style = section text = hud.nav.politics height = 150 children = {
+                    row = { id = showcase_medallion_states gap = 14 children = {
+                        button = { id = medallion_normal style = medallion width = 70 icon = icon.politics }
+                        button = { id = medallion_hover style = medallion width = 70 icon = icon.market hovered = yes }
+                        button = { id = medallion_pressed style = medallion width = 70 icon = icon.economy pressed = yes }
+                        button = { id = medallion_selected style = medallion width = 70 icon = icon.population selected = yes }
+                        button = { id = medallion_disabled style = medallion width = 70 icon = icon.military enabled = no }
+                    } }
+                } }
+                panel = { id = showcase_rows_section style = section text = hud.politics.government height = 220 children = {
+                    column = { id = showcase_row_states gap = 4 children = {
+                        button = { id = row_normal style = menu_row height = 52 text = showcase.normal icon = icon.rank }
+                        button = { id = row_hover style = menu_row height = 52 text = showcase.hover icon = icon.rank hovered = yes }
+                        button = { id = row_selected style = menu_row height = 52 text = showcase.selected icon = icon.rank selected = yes }
+                    } }
+                } }
+            } }
         }
     }
 }

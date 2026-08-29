@@ -39,7 +39,7 @@ void GameAppController::on_mouse_move(float x, float y) {
     if (is_dragging_) {
         const float dx = x - drag_start_x_;
         const float dy = y - drag_start_y_;
-        camera_.pan_pixels(-static_cast<double>(dx), -static_cast<double>(dy));
+        camera_.pan_pixels(static_cast<double>(dx), static_cast<double>(dy));
         drag_start_x_ = x;
         drag_start_y_ = y;
     }
@@ -122,7 +122,6 @@ void GameAppController::toggle_pause() noexcept {
 
 void GameAppController::set_speed(std::uint8_t speed) noexcept {
     speed_ = std::clamp<std::uint8_t>(speed, 1, 5);
-    is_paused_ = false;
 }
 
 void GameAppController::update(float dt) {

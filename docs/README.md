@@ -16,6 +16,7 @@
 - `MOD_RUNTIME.md` — mod/content loading and deterministic load plans.
 - `NOTIFICATION_RUNTIME.md` and `RESEARCH_ARCHITECTURE.md` — content runtimes.
 - `SCRIPTED_GUI.md` — scripted GUI compiler and runtime boundary.
+- `UI_THEME.md` — default UI theme, design tokens, typography and density.
 - `ECONOMY_ARCHITECTURE.md` — economy data and tick model.
 - `FINANCE_BANKING.md` — currency, FX, trade settlement, and bank ledgers.
 

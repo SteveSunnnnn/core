@@ -1,4 +1,5 @@
 #include "core/render/vulkan/VulkanDesktopBackend.hpp"
+#include "core/ui/ScriptedGui.hpp"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -57,6 +58,22 @@ struct LivingVertex {
     float y;
     float z;
 };
+
+struct FlagGpuPush {
+    std::array<float, 4> placement{};
+    std::array<float, 4> motion{};
+    std::array<float, 4> primary{};
+    std::array<float, 4> secondary{};
+    std::array<float, 4> accent{};
+};
+
+[[nodiscard]] std::array<float, 4> flag_color(std::uint32_t rgba) noexcept {
+    constexpr float inv = 1.0f / 255.0f;
+    return {{static_cast<float>((rgba >> 16u) & 0xffu) * inv,
+             static_cast<float>((rgba >> 8u) & 0xffu) * inv,
+             static_cast<float>(rgba & 0xffu) * inv,
+             static_cast<float>((rgba >> 24u) & 0xffu) * inv}};
+}
 
 [[nodiscard]] UiGpuVertex ui_gpu_vertex(const UiVertex& vertex) noexcept {
     // Core UI colors are stored as AARRGGBB (the high byte is alpha).  Keep
@@ -687,19 +704,35 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
         throw std::runtime_error("CORE_SHADER_DIR is not a directory: " + shader_dir_.string());
     }
 
+    VkPushConstantRange map_view_push{};
+    map_view_push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    map_view_push.offset = 0;
+    map_view_push.size = sizeof(float) * 4u;
     VkPipelineLayoutCreateInfo empty_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    empty_layout.pushConstantRangeCount = 1;
+    empty_layout.pPushConstantRanges = &map_view_push;
     vkcheck(vkCreatePipelineLayout(device_, &empty_layout, nullptr, &fullscreen_layout_),
             "vkCreatePipelineLayout(fullscreen)");
 
     VkPushConstantRange political_push{};
-    political_push.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    political_push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     political_push.offset = 0;
-    political_push.size = sizeof(float) * 4u;
+    political_push.size = sizeof(float) * 8u;
     VkPipelineLayoutCreateInfo political_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     political_layout_info.pushConstantRangeCount = 1;
     political_layout_info.pPushConstantRanges = &political_push;
     vkcheck(vkCreatePipelineLayout(device_, &political_layout_info, nullptr, &political_layout_),
             "vkCreatePipelineLayout(political)");
+
+    VkPushConstantRange flag_push{};
+    flag_push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    flag_push.offset = 0;
+    flag_push.size = sizeof(FlagGpuPush);
+    VkPipelineLayoutCreateInfo flag_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    flag_layout_info.pushConstantRangeCount = 1;
+    flag_layout_info.pPushConstantRanges = &flag_push;
+    vkcheck(vkCreatePipelineLayout(device_, &flag_layout_info, nullptr, &flag_layout_),
+            "vkCreatePipelineLayout(flag)");
 
     VkPushConstantRange ui_push{};
     ui_push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -872,6 +905,8 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     const auto political = load_shader_module(shader_dir_ / "political_overlay.frag.spv");
     const auto living_vertex = load_shader_module(shader_dir_ / "living.vert.spv");
     const auto living_fragment = load_shader_module(shader_dir_ / "living.frag.spv");
+    const auto flag_vertex = load_shader_module(shader_dir_ / "flag.vert.spv");
+    const auto flag_fragment = load_shader_module(shader_dir_ / "flag.frag.spv");
     const auto ui_vertex = load_shader_module(shader_dir_ / "ui.vert.spv");
     const auto ui_fragment = load_shader_module(shader_dir_ / "ui.frag.spv");
     const auto ui_textured_fragment = load_shader_module(shader_dir_ / "ui_textured.frag.spv");
@@ -953,6 +988,21 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     living_input.pVertexAttributeDescriptions = living_attributes;
     living_pipeline_ = create_pipeline(living_vertex, living_fragment, fullscreen_layout_, true, &living_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
 
+    const VkVertexInputBindingDescription flag_binding{
+        0, sizeof(DynamicFlagVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+    const VkVertexInputAttributeDescription flag_attributes[]{{
+        0, 0, VK_FORMAT_R32G32B32_SFLOAT,
+        static_cast<std::uint32_t>(offsetof(DynamicFlagVertex, x))}, {
+        1, 0, VK_FORMAT_R32G32_SFLOAT,
+        static_cast<std::uint32_t>(offsetof(DynamicFlagVertex, u))}};
+    VkPipelineVertexInputStateCreateInfo flag_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    flag_input.vertexBindingDescriptionCount = 1;
+    flag_input.pVertexBindingDescriptions = &flag_binding;
+    flag_input.vertexAttributeDescriptionCount = 2;
+    flag_input.pVertexAttributeDescriptions = flag_attributes;
+    flag_pipeline_ = create_pipeline(flag_vertex, flag_fragment, flag_layout_, true,
+                                     &flag_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
+
     const VkVertexInputBindingDescription ui_binding{0, sizeof(UiGpuVertex), VK_VERTEX_INPUT_RATE_VERTEX};
     const VkVertexInputAttributeDescription ui_attributes[]{
         {0, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<std::uint32_t>(offsetof(UiGpuVertex, x))},
@@ -973,15 +1023,20 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     vkDestroyShaderModule(device_, ui_vertex, nullptr);
     vkDestroyShaderModule(device_, living_fragment, nullptr);
     vkDestroyShaderModule(device_, living_vertex, nullptr);
+    vkDestroyShaderModule(device_, flag_fragment, nullptr);
+    vkDestroyShaderModule(device_, flag_vertex, nullptr);
     vkDestroyShaderModule(device_, political, nullptr);
     vkDestroyShaderModule(device_, ocean, nullptr);
     vkDestroyShaderModule(device_, terrain, nullptr);
     vkDestroyShaderModule(device_, fullscreen, nullptr);
 
+    // Small, unobtrusive live-renderer validation marker. Keep it near the
+    // lower-right of the map instead of occupying the primary map-reading
+    // area; the application HUD is layered over the far-right edge.
     const std::array<LivingVertex, 3> living_vertices{{
-        {-0.45f, -0.25f, 0.0f},
-        {-0.20f, -0.25f, 0.0f},
-        {-0.325f, 0.08f, 0.0f}}};
+        {0.457f, 0.840f, 0.0f},
+        {0.503f, 0.840f, 0.0f},
+        {0.480f, 0.775f, 0.0f}}};
     const std::array<float, 16> identity{{
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
@@ -991,6 +1046,18 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
                        living_vertices.data(), living_vertices_, living_vertices_memory_);
     create_host_buffer(sizeof(identity), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                        identity.data(), living_instance_, living_instance_memory_);
+
+    if (dynamic_flag_) {
+        const auto flag_vertices = dynamic_flag_->vertices();
+        const auto flag_indices = dynamic_flag_->indices();
+        if (!flag_vertices.empty() && !flag_indices.empty()) {
+            create_host_buffer(flag_vertices.size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                               flag_vertices.data(), flag_vertices_, flag_vertices_memory_);
+            create_host_buffer(flag_indices.size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                               flag_indices.data(), flag_indices_, flag_indices_memory_);
+            flag_index_count_ = static_cast<std::uint32_t>(flag_indices.size());
+        }
+    }
 
     const std::array<UiGpuVertex, 6> ui_vertices{{
         {28.0f, 28.0f, 0.0f, 0.0f, 0.06f, 0.07f, 0.09f, 0.88f},
@@ -1314,9 +1381,26 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
         vkFreeMemory(device_, living_vertices_memory_, nullptr);
         living_vertices_memory_ = VK_NULL_HANDLE;
     }
+    if (flag_indices_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, flag_indices_, nullptr);
+        flag_indices_ = VK_NULL_HANDLE;
+    }
+    if (flag_indices_memory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, flag_indices_memory_, nullptr);
+        flag_indices_memory_ = VK_NULL_HANDLE;
+    }
+    if (flag_vertices_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, flag_vertices_, nullptr);
+        flag_vertices_ = VK_NULL_HANDLE;
+    }
+    if (flag_vertices_memory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, flag_vertices_memory_, nullptr);
+        flag_vertices_memory_ = VK_NULL_HANDLE;
+    }
+    flag_index_count_ = 0;
 
-    const std::array<VkPipeline*, 7> pipelines{{
-        &ui_pipeline_, &ui_textured_pipeline_, &ui_msdf_pipeline_, &living_pipeline_,
+    const std::array<VkPipeline*, 8> pipelines{{
+        &ui_pipeline_, &ui_textured_pipeline_, &ui_msdf_pipeline_, &living_pipeline_, &flag_pipeline_,
         &political_pipeline_, &ocean_pipeline_, &terrain_pipeline_}};
     for (auto* pipeline : pipelines) {
         if (*pipeline != VK_NULL_HANDLE) {
@@ -1335,6 +1419,10 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
     if (political_layout_ != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device_, political_layout_, nullptr);
         political_layout_ = VK_NULL_HANDLE;
+    }
+    if (flag_layout_ != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device_, flag_layout_, nullptr);
+        flag_layout_ = VK_NULL_HANDLE;
     }
     if (fullscreen_layout_ != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device_, fullscreen_layout_, nullptr);
@@ -1387,6 +1475,7 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
     ui_staging_vertices_.clear();
     ui_staging_indices_.clear();
     ui_staging_batches_.clear();
+    ui_staging_modules_.clear();
 
     int logical_width = 0;
     int logical_height = 0;
@@ -1401,9 +1490,21 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
     ui_staging_vertices_.reserve(source_vertices.size());
     ui_staging_indices_.reserve(source_indices.size());
     ui_staging_batches_.reserve(ui.batches().size() + ui.text_runs().size());
+    ui_staging_modules_.reserve(ui.modules().size());
     for (const auto& vertex : source_vertices) {
         ui_staging_vertices_.push_back(ui_gpu_vertex(vertex));
     }
+    for (const auto& module : ui.modules()) {
+        if (module.module == 0 || !std::isfinite(module.rect.x) ||
+            !std::isfinite(module.rect.y) || !std::isfinite(module.rect.w) ||
+            !std::isfinite(module.rect.h) || module.rect.w <= 0.0f || module.rect.h <= 0.0f)
+            continue;
+        ui_staging_modules_.push_back(module);
+    }
+    std::stable_sort(ui_staging_modules_.begin(), ui_staging_modules_.end(),
+                     [](const UiModuleSlot& left, const UiModuleSlot& right) {
+                         return left.order < right.order;
+                     });
 
     // Validate each batch at the content boundary.  A malformed mod/UI script
     // must not be able to feed an out-of-range index to the GPU.
@@ -1419,7 +1520,7 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
         const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
         if (count != 0u) {
             ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(batch.scissor, extent_, ui_scale_x_, ui_scale_y_),
-                                                     batch.kind, batch.texture});
+                                                     batch.kind, batch.texture, batch.order});
         }
     }
 
@@ -1469,7 +1570,7 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
             const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
             if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{
                 first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
-                UiBatchKind::MsdfText, atlas.texture_hash()});
+                UiBatchKind::MsdfText, atlas.texture_hash(), run.order});
         } else if (ui_font_image_ != VK_NULL_HANDLE && ui_font_cell_ != 0u && ui_font_columns_ != 0u &&
             !ui_font_slots_.empty()) {
             float x = run.x;
@@ -1512,7 +1613,7 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
             }
             const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
             if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
-                                                                       UiBatchKind::Textured, kUiFontTextureKey});
+                                                                       UiBatchKind::Textured, kUiFontTextureKey, run.order});
         } else {
             const float cell = std::max(1.0f, run.size / 7.0f);
             float x = run.x;
@@ -1546,9 +1647,17 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
             }
             const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
             if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
-                                                                       UiBatchKind::Solid, 0});
+                                                                       UiBatchKind::Solid, 0, run.order});
         }
     }
+
+    // Preserve the draw-list's original geometry/text interleave. Tooltips,
+    // modals and other overlays are authored last and must remain above both
+    // the geometry and the text of every lower HUD layer.
+    std::stable_sort(ui_staging_batches_.begin(), ui_staging_batches_.end(),
+                     [](const UiGpuBatch& left, const UiGpuBatch& right) {
+                         return left.order < right.order;
+                     });
 
     if (!ui_staging_vertices_.empty() && !ui_staging_indices_.empty() && device_ != VK_NULL_HANDLE) {
         ensure_ui_frame_buffers();
@@ -1617,7 +1726,8 @@ void VulkanDesktopBackend::ensure_ui_frame_buffers() {
 }
 
 void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
-    if (!live_renderer_enabled_ || ui_pipeline_ == VK_NULL_HANDLE || ui_staging_indices_.empty()) return;
+    if (!live_renderer_enabled_ || ui_pipeline_ == VK_NULL_HANDLE ||
+        (ui_staging_indices_.empty() && ui_staging_modules_.empty())) return;
     const auto& frame = ui_frame_buffers_[frame_index_];
     if (frame.vertex_buffer == VK_NULL_HANDLE || frame.index_buffer == VK_NULL_HANDLE) return;
     VkViewport viewport{};
@@ -1632,8 +1742,21 @@ void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
     vkCmdBindVertexBuffers(command, 0, 1, &frame.vertex_buffer, &offset);
     vkCmdBindIndexBuffer(command, frame.index_buffer, 0, VK_INDEX_TYPE_UINT32);
     VkPipeline bound_pipeline = VK_NULL_HANDLE;
+    std::size_t module_index = 0;
+    const auto draw_modules_before = [&](std::uint64_t order) {
+        while (module_index < ui_staging_modules_.size() &&
+               ui_staging_modules_[module_index].order < order) {
+            const auto& module = ui_staging_modules_[module_index++];
+            if (module.module == ui_stable_key("dynamic_flag"))
+                record_dynamic_flag_draw(command, module);
+            vkCmdBindVertexBuffers(command, 0, 1, &frame.vertex_buffer, &offset);
+            vkCmdBindIndexBuffer(command, frame.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+            bound_pipeline = VK_NULL_HANDLE;
+        }
+    };
     for (const auto& batch : ui_staging_batches_) {
         if (batch.index_count == 0u) continue;
+        draw_modules_before(batch.order);
         const bool world_texture = batch.kind == UiBatchKind::Textured &&
                                    batch.texture == kUiWorldMapTextureKey &&
                                    ui_world_map_descriptor_set_ != VK_NULL_HANDLE;
@@ -1668,6 +1791,44 @@ void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
         }
         vkCmdDrawIndexed(command, batch.index_count, 1, batch.first_index, 0, 0);
     }
+    draw_modules_before(std::numeric_limits<std::uint64_t>::max());
+}
+
+void VulkanDesktopBackend::record_dynamic_flag_draw(VkCommandBuffer command,
+                                                     const UiModuleSlot& slot) const {
+    if (!dynamic_flag_ || flag_pipeline_ == VK_NULL_HANDLE ||
+        flag_vertices_ == VK_NULL_HANDLE || flag_indices_ == VK_NULL_HANDLE ||
+        flag_index_count_ == 0u || extent_.width == 0u || extent_.height == 0u) return;
+
+    const auto& config = dynamic_flag_->config();
+    FlagGpuPush push;
+    // Placement comes exclusively from the declarative UI module slot. The
+    // flag fills the slot and is clipped by it, so changing HUD composition
+    // never requires editing the Vulkan backend.
+    const float logical_width = std::max(ui_logical_width_, 1.0f);
+    const float logical_height = std::max(ui_logical_height_, 1.0f);
+    push.placement = {{
+        -1.0f + 2.0f * slot.rect.x / logical_width,
+        -1.0f + 2.0f * (slot.rect.y + slot.rect.h * 0.5f) / logical_height,
+        2.0f * (slot.rect.w / config.width) / logical_width,
+        2.0f * (slot.rect.h / config.height) / logical_height}};
+    push.motion = {{static_cast<float>(frames_presented_) * (config.wave_speed / 60.0f),
+                    config.wind_strength, config.wave_frequency,
+                    static_cast<float>(config.pattern)}};
+    push.primary = flag_color(config.colors[0]);
+    push.secondary = flag_color(config.colors[1]);
+    push.accent = flag_color(config.colors[2]);
+
+    const auto scissor = ui_scissor(slot.scissor, extent_, ui_scale_x_, ui_scale_y_);
+    vkCmdSetScissor(command, 0, 1, &scissor);
+    const VkDeviceSize flag_offset = 0;
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, flag_pipeline_);
+    vkCmdBindVertexBuffers(command, 0, 1, &flag_vertices_, &flag_offset);
+    vkCmdBindIndexBuffer(command, flag_indices_, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdPushConstants(command, flag_layout_,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(push), &push);
+    vkCmdDrawIndexed(command, flag_index_count_, 1, 0, 0, 0);
 }
 
 void VulkanDesktopBackend::record_live_validation_draws(VkCommandBuffer command) const {
@@ -1685,14 +1846,21 @@ void VulkanDesktopBackend::record_live_validation_draws(VkCommandBuffer command)
     vkCmdSetScissor(command, 0, 1, &scissor);
 
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_pipeline_);
+    vkCmdPushConstants(command, fullscreen_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+                       0, sizeof(map_view_), map_view_);
     vkCmdDraw(command, 3, 1, 0, 0);
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ocean_pipeline_);
+    vkCmdPushConstants(command, fullscreen_layout_, VK_SHADER_STAGE_VERTEX_BIT,
+                       0, sizeof(map_view_), map_view_);
     vkCmdDraw(command, 3, 1, 0, 0);
 
-    const std::array<float, 4> political_color{{0.34f, 0.18f, 0.12f, 0.22f}};
+    const std::array<float, 8> political_push{{
+        map_view_[0], map_view_[1], map_view_[2], map_view_[3],
+        0.30f, 0.19f, 0.09f, 0.10f}};
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, political_pipeline_);
-    vkCmdPushConstants(command, political_layout_, VK_SHADER_STAGE_FRAGMENT_BIT,
-                       0, sizeof(political_color), political_color.data());
+    vkCmdPushConstants(command, political_layout_,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(political_push), political_push.data());
     vkCmdDraw(command, 3, 1, 0, 0);
 
     const VkBuffer living_buffers[]{living_vertices_, living_instance_};

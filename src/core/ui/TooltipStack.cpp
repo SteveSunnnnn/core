@@ -175,6 +175,7 @@ bool TooltipStack::on_mouse_click(float x, float y) {
 }
 
 void TooltipStack::render(UiDrawList& ui, UiRect /*screen*/) const {
+    const auto& t = ui.theme();
     for (const auto& frame : frames_) {
         // Parchment base panel
         ui.parchment_panel(frame.bounds);
@@ -183,25 +184,35 @@ void TooltipStack::render(UiDrawList& ui, UiRect /*screen*/) const {
 
         if (!frame.title.empty()) {
             ui.leather_panel({frame.bounds.x + 2.0f, frame.bounds.y + 2.0f, frame.bounds.w - 4.0f, 22.0f});
-            ui.text(frame.title, frame.bounds.x + kTooltipPadding + 4.0f, current_y - 2.0f, 13.0f, 0xffd4af37u);
+            ui.text(frame.title, frame.bounds.x + kTooltipPadding + 4.0f, current_y - 2.0f,
+                    t.type.body, t.colors.text_gold);
             current_y += 24.0f;
+            // Hairline rule separating the title plaque from the body
+            ui.quad({frame.bounds.x + kTooltipPadding, current_y - 3.0f,
+                     frame.bounds.w - kTooltipPadding * 2.0f, 1.0f},
+                    ui_blend(t.colors.border_gold, 0x00000000u, 0.45f));
         }
 
         if (frame.depth > 0) {
-            // Depth bracket line
-            ui.quad({frame.bounds.x + 1.0f, frame.bounds.y + 1.0f, 3.0f, frame.bounds.h - 2.0f}, 0xffd4af37u);
+            // Depth bracket line marks nested tooltips
+            ui.quad({frame.bounds.x + 1.0f, frame.bounds.y + 1.0f, 3.0f, frame.bounds.h - 2.0f},
+                    t.colors.border_gold);
         }
 
         if (frame.is_locked) {
             // Brass lock indicator
-            ui.quad({frame.bounds.x + frame.bounds.w - 14.0f, frame.bounds.y + 4.0f, 8.0f, 8.0f}, 0xffd4af37u);
+            ui.quad({frame.bounds.x + frame.bounds.w - 14.0f, frame.bounds.y + 4.0f, 8.0f, 8.0f},
+                    t.colors.border_gold);
         }
 
-        ui.text(frame.parsed_body, frame.bounds.x + kTooltipPadding, current_y, 12.0f, 0xff160b06u);
+        ui.text(frame.parsed_body, frame.bounds.x + kTooltipPadding, current_y,
+                t.type.secondary, t.materials.parchment_text);
 
         for (const auto& term : frame.terms) {
-            ui.quad({term.hit_rect.x, term.hit_rect.y + term.hit_rect.h - 2.0f, term.hit_rect.w, 1.0f}, 0xffd4af37u);
-            ui.text(term.display_text, term.hit_rect.x, term.hit_rect.y, 12.0f, 0xffd4af37u);
+            ui.quad({term.hit_rect.x, term.hit_rect.y + term.hit_rect.h - 2.0f, term.hit_rect.w, 1.0f},
+                    t.colors.border_gold);
+            ui.text(term.display_text, term.hit_rect.x, term.hit_rect.y,
+                    t.type.secondary, t.colors.gold);
         }
     }
 }

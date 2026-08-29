@@ -134,6 +134,7 @@ void GuiLayoutEditor::on_delete_key() {
 }
 
 void GuiLayoutEditor::render_widgets(UiDrawList& ui, UiRect /*screen*/) const {
+    const auto& t = ui.theme();
     for (const auto& w : widgets_) {
         if (w.type == "panel") {
             ui.wood_panel(w.bounds);
@@ -144,13 +145,15 @@ void GuiLayoutEditor::render_widgets(UiDrawList& ui, UiRect /*screen*/) const {
         } else if (w.type == "progress_bar") {
             ui.progress_bar(w.bounds, 0.65f);
         } else {
-            ui.quad(w.bounds, 0x40d4af37u);
-            ui.text(w.label.empty() ? w.type : w.label, w.bounds.x + 4.0f, w.bounds.y + 4.0f, 13.0f, 0xffffffffu);
+            ui.quad(w.bounds, ui_blend(0x00000000u, t.colors.state_selected, 0.25f));
+            ui.text(w.label.empty() ? w.type : w.label, w.bounds.x + 4.0f, w.bounds.y + 4.0f,
+                    t.type.body, t.colors.text_primary);
         }
     }
 }
 
 void GuiLayoutEditor::render_overlay(UiDrawList& ui, UiRect /*screen*/) const {
+    const auto& t = ui.theme();
     if (auto* w = selected_widget()) {
         std::vector<float> box_pts{
             w->bounds.x, w->bounds.y,
@@ -159,36 +162,37 @@ void GuiLayoutEditor::render_overlay(UiDrawList& ui, UiRect /*screen*/) const {
             w->bounds.x, w->bounds.y + w->bounds.h,
             w->bounds.x, w->bounds.y
         };
-        ui.polyline(box_pts, 0xff00ffffu);
-        
+        ui.polyline(box_pts, t.colors.state_focus);
+
         float hs = kHandleSize;
-        ui.quad({w->bounds.x - hs * 0.5f, w->bounds.y - hs * 0.5f, hs, hs}, 0xffd4af37u);
-        ui.quad({w->bounds.x + w->bounds.w - hs * 0.5f, w->bounds.y - hs * 0.5f, hs, hs}, 0xffd4af37u);
-        ui.quad({w->bounds.x - hs * 0.5f, w->bounds.y + w->bounds.h - hs * 0.5f, hs, hs}, 0xffd4af37u);
-        ui.quad({w->bounds.x + w->bounds.w - hs * 0.5f, w->bounds.y + w->bounds.h - hs * 0.5f, hs, hs}, 0xffd4af37u);
+        ui.quad({w->bounds.x - hs * 0.5f, w->bounds.y - hs * 0.5f, hs, hs}, t.colors.border_selected);
+        ui.quad({w->bounds.x + w->bounds.w - hs * 0.5f, w->bounds.y - hs * 0.5f, hs, hs}, t.colors.border_selected);
+        ui.quad({w->bounds.x - hs * 0.5f, w->bounds.y + w->bounds.h - hs * 0.5f, hs, hs}, t.colors.border_selected);
+        ui.quad({w->bounds.x + w->bounds.w - hs * 0.5f, w->bounds.y + w->bounds.h - hs * 0.5f, hs, hs}, t.colors.border_selected);
     }
 }
 
 void GuiLayoutEditor::render_property_panel(UiDrawList& ui, UiRect screen) const {
+    const auto& t = ui.theme();
     float pw = 240.0f;
     float ph = 300.0f;
     float px = screen.x + screen.w - pw - 12.0f;
     float py = screen.y + 44.0f;
-    
+
     ui.parchment_panel({px, py, pw, ph});
-    ui.text("GUI LAYOUT INSPECTOR", px + 12.0f, py + 12.0f, 14.0f, 0xff3b2413u);
-    ui.quad({px + 12.0f, py + 28.0f, pw - 24.0f, 1.0f}, 0xff8c6d46u);
-    
+    ui.text("GUI LAYOUT INSPECTOR", px + 12.0f, py + 12.0f, t.type.major_header, t.materials.parchment_margin);
+    ui.quad({px + 12.0f, py + 28.0f, pw - 24.0f, 1.0f}, t.colors.border_normal);
+
     if (auto* w = selected_widget()) {
-        ui.text("ID: #" + std::to_string(w->id), px + 14.0f, py + 38.0f, 12.0f, 0xff1e1208u);
-        ui.text("Type: " + w->type, px + 14.0f, py + 58.0f, 12.0f, 0xff1e1208u);
-        ui.text("Label: " + w->label, px + 14.0f, py + 78.0f, 12.0f, 0xff1e1208u);
-        ui.text("X: " + std::to_string(static_cast<int>(w->bounds.x)), px + 14.0f, py + 98.0f, 12.0f, 0xff1e1208u);
-        ui.text("Y: " + std::to_string(static_cast<int>(w->bounds.y)), px + 14.0f, py + 118.0f, 12.0f, 0xff1e1208u);
-        ui.text("W: " + std::to_string(static_cast<int>(w->bounds.w)), px + 14.0f, py + 138.0f, 12.0f, 0xff1e1208u);
-        ui.text("H: " + std::to_string(static_cast<int>(w->bounds.h)), px + 14.0f, py + 158.0f, 12.0f, 0xff1e1208u);
+        ui.text("ID: #" + std::to_string(w->id), px + 14.0f, py + 38.0f, t.type.secondary, t.materials.parchment_text);
+        ui.text("Type: " + w->type, px + 14.0f, py + 58.0f, t.type.secondary, t.materials.parchment_text);
+        ui.text("Label: " + w->label, px + 14.0f, py + 78.0f, t.type.secondary, t.materials.parchment_text);
+        ui.text("X: " + std::to_string(static_cast<int>(w->bounds.x)), px + 14.0f, py + 98.0f, t.type.secondary, t.materials.parchment_text);
+        ui.text("Y: " + std::to_string(static_cast<int>(w->bounds.y)), px + 14.0f, py + 118.0f, t.type.secondary, t.materials.parchment_text);
+        ui.text("W: " + std::to_string(static_cast<int>(w->bounds.w)), px + 14.0f, py + 138.0f, t.type.secondary, t.materials.parchment_text);
+        ui.text("H: " + std::to_string(static_cast<int>(w->bounds.h)), px + 14.0f, py + 158.0f, t.type.secondary, t.materials.parchment_text);
     } else {
-        ui.text("No widget selected", px + 14.0f, py + 48.0f, 12.0f, 0xff705030u);
+        ui.text("No widget selected", px + 14.0f, py + 48.0f, t.type.secondary, t.materials.parchment_text_muted);
     }
 }
 

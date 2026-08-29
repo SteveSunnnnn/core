@@ -37,18 +37,35 @@ public:
                 bool paused,
                 std::optional<core::ProvinceId> selected_province);
     void paint(core::UiDrawList& draw_list, core::UiRect screen) const;
-    bool activate(std::uint64_t hit_id) noexcept;
+    bool activate(std::uint64_t hit_id, int* speed = nullptr, bool* paused = nullptr) noexcept;
+    void set_hovered(std::optional<std::uint64_t> hit_id) noexcept;
+    void set_pressed(std::optional<std::uint64_t> hit_id) noexcept;
+    void set_focused(std::optional<std::uint64_t> hit_id) noexcept;
+    void advance_interactions(float dt_seconds) noexcept;
     [[nodiscard]] bool loaded() const noexcept { return runtime_ != nullptr; }
 
 private:
     enum class Page : std::uint8_t {
-        Politics, Buildings, Market, Population, Technology, Military, Diplomacy, Count
+        Politics, Buildings, Market, Economy, Population, Technology, Military, Diplomacy, Count
+    };
+    enum class EconomyPage : std::uint8_t {
+        Treasury, Currency, Banking, Debt, Count
     };
     enum PropertySlot : std::uint16_t {
         CountryName, Rank, Treasury, Balance, Population, Gdp, Date, Speed,
         SelectedName, SelectedState, SelectedPopulation, SelectedInfrastructure,
-        PoliticsActive, BuildingsActive, MarketActive, PopulationActive,
-        TechnologyActive, MilitaryActive, DiplomacyActive, PropertyCount
+        CurrencyName, MonetaryStandard, ExchangeRate, Convertibility,
+        GoldParity, SilverParity, ForeignReserves, Seigniorage,
+        MonetarySovereign, BankStatus, BankReserves, BankDeposits, BankEquity,
+        BankLoans, BankBonds, BankNonperforming, BankLendable, ReserveRequirement,
+        DepositRate, LoanRate, NationalDebt, DebtToGdp, CreditRating, BondYield,
+        WeeklyDebtService, BorrowingCapacity, DefaultStatus,
+        PoliticsActive, BuildingsActive, MarketActive, EconomyActive, PopulationActive,
+        TechnologyActive, MilitaryActive, DiplomacyActive,
+        TreasuryPageActive, CurrencyPageActive, BankingPageActive, DebtPageActive,
+        LocationSelected, NoLocationSelected, PausedActive,
+        Speed1Active, Speed2Active, Speed3Active, Speed4Active, Speed5Active,
+        PropertyCount
     };
 
     bool read_property(core::UiDataEntityRef source,
@@ -59,6 +76,7 @@ private:
                             core::UiDataEntityRef&) const noexcept override { return false; }
 
     void set_page(Page page) noexcept;
+    void set_economy_page(EconomyPage page) noexcept;
     [[nodiscard]] std::string resolve_text(core::UiStableKey key) const;
 
     core::SymbolTable symbols_;
@@ -68,10 +86,20 @@ private:
     std::unique_ptr<core::ScriptedGuiRuntime> runtime_;
     std::unique_ptr<core::ScriptedGuiPainter> painter_;
     std::unordered_map<core::UiStableKey, std::string> text_;
-    std::array<std::string, 12> text_values_{};
-    std::array<bool, 7> page_active_{};
-    std::array<core::UiStableKey, 7> page_commands_{};
-    Page active_page_ = Page::Politics;
+    std::array<std::string, PoliticsActive> text_values_{};
+    std::array<bool, static_cast<std::size_t>(Page::Count)> page_active_{};
+    std::array<bool, static_cast<std::size_t>(EconomyPage::Count)> economy_page_active_{};
+    std::uint64_t hovered_id_ = 0;
+    std::uint64_t pressed_id_ = 0;
+    std::uint64_t focused_id_ = 0;
+    std::array<core::UiStableKey, static_cast<std::size_t>(Page::Count)> page_commands_{};
+    std::array<core::UiStableKey, static_cast<std::size_t>(EconomyPage::Count)> economy_page_commands_{};
+    std::array<core::UiStableKey, 6> time_commands_{};
+    Page active_page_ = Page::Population;
+    EconomyPage active_economy_page_ = EconomyPage::Treasury;
+    bool location_selected_ = false;
+    bool paused_ = true;
+    int speed_ = 3;
 };
 
 } // namespace game

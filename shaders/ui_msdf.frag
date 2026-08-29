@@ -24,7 +24,11 @@ void main() {
     // derivatives keep coverage stable from small labels to large headings.
     vec2 unitRange = vec2(max(pc.pxRange, 1.0)) / vec2(textureSize(atlas, 0));
     vec2 screenTexSize = vec2(1.0) / max(fwidth(uv), vec2(1e-6));
-    float screenPxRange = max(0.5 * dot(unitRange, screenTexSize), 1.0);
-    float alpha = clamp(signedDistance * screenPxRange + 0.5, 0.0, 1.0);
+    float screenPxRange = max(0.5 * dot(unitRange, screenTexSize), 1.15);
+    // A tiny coverage bias keeps high-contrast serif hairlines from turning
+    // grey at dense HUD sizes while derivative scaling preserves large-title
+    // edges. This is the MSDF equivalent of restrained small-size hinting.
+    float smallGlyphBias = mix(0.035, 0.0, clamp((screenPxRange - 1.15) / 2.0, 0.0, 1.0));
+    float alpha = clamp((signedDistance + smallGlyphBias) * screenPxRange + 0.5, 0.0, 1.0);
     outColor = vec4(color.rgb, color.a * alpha);
 }

@@ -16,6 +16,20 @@ for GitHub language statistics.
 - Imported version: Vulkan 1.4 Header Release (`VK_HEADER_VERSION 360` / `1.4.360`, compatible with Vulkan SDK 1.4.303+)
 - Imported revision: `b51f6b865c18fc5b33990d12f75e8dfd672cede6`
 
+## Bundled UI fonts
+
+`assets/fonts/` ships MSDF atlases baked from two fonts distributed under the
+SIL Open Font License 1.1:
+
+- **Playfair Display Bold** (display/title atlas `ui_display`) — Copyright 2017
+  The Playfair Display Project Authors (https://github.com/clausru/Playfair-Display).
+- **EB Garamond Medium** (body atlas `ui_body`) — Copyright 2017 The EB Garamond
+  Project Authors (https://github.com/octaviopardo/EBGaramond12).
+
+Both are licensed under the SIL Open Font License, Version 1.1; see
+https://openfontlicense.org for the full license text. The atlases were
+generated with `tools/assets/cook_fonts.py` (msdf-atlas-gen, MIT).
+
 ## Acquired or detected at build time
 
 - SDL 3.4.14 is fetched by CMake (`libsdl-org/SDL` tagged `release-3.4.14`) only when

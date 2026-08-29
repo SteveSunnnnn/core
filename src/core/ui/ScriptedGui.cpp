@@ -259,6 +259,7 @@ struct NodeKeyRecord {
     if (name == "label") return UiWidgetKind::Label;
     if (name == "button") return UiWidgetKind::Button;
     if (name == "image") return UiWidgetKind::Image;
+    if (name == "module") return UiWidgetKind::Module;
     if (name == "scroll_view") return UiWidgetKind::ScrollView;
     if (name == "list") return UiWidgetKind::List;
     if (name == "grid") return UiWidgetKind::Grid;
@@ -447,9 +448,17 @@ private:
             key == "max_height" || key == "grow") return true;
         if (key == "children") return is_container(kind);
         if (key == "gap") return kind == UiWidgetKind::Row || kind == UiWidgetKind::Column;
-        if (key == "text") return kind == UiWidgetKind::Label || kind == UiWidgetKind::Button;
+        if (key == "text") return kind == UiWidgetKind::Label || kind == UiWidgetKind::Button ||
+                                  kind == UiWidgetKind::Panel;
         if (key == "icon") return kind == UiWidgetKind::Image || kind == UiWidgetKind::Button;
+        if (key == "module") return kind == UiWidgetKind::Module;
         if (key == "selected") return kind == UiWidgetKind::Button;
+        if (key == "hovered" || key == "pressed" || key == "focused")
+            return kind == UiWidgetKind::Button;
+        if (key == "style") return kind == UiWidgetKind::Panel ||
+                                   kind == UiWidgetKind::Button ||
+                                   kind == UiWidgetKind::Label ||
+                                   kind == UiWidgetKind::Image;
         if (key == "value") return kind == UiWidgetKind::Progress;
         if (key == "template") return kind == UiWidgetKind::TemplateInstance;
         if (key == "items" || key == "item_template" || key == "row_height" ||
@@ -904,6 +913,9 @@ private:
                 (void)compile_binding(icon_field, UiBindingTarget::Icon, UiValueType::Asset, context_id);
             else constant_symbol(icon_field, UiConstantTarget::Icon, UiValueType::Asset);
         }
+        const auto* module_field = field(block.children, "module");
+        if (module_field != nullptr)
+            constant_symbol(module_field, UiConstantTarget::Module, UiValueType::Asset);
         const auto* value_field = field(block.children, "value");
         if (value_field != nullptr) {
             if (value_field->kind == ScriptValueKind::Block)
@@ -916,6 +928,63 @@ private:
                 (void)compile_binding(selected_field, UiBindingTarget::Selected,
                                       UiValueType::Boolean, context_id);
             else constant_bool(selected_field, UiConstantTarget::Selected);
+        }
+        const auto* hovered_field = field(block.children, "hovered");
+        if (hovered_field != nullptr) constant_bool(hovered_field, UiConstantTarget::Hovered);
+        const auto* pressed_field = field(block.children, "pressed");
+        if (pressed_field != nullptr) constant_bool(pressed_field, UiConstantTarget::Pressed);
+        const auto* focused_field = field(block.children, "focused");
+        if (focused_field != nullptr) constant_bool(focused_field, UiConstantTarget::Focused);
+        const auto* style_field = field(block.children, "style");
+        if (style_field != nullptr) {
+            if (style_field->kind != ScriptValueKind::Symbol) {
+                diagnostic(ScriptedGuiDiagnosticCode::InvalidValue,
+                           "style requires a known semantic UI style",
+                           style_field->line, style_field->column);
+            } else {
+                const std::string_view style_name = text(style_field->symbol);
+                UiSurfaceStyle style = UiSurfaceStyle::Standard;
+                bool known = true;
+                if (style_name == "wood") style = UiSurfaceStyle::Wood;
+                else if (style_name == "parchment") style = UiSurfaceStyle::Parchment;
+                else if (style_name == "leather") style = UiSurfaceStyle::Leather;
+                else if (style_name == "recessed") style = UiSurfaceStyle::Recessed;
+                else if (style_name == "hud") style = UiSurfaceStyle::Hud;
+                else if (style_name == "dock") style = UiSurfaceStyle::Dock;
+                else if (style_name == "stat") style = UiSurfaceStyle::Stat;
+                else if (style_name == "section") style = UiSurfaceStyle::Section;
+                else if (style_name == "nav") style = UiSurfaceStyle::Nav;
+                else if (style_name == "primary") style = UiSurfaceStyle::Primary;
+                else if (style_name == "secondary") style = UiSurfaceStyle::Secondary;
+                else if (style_name == "positive") style = UiSurfaceStyle::Positive;
+                else if (style_name == "empty") style = UiSurfaceStyle::Empty;
+                else if (style_name == "time") style = UiSurfaceStyle::Time;
+                else if (style_name == "top") style = UiSurfaceStyle::Top;
+                else if (style_name == "country") style = UiSurfaceStyle::Country;
+                else if (style_name == "footer") style = UiSurfaceStyle::Footer;
+                else if (style_name == "tab") style = UiSurfaceStyle::Tab;
+                else if (style_name == "medallion") style = UiSurfaceStyle::Medallion;
+                else if (style_name == "tool_primary") style = UiSurfaceStyle::ToolPrimary;
+                else if (style_name == "tool_secondary") style = UiSurfaceStyle::ToolSecondary;
+                else if (style_name == "tool_utility") style = UiSurfaceStyle::ToolUtility;
+                else if (style_name == "menu_row") style = UiSurfaceStyle::MenuRow;
+                else if (style_name == "icon_inset") style = UiSurfaceStyle::IconInset;
+                else if (style_name == "utility") style = UiSurfaceStyle::Utility;
+                else if (style_name == "outliner") style = UiSurfaceStyle::Outliner;
+                else if (style_name == "outliner_group") style = UiSurfaceStyle::OutlinerGroup;
+                else if (style_name == "outliner_row") style = UiSurfaceStyle::OutlinerRow;
+                else if (style_name == "center") style = UiSurfaceStyle::Center;
+                else if (style_name == "center_muted") style = UiSurfaceStyle::CenterMuted;
+                else if (style_name != "standard") known = false;
+                if (!known) {
+                    diagnostic(ScriptedGuiDiagnosticCode::InvalidValue,
+                               "unknown surface style '" + std::string{style_name} + "'",
+                               style_field->line, style_field->column);
+                } else {
+                    result_.blueprint.constants_.push_back(
+                        {static_cast<std::uint64_t>(style), UiConstantTarget::Style, UiValueType::None});
+                }
+            }
         }
 
         constant_number(field(block.children, "width"), UiConstantTarget::Width);

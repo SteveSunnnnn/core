@@ -11,9 +11,22 @@
 #include <utility>
 #include <vector>
 
+#include "core/ui/UiTheme.hpp"
+
 namespace core {
 
 struct UiRect { float x=0, y=0, w=0, h=0; };
+struct UiControlVisualState {
+    bool enabled = true;
+    bool selected = false;
+    bool hovered = false;
+    bool pressed = false;
+    bool focused = false;
+    float hover_mix = 0.0f;
+    float press_mix = 0.0f;
+    float selected_mix = 0.0f;
+    float focus_mix = 0.0f;
+};
 struct UiInsets { float left=0, top=0, right=0, bottom=0; };
 struct UiNineSlice { UiRect outer_uv{0,0,1,1}; UiRect inner_uv{0,0,1,1}; UiInsets border{}; };
 struct UiVertex { float x=0, y=0, u=0, v=0; std::uint32_t rgba=0xffffffffu; };
@@ -23,9 +36,13 @@ enum class UiBatchKind : std::uint8_t { Solid, Textured, MsdfText, Polyline };
 // simulation or UI draw-list data depend on a particular game/content pack.
 inline constexpr std::uint64_t kUiWorldMapTextureKey = 0x434f5245574d4150ull; // "COREWMAP"
 inline constexpr std::uint64_t kUiFontTextureKey = 0x434f5245464e54ull; // "COREFNT"
-struct UiBatch { UiBatchKind kind=UiBatchKind::Solid; std::uint32_t first_index=0, index_count=0; std::uint64_t texture=0; UiRect scissor{}; };
+struct UiBatch { UiBatchKind kind=UiBatchKind::Solid; std::uint32_t first_index=0, index_count=0; std::uint64_t texture=0; UiRect scissor{}; std::uint64_t order=0; };
 struct UiHitRegion { std::uint64_t id=0; UiRect rect{}; };
-struct UiTextRun { std::string utf8; float x=0, y=0, size=16; std::uint32_t rgba=0xffffffffu; UiRect scissor{}; };
+struct UiTextRun { std::string utf8; float x=0, y=0, size=16; std::uint32_t rgba=0xffffffffu; UiRect scissor{}; std::uint64_t order=0; };
+// Backend-rendered module slot authored by the declarative UI. The draw list
+// owns placement, clipping and ordering; render backends only resolve the
+// stable module key to an installed module implementation.
+struct UiModuleSlot { std::uint64_t module=0; UiRect rect{}; UiRect scissor{}; std::uint64_t order=0; };
 
 class UiDrawList {
 public:
@@ -45,8 +62,28 @@ public:
                  std::uint64_t texture = 0,
                  UiBatchKind kind = UiBatchKind::Textured);
     void polyline(std::span<const float> xy, std::uint32_t rgba, UiRect scissor = {});
+    void radial_disc(float cx, float cy, float radius,
+                     std::uint32_t center_rgba, std::uint32_t edge_rgba,
+                     UiRect scissor = {}, std::uint32_t segments = 32);
     void nine_slice(UiRect rect, const UiNineSlice& slice, std::uint32_t rgba,
                     std::uint64_t texture, UiRect scissor = {});
+
+    // Smooth shading primitives. quad_gradient colors the two edges with
+    // different rgba values and lets the rasterizer interpolate between
+    // them (one quad, no banding). drop_shadow emits stacked translucent
+    // layers to approximate a soft penumbra around a raised surface.
+    void quad_gradient(UiRect rect, std::uint32_t start_rgba, std::uint32_t end_rgba,
+                       bool vertical = true, UiRect scissor = {},
+                       std::uint64_t texture = 0, UiBatchKind kind = UiBatchKind::Solid);
+    void drop_shadow(UiRect rect, std::uint32_t rgba, float blur_radius,
+                     float offset_x = 0.0f, float offset_y = 2.0f, UiRect scissor = {});
+
+    // Theme control. Every material and component below reads its palette,
+    // metrics and typography from this theme. A null pointer resolves to the
+    // engine default (UiTheme::victorian), so freshly created draw lists and
+    // dynamically generated UI always render in the house style.
+    void set_theme(const UiTheme* theme) noexcept { theme_ = theme; }
+    [[nodiscard]] const UiTheme& theme() const noexcept { return theme_ ? *theme_ : UiTheme::victorian(); }
 
     // Ornamental strategy-game materials and panels
     void panel(UiRect rect, std::uint32_t background_rgba, std::uint32_t border_rgba,
@@ -54,18 +91,26 @@ public:
                UiRect scissor = {});
     void wood_panel(UiRect rect, UiRect scissor = {});
     void parchment_panel(UiRect rect, UiRect scissor = {});
-    void leather_panel(UiRect rect, std::uint32_t leather_color = 0xff2b1014u, UiRect scissor = {});
+    void leather_panel(UiRect rect, std::uint32_t leather_color = 0, UiRect scissor = {});
     void brass_button(UiRect rect, const std::string& label, bool pressed = false, UiRect scissor = {});
+    void medallion_button(UiRect rect, bool selected = false, bool hovered = false,
+                          bool enabled = true, UiRect scissor = {});
+    void medallion_button(UiRect rect, const UiControlVisualState& state,
+                          bool primary = false, UiRect scissor = {});
+    void mechanical_button(UiRect rect, const UiControlVisualState& state,
+                           UiRect scissor = {});
+    void category_row(UiRect rect, const UiControlVisualState& state,
+                      UiRect scissor = {});
     void wax_seal(float cx, float cy, float radius = 18.0f, UiRect scissor = {});
-    void progress_bar(UiRect rect, float fraction, std::uint32_t fill_color = 0xffd4af37u,
-                      std::uint32_t bg_color = 0xff1e1208u, UiRect scissor = {});
+    void progress_bar(UiRect rect, float fraction, std::uint32_t fill_color = 0,
+                      std::uint32_t bg_color = 0, UiRect scissor = {});
     void parliament_arc(float cx, float cy, float inner_radius, float outer_radius,
                         std::span<const std::pair<std::uint32_t, int>> seat_groups,
                         UiRect scissor = {});
     void gauge_balance(UiRect rect, float buy_orders, float sell_orders, UiRect scissor = {});
     void ink_chart(UiRect rect, std::span<const float> values,
-                   std::uint32_t ink_rgba = 0xff2a180eu,
-                   std::uint32_t fill_rgba = 0x203a2010u,
+                   std::uint32_t ink_rgba = 0,
+                   std::uint32_t fill_rgba = 0,
                    UiRect scissor = {});
     void construction_queue_row(UiRect rect, const std::string& name, const std::string& kind_label,
                                 float progress_ratio, const std::string& eta_text,
@@ -74,13 +119,49 @@ public:
                                  const std::string& input_text, bool is_import,
                                  UiRect scissor = {});
 
+    // Generic themed components. All of them take content only; the visual
+    // language (materials, borders, typography, states) comes from the theme.
+    void v_gradient(UiRect rect, std::uint32_t top_rgba, std::uint32_t bottom_rgba,
+                    int bands = 6, UiRect scissor = {});
+    void corner_ornaments(UiRect rect, std::uint32_t rgba = 0, float size = 5.0f, UiRect scissor = {});
+    void divider_ornament(UiRect rect, UiRect scissor = {});
+    void separator(UiRect rect, UiRect scissor = {});
+    void ornate_header(UiRect rect, const std::string& title, UiRect scissor = {});
+    void window_frame(UiRect rect, const std::string& title, UiRect scissor = {});
+    void tab(UiRect rect, const std::string& label, bool active = false,
+             bool hovered = false, UiRect scissor = {});
+    void dropdown_row(UiRect rect, const std::string& label, bool hovered = false,
+                      bool selected = false, bool disabled = false, UiRect scissor = {});
+    void checkbox(UiRect rect, bool checked = false, bool hovered = false,
+                  bool disabled = false, UiRect scissor = {});
+    void radio(UiRect rect, bool selected = false, bool hovered = false,
+               bool disabled = false, UiRect scissor = {});
+    void slider(UiRect rect, float fraction, bool hovered = false, UiRect scissor = {});
+    void scrollbar(UiRect rect, float thumb_start_fraction, float thumb_size_fraction,
+                   bool hovered = false, UiRect scissor = {});
+    void input_box(UiRect rect, const std::string& text, bool focused = false,
+                   UiRect scissor = {});
+    void list_row(UiRect rect, const std::string& primary, const std::string& secondary,
+                  const std::string& value = {}, bool hovered = false, bool selected = false,
+                  bool striped = false, UiRect scissor = {});
+    void table_header_cell(UiRect rect, const std::string& label, bool right_aligned = false,
+                           UiRect scissor = {});
+    void stat_row(UiRect rect, const std::string& label, const std::string& value,
+                  const std::string& delta = {}, UiRect scissor = {});
+    void notification_card(UiRect rect, const std::string& title, const std::string& body,
+                           int severity = 3, UiRect scissor = {});
+    void modal_window(UiRect rect, const std::string& title, const std::string& body,
+                      UiRect scissor = {});
+
     void text(std::string utf8, float x, float y, float size, std::uint32_t rgba, UiRect scissor = {});
+    void module(std::uint64_t module_key, UiRect rect, UiRect scissor = {});
     void hit(std::uint64_t id, UiRect rect);
     [[nodiscard]] std::optional<std::uint64_t> hit_test(float x, float y) const noexcept;
     [[nodiscard]] std::span<const UiVertex> vertices() const noexcept { return vertices_; }
     [[nodiscard]] std::span<const std::uint32_t> indices() const noexcept { return indices_; }
     [[nodiscard]] std::span<const UiBatch> batches() const noexcept { return batches_; }
     [[nodiscard]] std::span<const UiTextRun> text_runs() const noexcept { return text_; }
+    [[nodiscard]] std::span<const UiModuleSlot> modules() const noexcept { return modules_; }
     [[nodiscard]] std::span<const UiHitRegion> hits() const noexcept { return hits_; }
 private:
     void append_quad_batch(UiBatchKind kind, std::uint32_t first, std::uint32_t count,
@@ -89,7 +170,11 @@ private:
     std::vector<std::uint32_t> indices_;
     std::vector<UiBatch> batches_;
     std::vector<UiTextRun> text_;
+    std::vector<UiModuleSlot> modules_;
     std::vector<UiHitRegion> hits_;
+    const UiTheme* theme_ = nullptr;
+    std::uint64_t next_order_ = 0;
+    bool last_was_geometry_ = false;
 };
 
 struct UiVirtualWindow { std::size_t first=0, count=0; float top_padding=0, bottom_padding=0; };

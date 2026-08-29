@@ -1,6 +1,8 @@
 #include "core/render/map/VectorMapPipeline.hpp"
+#include "core/render/flag/DynamicFlag3D.hpp"
 #include "core/render/water/PhysicalWaterPass.hpp"
 #include "core/ui/StrategyUi.hpp"
+#include "core/ui/ScriptedGui.hpp"
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -154,6 +156,46 @@ int main() {
                                         std::numeric_limits<float>::max()).count == 0u);
 
         std::cout << "  [PASS] Wood Panel, Parchment, Brass Button, and Ink Chart\n";
+    }
+
+    // 4. Dynamic 3D flag mesh and strict UI overlay ordering
+    {
+        DynamicFlag3DConfig config;
+        config.columns = 16;
+        config.rows = 8;
+        config.pattern = DynamicFlagPattern::CrossSaltire;
+        DynamicFlag3D flag{config};
+        const auto cloth_vertices = static_cast<std::size_t>(config.columns) * config.rows;
+        const auto cloth_indices = static_cast<std::size_t>(config.columns - 1u) *
+                                   (config.rows - 1u) * 6u;
+        assert(flag.vertices().size() == cloth_vertices);
+        assert(flag.indices().size() == cloth_indices);
+        flag.update(0.75f);
+        for (std::size_t row = 0; row < config.rows; ++row) {
+            const auto& pinned = flag.vertices()[row * config.columns];
+            assert(std::abs(pinned.z) < 1e-6f);
+        }
+        bool free_edge_moved = false;
+        for (std::size_t row = 0; row < config.rows; ++row) {
+            const auto& free_edge = flag.vertices()[row * config.columns + config.columns - 1u];
+            free_edge_moved = free_edge_moved || std::abs(free_edge.z) > 1e-4f;
+        }
+        assert(free_edge_moved);
+
+        UiDrawList layered;
+        layered.quad({0, 0, 100, 40}, 0xff111111u);
+        layered.module(ui_stable_key("dynamic_flag"), {2, 2, 40, 24}, {0, 0, 100, 40});
+        layered.text("under", 4, 4, 12, 0xffffffffu);
+        layered.quad({10, 10, 80, 30}, 0xff222222u);
+        layered.text("overlay", 14, 14, 12, 0xffffffffu);
+        assert(layered.modules().size() == 1u);
+        assert(layered.batches().size() == 2u);
+        assert(layered.batches()[0].order < layered.modules()[0].order);
+        assert(layered.modules()[0].order < layered.text_runs()[0].order);
+        assert(layered.text_runs()[0].order < layered.batches()[1].order);
+        assert(layered.batches()[1].order < layered.text_runs()[1].order);
+
+        std::cout << "  [PASS] Dynamic 3D flag cloth and UI overlay ordering\n";
     }
 
     std::cout << "=== ALL VECTOR MAP AND UI TESTS PASSED (100%) ===\n";

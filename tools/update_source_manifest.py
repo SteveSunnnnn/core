@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIRS = (
     ".github",
+    "assets",
     "bench",
     "cmake",
     "content",

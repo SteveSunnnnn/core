@@ -31,6 +31,8 @@ public:
     // Clock speed manipulation
     void set_speed(std::uint8_t speed) noexcept;
     void toggle_pause() noexcept;
+    [[nodiscard]] bool is_paused() const noexcept { return is_paused_; }
+    [[nodiscard]] std::uint8_t speed() const noexcept { return speed_; }
 
     // Selection & Camera Access
     [[nodiscard]] StrategicCamera& camera() noexcept { return camera_; }

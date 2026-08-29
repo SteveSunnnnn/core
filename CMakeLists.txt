@@ -88,6 +88,7 @@ add_library(core_runtime
     src/core/render/GpuDrivenPipeline.cpp
     src/core/render/BindlessMaterialSystem.cpp
     src/core/render/PhysicalLighting.cpp
+    src/core/render/flag/DynamicFlag3D.cpp
     src/core/render/terrain/TerrainClipmap.cpp
 
     src/core/render/terrain/TerrainHeightPage.cpp
@@ -129,6 +130,7 @@ add_library(core_runtime
     src/core/assets/ArchitectureKit.cpp
     src/core/assets/Material.cpp
     src/core/ui/StrategyUi.cpp
+    src/core/ui/UiTheme.cpp
     src/core/ui/TooltipStack.cpp
     src/core/ui/ScriptedGui.cpp
     src/core/ui/ScriptedGuiRuntime.cpp
@@ -349,6 +351,9 @@ if(CORE_BUILD_TESTS)
     add_executable(core_tooltip_stack_tests tests/tooltip_stack_tests.cpp)
     target_link_libraries(core_tooltip_stack_tests PRIVATE core_runtime)
     add_test(NAME core_tooltip_stack_tests COMMAND core_tooltip_stack_tests)
+    add_executable(core_ui_theme_tests tests/ui_theme_tests.cpp)
+    target_link_libraries(core_ui_theme_tests PRIVATE core_runtime)
+    add_test(NAME core_ui_theme_tests COMMAND core_ui_theme_tests)
     add_executable(core_slot_pool_tests tests/slot_pool_tests.cpp)
     target_link_libraries(core_slot_pool_tests PRIVATE core_runtime)
     add_test(NAME core_slot_pool_tests COMMAND core_slot_pool_tests)

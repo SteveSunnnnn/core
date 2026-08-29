@@ -2,29 +2,46 @@
 
 #include "core/ui/ScriptedGuiRuntime.hpp"
 #include "core/ui/StrategyUi.hpp"
+#include "core/ui/UiTheme.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace core {
 
-// Presentation-only palette used by the generic scripted GUI painter. Games
-// may construct this from their own theme content; Core owns no era or title.
+// Presentation palette used by the generic scripted GUI painter. The
+// defaults mirror the engine's Victorian house theme; construct from
+// make_scripted_gui_paint_theme(UiTheme::victorian()) or a custom UiTheme.
+// Games may override any field; Core owns no era or title.
 struct ScriptedGuiPaintTheme {
-    std::uint32_t panel = 0xf22a3130u;
-    std::uint32_t panel_raised = 0xf238403du;
-    std::uint32_t panel_dark = 0xf0181d1cu;
-    std::uint32_t border = 0xff9b865fu;
-    std::uint32_t accent = 0xffd0b66eu;
-    std::uint32_t text = 0xffeee8d8u;
-    std::uint32_t text_muted = 0xffbcb5a5u;
-    std::uint32_t positive = 0xff78b889u;
-    std::uint32_t negative = 0xffc86d64u;
-    float font_size = 14.0f;
-    float padding = 10.0f;
+    std::uint32_t panel = 0xf2263029u;
+    std::uint32_t panel_raised = 0xf2313d34u;
+    std::uint32_t panel_dark = 0xf0192019u;
+    std::uint32_t panel_header = 0xff201a12u;
+    std::uint32_t border = 0xff6d5f42u;
+    std::uint32_t border_light = 0xff9b8a63u;
+    std::uint32_t border_gold = 0xffd4af37u;
+    std::uint32_t border_selected = 0xffe6c86au;
+    std::uint32_t accent = 0xffd4af37u;
+    std::uint32_t emerald = 0xff3f8060u;
+    std::uint32_t text = 0xffede4cdu;
+    std::uint32_t text_muted = 0xff97907du;
+    std::uint32_t text_gold = 0xffe6c86au;
+    std::uint32_t positive = 0xff7fbf8eu;
+    std::uint32_t negative = 0xffcf7a68u;
+    std::uint32_t hover_overlay = 0x22ffffffu;
+    std::uint32_t selected_fill = 0xffe6c86au;
+    std::uint32_t chart_fill = 0x403f8060u;
+    float font_size = 13.0f;
+    float header_font_size = 16.0f;
+    float padding = 8.0f;
     float gap = 6.0f;
 };
+
+// Maps a full UiTheme token set onto the painter palette.
+[[nodiscard]] ScriptedGuiPaintTheme make_scripted_gui_paint_theme(const UiTheme& theme) noexcept;
 
 using ScriptedGuiTextResolver = std::function<std::string(UiStableKey)>;
 
@@ -66,9 +83,25 @@ private:
                         UiRect content,
                         const ScriptedGuiTextResolver& resolve_text,
                         std::uint16_t depth) const;
+    void draw_icon(UiDrawList& draw_list,
+                   UiStableKey icon_key,
+                   UiRect rect,
+                   std::uint32_t color,
+                   UiRect scissor) const;
+    void draw_tooltip(UiDrawList& draw_list,
+                      UiRect screen,
+                      UiRect anchor,
+                      const std::string& text) const;
+
+    struct TooltipCandidate {
+        UiStableKey key = 0;
+        UiRect anchor{};
+    };
 
     const ScriptedGuiBlueprint* blueprint_ = nullptr;
     ScriptedGuiPaintTheme theme_{};
+    mutable bool debug_ = false;
+    mutable std::optional<TooltipCandidate> tooltip_;
 };
 
 } // namespace core

@@ -11,6 +11,7 @@
 
 #include "core/ui/FontAtlas.hpp"
 #include "core/ui/StrategyUi.hpp"
+#include "core/render/flag/DynamicFlag3D.hpp"
 
 struct SDL_Window;
 
@@ -46,12 +47,22 @@ public:
         ui_font_metrics_path_ = std::move(metrics_path);
     }
     void set_ui_world_map(std::filesystem::path path) { ui_world_map_path_ = std::move(path); }
+    void set_dynamic_flag(DynamicFlag3D flag) { dynamic_flag_ = std::move(flag); }
     void draw_frame();
     // Stage a UI draw list for the next frame. Solid and polyline batches are
     // rendered through the zero-descriptor UI pipeline; client-owned textured
     // batches use stable keys and are sampled when their optional resources
     // have been installed.
     void submit_ui(const UiDrawList& ui);
+
+    // Map viewport for the live validation renderer, in uv space:
+    // (cx, cy) center and (hx, hy) half extents. Defaults to the full map.
+    void set_map_view(float cx, float cy, float hx, float hy) noexcept {
+        map_view_[0] = cx;
+        map_view_[1] = cy;
+        map_view_[2] = hx;
+        map_view_[3] = hy;
+    }
     void wait_idle();
     void write_report(const std::filesystem::path& path) const;
 
@@ -97,6 +108,7 @@ private:
     void create_hdr_targets();
     void destroy_hdr_targets();
     void record_live_validation_draws(VkCommandBuffer command) const;
+    void record_dynamic_flag_draw(VkCommandBuffer command, const UiModuleSlot& slot) const;
     void record_ui_draws(VkCommandBuffer command) const;
     void ensure_ui_frame_buffers();
     [[nodiscard]] VkShaderModule load_shader_module(const std::filesystem::path& path) const;
@@ -140,13 +152,16 @@ private:
     std::filesystem::path shader_dir_;
     bool live_renderer_enabled_ = false;
     VkPipelineLayout fullscreen_layout_ = VK_NULL_HANDLE;
+    float map_view_[4] = {0.5f, 0.5f, 0.5f, 0.5f};
     VkPipelineLayout political_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout flag_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout tonemap_layout_ = VK_NULL_HANDLE;
     VkPipeline terrain_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ocean_pipeline_ = VK_NULL_HANDLE;
     VkPipeline political_pipeline_ = VK_NULL_HANDLE;
     VkPipeline living_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline flag_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ui_textured_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ui_msdf_pipeline_ = VK_NULL_HANDLE;
@@ -156,6 +171,12 @@ private:
     VkDeviceMemory living_vertices_memory_ = VK_NULL_HANDLE;
     VkBuffer living_instance_ = VK_NULL_HANDLE;
     VkDeviceMemory living_instance_memory_ = VK_NULL_HANDLE;
+    VkBuffer flag_vertices_ = VK_NULL_HANDLE;
+    VkDeviceMemory flag_vertices_memory_ = VK_NULL_HANDLE;
+    VkBuffer flag_indices_ = VK_NULL_HANDLE;
+    VkDeviceMemory flag_indices_memory_ = VK_NULL_HANDLE;
+    std::uint32_t flag_index_count_ = 0;
+    std::optional<DynamicFlag3D> dynamic_flag_{};
     VkBuffer ui_vertices_ = VK_NULL_HANDLE;
     VkDeviceMemory ui_vertices_memory_ = VK_NULL_HANDLE;
 
@@ -213,6 +234,7 @@ private:
         VkRect2D scissor;
         UiBatchKind kind = UiBatchKind::Solid;
         std::uint64_t texture = 0;
+        std::uint64_t order = 0;
     };
     struct UiFrameBuffer {
         VkBuffer vertex_buffer = VK_NULL_HANDLE;
@@ -227,6 +249,7 @@ private:
     std::vector<UiGpuVertex> ui_staging_vertices_;
     std::vector<std::uint32_t> ui_staging_indices_;
     std::vector<UiGpuBatch> ui_staging_batches_;
+    std::vector<UiModuleSlot> ui_staging_modules_;
     UiFrameBuffer ui_frame_buffers_[frames_in_flight]{};
 
     std::atomic<std::uint32_t> validation_errors_{0};

@@ -45,12 +45,25 @@ void main() {
     vec3 normal = normalize(vec3(-dx * 78.0, -dy * 78.0, 1.0));
     float slope = 1.0 - normal.z;
 
-    vec3 dryGrass = vec3(0.31, 0.34, 0.16);
-    vec3 wetGrass = vec3(0.105, 0.245, 0.105);
-    vec3 forest = vec3(0.045, 0.145, 0.075);
-    vec3 soil = vec3(0.31, 0.245, 0.155);
-    vec3 rock = vec3(0.34, 0.35, 0.34);
-    vec3 snow = vec3(0.78, 0.82, 0.82);
+    // Printed cartography rather than photoreal terrain: every biome is a
+    // restrained ink wash over a warm archival paper stock.
+    float paperCloud = fbm(world * 0.34 + vec2(9.0, 27.0));
+    float paperMottle = valueNoise(mapUv * vec2(17.0, 11.0) + vec2(5.0, 13.0));
+    float paperGrain = hash12(gl_FragCoord.xy * 0.47) - 0.5;
+    float fiber = sin(gl_FragCoord.y * 0.093 + valueNoise(world * 5.0) * 3.0);
+    float crossFiber = sin(gl_FragCoord.x * 0.041 + paperCloud * 5.0);
+    vec3 paperShadow = vec3(0.350, 0.270, 0.150);
+    vec3 paperLight = vec3(0.490, 0.395, 0.225);
+    vec3 paper = mix(paperShadow, paperLight, 0.28 + paperCloud * 0.58);
+    paper *= 0.955 + paperMottle * 0.085;
+    paper += paperGrain * 0.012 + fiber * 0.004 + crossFiber * 0.002;
+
+    vec3 dryGrass = vec3(0.355, 0.355, 0.190);
+    vec3 wetGrass = vec3(0.245, 0.325, 0.180);
+    vec3 forest = vec3(0.175, 0.255, 0.145);
+    vec3 soil = vec3(0.390, 0.295, 0.175);
+    vec3 rock = vec3(0.360, 0.335, 0.260);
+    vec3 snow = vec3(0.500, 0.465, 0.345);
 
     vec3 lowland = mix(dryGrass, wetGrass, smoothstep(0.34, 0.72, moisture));
     lowland = mix(lowland, forest, smoothstep(0.58, 0.82, moisture) * smoothstep(0.30, 0.52, height));
@@ -62,10 +75,23 @@ void main() {
     float diffuse = max(dot(normal, sunDirection), 0.0);
     float sky = 0.48 + 0.52 * normal.z;
     float contact = mix(0.78, 1.0, smoothstep(0.25, 0.80, height));
-    vec3 lit = albedo * (0.22 + 0.72 * diffuse + 0.20 * sky) * contact;
+    float relief = (0.84 + 0.18 * diffuse + 0.07 * sky) * contact;
+    vec3 printed = mix(paper, albedo, 0.25) * relief;
 
-    float distanceFromFocus = smoothstep(0.18, 0.92, length(mapUv - vec2(0.50, 0.46)));
-    vec3 haze = vec3(0.31, 0.42, 0.48);
-    lit = mix(lit, haze, distanceFromFocus * 0.16);
-    outColor = vec4(lit, 1.0);
+    // Broad, nearly imperceptible press variation gives the sheet the tonal
+    // richness of a bound atlas page without introducing a visible pattern.
+    float atlasWash = fbm(world * 0.83 + vec2(-31.0, 14.0));
+    float pressVariation = sin(mapUv.x * 5.1 + atlasWash * 1.7)
+                         * sin(mapUv.y * 4.3 - atlasWash * 1.3);
+    printed *= 0.975 + atlasWash * 0.035 + pressVariation * 0.006;
+
+    // Hairline contours read like engraved atlas marks, not modern terrain
+    // shading. They remain deliberately faint at normal viewing distance.
+    float contourDistance = abs(fract(height * 11.0) - 0.5);
+    float contour = 1.0 - smoothstep(0.020, 0.055, contourDistance);
+    printed *= 1.0 - contour * 0.045;
+
+    float edge = smoothstep(0.44, 0.79, length((mapUv - 0.5) * vec2(1.0, 0.78)));
+    printed *= 1.0 - edge * 0.045;
+    outColor = vec4(printed, 1.0);
 }

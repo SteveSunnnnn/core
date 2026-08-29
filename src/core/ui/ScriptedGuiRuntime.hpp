@@ -146,12 +146,24 @@ struct UiRuntimeNode {
     bool visible = true;
     bool enabled = true;
     bool selected = false;
+    bool hovered = false;
+    bool pressed = false;
+    bool focused = false;
+    // Presentation-only state interpolation. These values are retained across
+    // data refreshes so controls have mechanical 80-120 ms transitions rather
+    // than snapping between flat color swatches.
+    float hover_mix = 0.0f;
+    float press_mix = 0.0f;
+    float selected_mix = 0.0f;
+    float focus_mix = 0.0f;
     bool data_valid = true;
     bool text_is_localization = false;
+    UiSurfaceStyle surface_style = UiSurfaceStyle::Standard;
     double value = 0.0;
     std::string text;
     UiStableKey text_key = 0;
     UiStableKey icon_key = 0;
+    UiStableKey module_key = 0;
 
     UiDataCollectionRef items{};
     std::size_t item_count = 0;
@@ -215,6 +227,7 @@ public:
         std::span<const UiCollectionViewport> viewports = {});
 
     [[nodiscard]] std::span<const UiRuntimeNode> nodes() const noexcept { return nodes_; }
+    [[nodiscard]] std::span<UiRuntimeNode> nodes() noexcept { return nodes_; }
     [[nodiscard]] std::span<const UiStableKey> removed_keys() const noexcept {
         return removed_keys_;
     }

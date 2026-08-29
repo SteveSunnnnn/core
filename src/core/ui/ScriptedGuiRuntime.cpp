@@ -234,8 +234,27 @@ UiRuntimeDiff ScriptedGuiRuntime::refresh(const ScriptedGuiDataProvider& provide
             case UiConstantTarget::Icon:
                 node.icon_key = c.stable_key();
                 break;
+            case UiConstantTarget::Module:
+                node.module_key = c.stable_key();
+                break;
             case UiConstantTarget::Selected:
                 node.selected = (c.payload != 0);
+                node.selected_mix = node.selected ? 1.0f : 0.0f;
+                break;
+            case UiConstantTarget::Hovered:
+                node.hovered = (c.payload != 0);
+                node.hover_mix = node.hovered ? 1.0f : 0.0f;
+                break;
+            case UiConstantTarget::Pressed:
+                node.pressed = (c.payload != 0);
+                node.press_mix = node.pressed ? 1.0f : 0.0f;
+                break;
+            case UiConstantTarget::Focused:
+                node.focused = (c.payload != 0);
+                node.focus_mix = node.focused ? 1.0f : 0.0f;
+                break;
+            case UiConstantTarget::Style:
+                node.surface_style = static_cast<UiSurfaceStyle>(c.payload);
                 break;
             default:
                 break;

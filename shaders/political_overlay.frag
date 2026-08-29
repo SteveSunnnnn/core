@@ -1,4 +1,4 @@
 #version 460
 layout(location=0) in vec2 uv;layout(location=0) out vec4 outColor;
-layout(push_constant) uniform Push{vec4 color;}pc;
+layout(push_constant) uniform Push{vec4 view;vec4 color;}pc;
 void main(){outColor=pc.color;}

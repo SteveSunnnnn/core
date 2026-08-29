@@ -140,6 +140,7 @@ enum class UiWidgetKind : std::uint8_t {
     Label,
     Button,
     Image,
+    Module,
     ScrollView,
     List,
     Grid,
@@ -166,6 +167,10 @@ enum class UiConstantTarget : std::uint8_t {
     Value,
     Icon,
     Selected,
+    Hovered,
+    Pressed,
+    Focused,
+    Style,
     Width,
     Height,
     MinWidth,
@@ -173,7 +178,47 @@ enum class UiConstantTarget : std::uint8_t {
     MaxWidth,
     MaxHeight,
     Grow,
-    Gap
+    Gap,
+    Module
+};
+
+// Surface material declared by content (`style = ...` on a panel). The
+// painter maps the semantic role onto the active theme's materials; content
+// never names colors or textures.
+enum class UiSurfaceStyle : std::uint8_t {
+    Standard,
+    Wood,
+    Parchment,
+    Leather,
+    Recessed,
+    // Semantic HUD roles. These remain game-agnostic: content chooses the
+    // role while the active theme owns every color, edge and text treatment.
+    Hud,
+    Dock,
+    Stat,
+    Section,
+    Nav,
+    Primary,
+    Secondary,
+    Positive,
+    Empty,
+    Time,
+    Top,
+    Country,
+    Footer,
+    Tab,
+    Medallion,
+    ToolPrimary,
+    ToolSecondary,
+    ToolUtility,
+    MenuRow,
+    IconInset,
+    Utility,
+    Outliner,
+    OutlinerGroup,
+    OutlinerRow,
+    Center,
+    CenterMuted
 };
 
 enum class UiChartKind : std::uint8_t { Line, Area, Bar };

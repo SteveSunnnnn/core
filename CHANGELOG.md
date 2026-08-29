@@ -1,5 +1,43 @@
 # Changelog
 
+## Core 1.0 Development — Unified Victorian grand-strategy UI theme — 2026-08-28
+
+- Added the engine-wide design-token system `UiTheme`
+  (`src/core/ui/UiTheme.hpp`): backgrounds, borders, accents, text,
+  interaction states, shadow tiers, materials (wood / parchment / leather /
+  brass / wax), typography scale, compact metrics and motion budgets. The
+  default `UiTheme::victorian()` drives every drawing primitive; a draw list
+  with no theme installed still renders the house style.
+- Added smooth shading primitives: `quad_gradient` (per-vertex interpolated
+  gradients, no banding) and `drop_shadow` (stacked penumbra layers); all
+  materials and components were rebuilt on them, replacing hard-edged offset
+  shadows and banded gradients.
+- Expanded the generic component set: `ornate_header`, `window_frame`, `tab`,
+  `dropdown_row`, `checkbox`, `radio`, `slider`, `scrollbar`, `input_box`,
+  `list_row`, `table_header_cell`, `stat_row`, `notification_card` (five
+  severity tiers), `modal_window`, `corner_ornaments`, `divider_ornament`,
+  `separator` — all theme-driven with hover/pressed/selected/disabled/focus
+  states and right-aligned numeric columns.
+- Scripted GUI: panels now declare a surface role via `style =`
+  (standard/wood/parchment/leather/recessed) and an optional `text` field
+  rendered as an ornate header band; the painter maps roles onto theme
+  materials. The bundled sample HUD (`content/base/ui/main.coregui`) was
+  restructured into a wood top bar with recessed stat cells, wood navigation
+  rail, parchment page windows with titled headers, and a parchment right
+  context panel.
+- Tooltip stack themed end to end (parchment body, leather title plaque,
+  gold term links, separator rule, depth/lock indicators).
+- Number presentation utilities: `ui_format_number` (thousands separators,
+  decimals, compact K/M/B), `ui_format_delta`, `ui_delta_color`.
+- Bundled OFL-licensed MSDF font atlases (`assets/fonts/`): Playfair Display
+  Bold (`ui_display`) and EB Garamond Medium (`ui_body`); the desktop shell
+  auto-loads `ui_body` when `CORE_UI_FONT_ATLAS` is unset. Attribution in
+  `THIRD_PARTY.md`; bake recipe in `docs/UI_THEME.md`.
+- Added `core_ui_theme_tests` (theme resolution, material tokens, component
+  geometry, formatting, degenerate-input safety) and a scripted sample-HUD
+  acceptance test that compiles and paints `main.coregui`.
+- Documented the system in `docs/UI_THEME.md`.
+
 ## Core 1.0 Development — Engine/game boundary cleanup and stale-doc removal — 2026-08-28
 
 - Completed the engine/game split: game composition code (`DesktopApp`,
