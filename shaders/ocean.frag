@@ -35,8 +35,8 @@ void main() {
     // or photoreal water surface.
     float shelf = smoothstep(0.08, 0.62,
         0.5 + 0.34 * sin(uv.x * 6.2) + 0.20 * sin(uv.y * 8.1 + uv.x * 2.0));
-    vec3 deepInk = vec3(0.105, 0.170, 0.155);
-    vec3 shallowInk = vec3(0.235, 0.310, 0.245);
+    vec3 deepInk = vec3(0.110, 0.160, 0.190);
+    vec3 shallowInk = vec3(0.210, 0.270, 0.300);
     vec3 color = mix(deepInk, shallowInk, shelf * 0.66);
 
     // Surface sheen from the wave normal. The original wrote `normal.xy.xyx`,

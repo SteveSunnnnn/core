@@ -57,39 +57,54 @@ void paint_cursor_polygon(SDL_Surface* surface,
                           const std::array<CursorPoint, N>& polygon,
                           Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
     if (surface == nullptr) return;
+    constexpr int sample_grid = 4;
+    constexpr int sample_count = sample_grid * sample_grid;
     for (int y = 0; y < surface->h; ++y) {
         for (int x = 0; x < surface->w; ++x) {
-            if (cursor_polygon_contains(polygon, static_cast<float>(x) + .5f,
-                                        static_cast<float>(y) + .5f)) {
-                (void)SDL_WriteSurfacePixel(surface, x, y, r, g, b, a);
+            int covered = 0;
+            for (int sample_y = 0; sample_y < sample_grid; ++sample_y) {
+                for (int sample_x = 0; sample_x < sample_grid; ++sample_x) {
+                    const float px = static_cast<float>(x) +
+                        (static_cast<float>(sample_x) + .5f) / static_cast<float>(sample_grid);
+                    const float py = static_cast<float>(y) +
+                        (static_cast<float>(sample_y) + .5f) / static_cast<float>(sample_grid);
+                    if (cursor_polygon_contains(polygon, px, py)) ++covered;
+                }
             }
+            if (covered == 0) continue;
+
+            const int source_alpha = static_cast<int>(a) * covered / sample_count;
+            Uint8 dst_r = 0, dst_g = 0, dst_b = 0, dst_a = 0;
+            (void)SDL_ReadSurfacePixel(surface, x, y, &dst_r, &dst_g, &dst_b, &dst_a);
+            const int inverse_alpha = 255 - source_alpha;
+            const int out_alpha = source_alpha + static_cast<int>(dst_a) * inverse_alpha / 255;
+            if (out_alpha <= 0) continue;
+            const auto blend_channel = [source_alpha, inverse_alpha, out_alpha, dst_a](Uint8 source,
+                                                                                       Uint8 destination) {
+                const int premultiplied = static_cast<int>(source) * source_alpha +
+                    static_cast<int>(destination) * static_cast<int>(dst_a) * inverse_alpha / 255;
+                return static_cast<Uint8>(std::clamp(premultiplied / out_alpha, 0, 255));
+            };
+            (void)SDL_WriteSurfacePixel(surface, x, y,
+                                        blend_channel(r, dst_r), blend_channel(g, dst_g),
+                                        blend_channel(b, dst_b), static_cast<Uint8>(out_alpha));
         }
     }
 }
 
 SDL_Cursor* create_grand_strategy_cursor() {
-    SDL_Surface* surface = SDL_CreateSurface(32, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface* surface = SDL_CreateSurface(40, 40, SDL_PIXELFORMAT_RGBA32);
     if (surface == nullptr) return nullptr;
     (void)SDL_FillSurfaceRect(surface, nullptr, SDL_MapSurfaceRGBA(surface, 0, 0, 0, 0));
 
-    // A restrained ivory-and-bronze pointer inspired by an engraved map
-    // instrument. The dark offset silhouette remains legible over both land
-    // and sea without adding a modern glow.
-    constexpr std::array<CursorPoint, 7> shadow{{{3, 2}, {3, 27}, {9, 21},
-                                                 {14, 32}, {20, 29}, {15, 19}, {24, 19}}};
-    constexpr std::array<CursorPoint, 7> outline{{{2, 0}, {2, 26}, {8, 20},
-                                                  {13, 31}, {19, 28}, {14, 18}, {23, 18}}};
-    constexpr std::array<CursorPoint, 7> face{{{4, 4}, {4, 21}, {8, 17},
-                                               {14, 28}, {16, 27}, {11, 16}, {18, 16}}};
-    constexpr std::array<CursorPoint, 7> highlight{{{5, 5}, {5, 17}, {8, 14},
-                                                    {14, 26}, {15, 26}, {10, 14}, {16, 14}}};
-    paint_cursor_polygon(surface, shadow, 18, 12, 8, 150);
-    paint_cursor_polygon(surface, outline, 37, 25, 16, 255);
-    paint_cursor_polygon(surface, face, 154, 125, 78, 255);
-    paint_cursor_polygon(surface, highlight, 225, 211, 174, 255);
-    for (int y = 15; y <= 17; ++y)
-        for (int x = 7; x <= 9; ++x)
-            (void)SDL_WriteSurfacePixel(surface, x, y, 105, 77, 42, 255);
+    // Mac-inspired paper-plane silhouette: swept left and right wings with a
+    // clear rear notch. It deliberately has no separate heel or shaft.
+    constexpr std::array<CursorPoint, 4> shadow{{{4, 3}, {7, 36}, {15, 27}, {35, 24}}};
+    constexpr std::array<CursorPoint, 4> outline{{{2, 1}, {5, 34}, {13, 25}, {33, 22}}};
+    constexpr std::array<CursorPoint, 4> face{{{4, 5}, {7, 30}, {13, 22}, {29, 21}}};
+    paint_cursor_polygon(surface, shadow, 0, 0, 0, 105);
+    paint_cursor_polygon(surface, outline, 246, 244, 239, 255);
+    paint_cursor_polygon(surface, face, 12, 12, 12, 255);
 
     SDL_Cursor* cursor = SDL_CreateColorCursor(surface, 2, 1);
     SDL_DestroySurface(surface);
@@ -265,6 +280,9 @@ int DesktopApp::run() {
                         if (pressed_ui && released_over && *pressed_ui == *released_over) {
                             (void)game_gui.activate(*released_over, &game_speed, &paused);
                             game_gui.set_focused(released_over);
+                        } else if (!released_over) {
+                            // Clicking the map dismisses the open page drawer.
+                            game_gui.close_drawer();
                         }
                         pressed_ui.reset();
                         game_gui.set_pressed(std::nullopt);

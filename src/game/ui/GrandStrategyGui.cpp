@@ -174,6 +174,12 @@ bool GrandStrategyGui::load(const std::filesystem::path& script_path,
     return true;
 }
 
+void GrandStrategyGui::close_drawer() noexcept {
+    if (!runtime_ || !drawer_open_) return;
+    set_page(Page::Count);
+    (void)runtime_->refresh(*this);
+}
+
 void GrandStrategyGui::set_page(Page page) noexcept {
     active_page_ = page;
     drawer_open_ = page != Page::Count;

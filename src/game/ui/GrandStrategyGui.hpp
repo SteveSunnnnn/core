@@ -42,6 +42,7 @@ public:
     void set_pressed(std::optional<std::uint64_t> hit_id) noexcept;
     void set_focused(std::optional<std::uint64_t> hit_id) noexcept;
     void advance_interactions(float dt_seconds) noexcept;
+    void close_drawer() noexcept;
     [[nodiscard]] bool loaded() const noexcept { return runtime_ != nullptr; }
 
 private:

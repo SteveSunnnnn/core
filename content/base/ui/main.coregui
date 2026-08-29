@@ -188,7 +188,7 @@ scripted_gui main_hud {
                             } }
                         } }
                     } }
-                    panel = { id = treasury_card style = stat width = 140 tooltip = hud.tip.treasury children = {
+                    panel = { id = treasury_card style = stat width = 158 tooltip = hud.tip.treasury children = {
                         row = { id = treasury_row gap = 8 children = {
                             image = { id = treasury_icon style = medallion width = 40 icon = icon.treasury }
                             column = { id = treasury_stack grow = 1 gap = 0 children = {
@@ -197,7 +197,7 @@ scripted_gui main_hud {
                             } }
                         } }
                     } }
-                    panel = { id = balance_card style = stat width = 145 tooltip = hud.tip.balance children = {
+                    panel = { id = balance_card style = stat width = 162 tooltip = hud.tip.balance children = {
                         row = { id = balance_row gap = 8 children = {
                             image = { id = balance_icon style = medallion width = 40 icon = icon.balance }
                             column = { id = balance_stack grow = 1 gap = 0 children = {
@@ -206,7 +206,7 @@ scripted_gui main_hud {
                             } }
                         } }
                     } }
-                    panel = { id = population_card style = stat width = 150 tooltip = hud.tip.population children = {
+                    panel = { id = population_card style = stat width = 165 tooltip = hud.tip.population children = {
                         row = { id = population_row gap = 8 children = {
                             image = { id = population_icon style = medallion width = 40 icon = icon.population }
                             column = { id = population_stack grow = 1 gap = 0 children = {
