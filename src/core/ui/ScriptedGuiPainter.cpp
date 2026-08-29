@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <string_view>
 #include <vector>
 
 namespace core {
@@ -29,9 +30,75 @@ namespace {
            style == UiSurfaceStyle::Outliner;
 }
 
+[[nodiscard]] float estimated_text_width(std::string_view text, float size) noexcept {
+    float em = 0.0f;
+    for (std::size_t index = 0; index < text.size();) {
+        const auto c = static_cast<unsigned char>(text[index]);
+        if (c < 0x80u) {
+            if (c == ' ') em += .31f;
+            else if (c >= '0' && c <= '9') em += .53f;
+            else if (c >= 'A' && c <= 'Z') em += .61f;
+            else if ((c >= 'a' && c <= 'z')) em += .48f;
+            else em += .34f;
+            ++index;
+            continue;
+        }
+        em += .96f;
+        if ((c & 0xe0u) == 0xc0u) index += 2u;
+        else if ((c & 0xf0u) == 0xe0u) index += 3u;
+        else if ((c & 0xf8u) == 0xf0u) index += 4u;
+        else ++index;
+        index = std::min(index, text.size());
+    }
+    return em * size;
+}
+
+[[nodiscard]] float fit_text_size(UiRect rect, std::string_view text, float desired,
+                                  float minimum = 12.0f, float padding = 0.0f) noexcept {
+    const float available = std::max(1.0f, rect.w - padding * 2.0f);
+    const float estimated = estimated_text_width(text, desired);
+    if (estimated <= available || estimated <= 0.0f) return desired;
+    return std::clamp(desired * available / estimated, minimum, desired);
+}
+
 [[nodiscard]] float centered_text_x(UiRect rect, std::string_view text, float size) noexcept {
-    const float estimated_width = static_cast<float>(text.size()) * size * 0.52f;
+    const float estimated_width = estimated_text_width(text, size);
     return rect.x + std::max(0.0f, (rect.w - estimated_width) * 0.5f);
+}
+
+[[nodiscard]] std::vector<std::string> wrap_tooltip_text(std::string_view text,
+                                                         float width, float size) {
+    std::vector<std::string> lines;
+    std::string line;
+    std::size_t cursor = 0;
+    while (cursor < text.size()) {
+        while (cursor < text.size() && text[cursor] == ' ') ++cursor;
+        const auto end = text.find(' ', cursor);
+        const auto count = end == std::string_view::npos ? text.size() - cursor : end - cursor;
+        const std::string word{text.substr(cursor, count)};
+        std::string candidate = line.empty() ? word : line + " " + word;
+        if (!line.empty() && estimated_text_width(candidate, size) > width) {
+            lines.push_back(std::move(line));
+            line = word;
+        } else {
+            line = std::move(candidate);
+        }
+        if (end == std::string_view::npos) break;
+        cursor = end + 1u;
+    }
+    if (!line.empty()) lines.push_back(std::move(line));
+    if (lines.empty() && !text.empty()) lines.emplace_back(text);
+    if (lines.size() > 2u) {
+        lines.resize(2u);
+        auto& last = lines.back();
+        while (!last.empty() && estimated_text_width(last + "...", size) > width) {
+            const auto split = last.find_last_of(' ');
+            if (split == std::string::npos) break;
+            last.resize(split);
+        }
+        last += "...";
+    }
+    return lines;
 }
 
 [[nodiscard]] UiControlVisualState control_state(const UiRuntimeNode& node) noexcept {
@@ -302,7 +369,8 @@ void ScriptedGuiPainter::draw_tooltip(UiDrawList& draw_list,
     const std::string title = split == std::string::npos ? text : text.substr(0, split);
     const std::string body = split == std::string::npos ? std::string{} : text.substr(split + 1u);
     const float width = 336.0f;
-    const float height = body.empty() ? 50.0f : 78.0f;
+    const auto body_lines = wrap_tooltip_text(body, width - 24.0f, t.type.caption);
+    const float height = body.empty() ? 50.0f : (body_lines.size() > 1u ? 94.0f : 76.0f);
     UiRect rect = place_tooltip(anchor, width, height, screen, 8.0f);
     if (anchor.y < screen.y + 96.0f) {
         rect.x = std::clamp(anchor.x, screen.x + 8.0f, screen.x + screen.w - width - 8.0f);
@@ -310,16 +378,23 @@ void ScriptedGuiPainter::draw_tooltip(UiDrawList& draw_list,
     }
     draw_list.drop_shadow(rect, t.colors.shadow_floating, 7.0f, 2.0f, 4.0f, screen);
     draw_list.quad(rect, t.colors.border_dark, screen);
-    draw_list.quad({rect.x+1,rect.y+1,rect.w-2,rect.h-2},t.materials.brass_rim,screen);
+    draw_list.quad({rect.x+1,rect.y+1,rect.w-2,rect.h-2},t.colors.border_normal,screen);
     draw_list.quad_gradient({rect.x+3,rect.y+3,rect.w-6,rect.h-6},
                             ui_blend(t.colors.bg_floating,t.materials.wood_base,.16f),
                             t.colors.bg_deep, true, screen);
     draw_list.quad({rect.x+5,rect.y+4,rect.w-10,1}, t.materials.brass_highlight, screen);
     draw_list.quad({rect.x+9,rect.y+31,rect.w-18,1},0x69765f3bu,screen);
     draw_list.radial_disc(rect.x+12,rect.y+17,4,t.materials.brass_highlight,t.colors.border_dark,screen,16);
-    draw_list.text(title, rect.x+22, rect.y+9, t.type.major_header, t.colors.text_gold, screen);
-    if (!body.empty())
-        draw_list.text(body, rect.x+12, rect.y+42, t.type.caption, t.colors.text_secondary, screen);
+    const UiRect title_rect{rect.x+22,rect.y+7,rect.w-34,24};
+    const float title_size = fit_text_size(title_rect,title,t.type.major_header,13.0f);
+    draw_list.text(title,title_rect.x,rect.y+9,title_size,t.colors.text_gold,screen);
+    for (std::size_t index = 0; index < body_lines.size(); ++index) {
+        const UiRect line_rect{rect.x+12,rect.y+39+static_cast<float>(index)*18.0f,
+                               rect.w-24,18};
+        const float line_size=fit_text_size(line_rect,body_lines[index],t.type.caption,12.0f);
+        draw_list.text(body_lines[index],line_rect.x,line_rect.y+3,line_size,
+                       t.colors.text_secondary,screen);
+    }
 }
 
 void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
@@ -447,16 +522,19 @@ void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
             draw_list.drop_shadow({rect.x+12,rect.y+9,rect.w-24,rect.h-14},
                                   t.colors.shadow_floating,6,1.5f,3.0f,rect);
             draw_list.quad({rect.x+18,rect.y+7,rect.w-36,rect.h-14},t.colors.border_dark,rect);
-            draw_list.quad({rect.x+15,rect.y+12,rect.w-30,rect.h-24},t.materials.brass_rim,rect);
+            draw_list.quad({rect.x+15,rect.y+12,rect.w-30,rect.h-24},
+                           ui_blend(t.colors.bg_header,t.materials.brass_rim,.28f),rect);
             draw_list.quad_gradient({rect.x+18,rect.y+10,rect.w-36,rect.h-20},
                                     ui_blend(t.colors.bg_header,t.materials.wood_base,.38f),
                                     t.colors.bg_deep,true,rect);
             draw_list.quad({rect.x+25,rect.y+11,rect.w-50,1},t.materials.brass_highlight,rect);
-            draw_list.quad({rect.x+8,rect.y+18,10,rect.h-36},t.materials.brass_rim,rect);
-            draw_list.quad({rect.x+rect.w-18,rect.y+18,10,rect.h-36},t.materials.brass_rim,rect);
+            draw_list.quad({rect.x+8,rect.y+18,10,rect.h-36},
+                           ui_blend(t.colors.bg_header,t.materials.brass_rim,.34f),rect);
+            draw_list.quad({rect.x+rect.w-18,rect.y+18,10,rect.h-36},
+                           ui_blend(t.colors.bg_header,t.materials.brass_rim,.34f),rect);
             draw_list.radial_disc(rect.x+12,rect.y+rect.h*.5f,5,t.materials.brass_highlight,t.colors.border_dark,rect,20);
             draw_list.radial_disc(rect.x+rect.w-12,rect.y+rect.h*.5f,5,t.materials.brass_highlight,t.colors.border_dark,rect,20);
-            draw_list.quad({rect.x+rect.w*.5f-25,rect.y+rect.h-7,50,4},t.materials.brass_rim,rect);
+            draw_list.quad({rect.x+rect.w*.5f-25,rect.y+rect.h-7,50,4},t.colors.border_normal,rect);
             content={rect.x+20,rect.y+7,rect.w-40,rect.h-14}; break;
         }
         case UiSurfaceStyle::Outliner:
@@ -493,7 +571,9 @@ void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
                 draw_list.quad_gradient({rect.x+1,rect.y+1,rect.w-2,header_h},
                                         ui_blend(t.colors.bg_header,t.materials.wood_base,.22f),
                                         t.colors.bg_panel_recessed,true,rect);
-                draw_list.text(text,rect.x+12,rect.y+9,t.type.major_header,t.colors.text_secondary,rect);
+                const UiRect title_rect{rect.x+12,rect.y+7,rect.w-24,24};
+                const float title_size=fit_text_size(title_rect,text,t.type.major_header,12.5f);
+                draw_list.text(text,title_rect.x,rect.y+9,title_size,t.colors.text_secondary,rect);
                 draw_list.quad({rect.x+10,rect.y+header_h-1,rect.w-20,1},t.colors.border_dark,rect);
                 draw_list.quad({rect.x+16,rect.y+header_h,rect.w-32,1},t.colors.border_brass,rect);
                 content.y=rect.y+header_h+9; content.h=std::max(0.0f,rect.h-header_h-18);
@@ -504,7 +584,9 @@ void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
                                         t.colors.bg_deep,true,rect);
                 draw_list.quad({rect.x+2,rect.y+8,3,header_h-12},t.colors.border_brass,rect);
                 draw_list.quad({rect.x+11,rect.y+header_h+1,rect.w-22,1},t.materials.brass_rim,rect);
-                draw_list.text(text,rect.x+14,rect.y+8,t.type.major_header,t.colors.text_gold,rect);
+                const UiRect title_rect{rect.x+14,rect.y+6,rect.w-44,24};
+                const float title_size=fit_text_size(title_rect,text,t.type.major_header,12.5f);
+                draw_list.text(text,title_rect.x,rect.y+8,title_size,t.colors.text_gold,rect);
                 const std::array<float,6> fold{{rect.x+rect.w-19,rect.y+13,
                                                 rect.x+rect.w-15,rect.y+17,
                                                 rect.x+rect.w-11,rect.y+13}};
@@ -522,7 +604,10 @@ void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
                 draw_list.quad({rect.x+14,rect.y+header_h,rect.w-28,2},t.colors.border_brass,rect);
                 draw_list.radial_disc(rect.x+10,rect.y+22,3,t.materials.brass_highlight,t.colors.border_dark,rect,16);
                 draw_list.radial_disc(rect.x+rect.w-10,rect.y+22,3,t.materials.brass_highlight,t.colors.border_dark,rect,16);
-                draw_list.text(text,rect.x+18,rect.y+12,t.type.window_title,t.colors.text_gold,rect);
+                const float reserve=node.surface_style==UiSurfaceStyle::Outliner?82.0f:36.0f;
+                const UiRect title_rect{rect.x+18,rect.y+8,rect.w-reserve,30};
+                const float title_size=fit_text_size(title_rect,text,t.type.window_title,13.5f);
+                draw_list.text(text,title_rect.x,rect.y+12,title_size,t.colors.text_gold,rect);
                 if(node.surface_style==UiSurfaceStyle::Outliner){
                     // Functional system header: collapse affordance and a
                     // recessed filter/settings fitting, without adding cards.
@@ -595,9 +680,15 @@ void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
             const auto label_color=!node.enabled?t.colors.text_disabled:
                 ui_blend(t.colors.text_primary,t.colors.text_gold,emphasis*.72f);
             float tx=rect.x+theme_.padding+(node.icon_key!=0?(menu?40.0f:30.0f):0.0f);
-            if(time) tx=rect.x+std::max(4.0f,(rect.w-static_cast<float>(text.size())*8.0f)*.5f);
-            draw_list.text(text,tx,rect.y+(rect.h-theme_.font_size)*.5f+press_shift,
-                           time?t.type.body:theme_.font_size,label_color,rect);
+            const float right_padding=menu?27.0f:8.0f;
+            UiRect label_rect{tx,rect.y,std::max(1.0f,rect.x+rect.w-right_padding-tx),rect.h};
+            float label_size=fit_text_size(label_rect,text,time?t.type.body:theme_.font_size,12.0f);
+            if(time) {
+                tx=centered_text_x({rect.x+4,rect.y,rect.w-8,rect.h},text,label_size);
+                label_rect.x=tx;
+            }
+            draw_list.text(text,tx,rect.y+(rect.h-label_size)*.5f+press_shift,
+                           label_size,label_color,rect);
             if(menu) {
                 const float ax=rect.x+rect.w-17.0f;
                 const float ay=rect.y+rect.h*.5f+press_shift;
@@ -619,6 +710,7 @@ void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
         if(!text.empty()) {
             const bool centered=node.surface_style==UiSurfaceStyle::Center ||
                                 node.surface_style==UiSurfaceStyle::CenterMuted;
+            size=fit_text_size(rect,text,size,12.0f,centered?4.0f:1.0f);
             draw_list.text(text,centered?centered_text_x(rect,text,size):rect.x,
                            rect.y+std::max(0.0f,(rect.h-size)*.5f),size,color,rect);
         }

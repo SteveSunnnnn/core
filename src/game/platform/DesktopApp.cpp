@@ -9,6 +9,7 @@
 #include "game/content/GameProjectConfig.hpp"
 #include "game/ui/GrandStrategyGui.hpp"
 #include <SDL3/SDL.h>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -30,6 +31,69 @@ bool env_bool(const char* name, bool fallback) {
         return v == "1" || v == "true" || v == "TRUE" || v == "on" || v == "ON";
     }
     return fallback;
+}
+
+struct CursorPoint { int x = 0; int y = 0; };
+
+template <std::size_t N>
+bool cursor_polygon_contains(const std::array<CursorPoint, N>& polygon,
+                             float px, float py) noexcept {
+    bool inside = false;
+    for (std::size_t i = 0, j = N - 1; i < N; j = i++) {
+        const auto& a = polygon[i];
+        const auto& b = polygon[j];
+        const bool crosses = (a.y > py) != (b.y > py);
+        if (!crosses) continue;
+        const float edge_x = static_cast<float>(b.x - a.x) *
+            (py - static_cast<float>(a.y)) / static_cast<float>(b.y - a.y) +
+            static_cast<float>(a.x);
+        if (px < edge_x) inside = !inside;
+    }
+    return inside;
+}
+
+template <std::size_t N>
+void paint_cursor_polygon(SDL_Surface* surface,
+                          const std::array<CursorPoint, N>& polygon,
+                          Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
+    if (surface == nullptr) return;
+    for (int y = 0; y < surface->h; ++y) {
+        for (int x = 0; x < surface->w; ++x) {
+            if (cursor_polygon_contains(polygon, static_cast<float>(x) + .5f,
+                                        static_cast<float>(y) + .5f)) {
+                (void)SDL_WriteSurfacePixel(surface, x, y, r, g, b, a);
+            }
+        }
+    }
+}
+
+SDL_Cursor* create_grand_strategy_cursor() {
+    SDL_Surface* surface = SDL_CreateSurface(32, 32, SDL_PIXELFORMAT_RGBA32);
+    if (surface == nullptr) return nullptr;
+    (void)SDL_FillSurfaceRect(surface, nullptr, SDL_MapSurfaceRGBA(surface, 0, 0, 0, 0));
+
+    // A restrained ivory-and-bronze pointer inspired by an engraved map
+    // instrument. The dark offset silhouette remains legible over both land
+    // and sea without adding a modern glow.
+    constexpr std::array<CursorPoint, 7> shadow{{{3, 2}, {3, 27}, {9, 21},
+                                                 {14, 32}, {20, 29}, {15, 19}, {24, 19}}};
+    constexpr std::array<CursorPoint, 7> outline{{{2, 0}, {2, 26}, {8, 20},
+                                                  {13, 31}, {19, 28}, {14, 18}, {23, 18}}};
+    constexpr std::array<CursorPoint, 7> face{{{4, 4}, {4, 21}, {8, 17},
+                                               {14, 28}, {16, 27}, {11, 16}, {18, 16}}};
+    constexpr std::array<CursorPoint, 7> highlight{{{5, 5}, {5, 17}, {8, 14},
+                                                    {14, 26}, {15, 26}, {10, 14}, {16, 14}}};
+    paint_cursor_polygon(surface, shadow, 18, 12, 8, 150);
+    paint_cursor_polygon(surface, outline, 37, 25, 16, 255);
+    paint_cursor_polygon(surface, face, 154, 125, 78, 255);
+    paint_cursor_polygon(surface, highlight, 225, 211, 174, 255);
+    for (int y = 15; y <= 17; ++y)
+        for (int x = 7; x <= 9; ++x)
+            (void)SDL_WriteSurfacePixel(surface, x, y, 105, 77, 42, 255);
+
+    SDL_Cursor* cursor = SDL_CreateColorCursor(surface, 2, 1);
+    SDL_DestroySurface(surface);
+    return cursor;
 }
 
 } // namespace
@@ -55,6 +119,8 @@ int DesktopApp::run() {
         SDL_Quit();
         return 2;
     }
+    SDL_Cursor* game_cursor = create_grand_strategy_cursor();
+    if (game_cursor != nullptr) (void)SDL_SetCursor(game_cursor);
     int result = 0;
     try {
         VulkanDesktopBackend backend;
@@ -143,7 +209,7 @@ int DesktopApp::run() {
         const std::uint64_t validation_frames = env_u64("CORE_VALIDATION_FRAMES", 0);
         bool running = true;
         bool paused = true;
-        int game_speed = 3; // 1 to 5
+        int game_speed = 1; // 1 to 5; selecting speed never changes pause state
         bool mouse_dragging = false;
         std::optional<std::uint64_t> pressed_ui;
         float last_mouse_x = 0.0f, last_mouse_y = 0.0f;
@@ -269,6 +335,7 @@ int DesktopApp::run() {
         std::cerr << "Core Vulkan desktop failure: " << e.what() << '\n';
         result = 3;
     }
+    if (game_cursor != nullptr) SDL_DestroyCursor(game_cursor);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return result;

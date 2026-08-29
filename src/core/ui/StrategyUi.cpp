@@ -378,9 +378,9 @@ void UiDrawList::medallion_button(UiRect rect, const UiControlVisualState& state
                              .38f * selected + .18f * focus), scissor, 40);
 
     const auto rim_center = ui_blend(t.materials.brass_rim, t.materials.brass_highlight,
-                                     .30f * hover + .58f * selected);
+                                     .24f * hover + .42f * selected);
     const auto rim_edge = ui_blend(t.colors.border_dark, t.materials.brass_rim,
-                                   .18f + .35f * hover + .38f * selected);
+                                   .16f + .28f * hover + .30f * selected);
     radial_disc(cx, cy, radius, rim_center, rim_edge, scissor, 40);
     radial_disc(cx, cy + .7f, radius - 2.2f,
                 ui_blend(t.materials.brass_face, t.materials.brass_rim_pressed, press * .72f),

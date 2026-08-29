@@ -260,7 +260,7 @@ scripted_gui main_hud {
                     } }
                 } }
 
-                stack = { id = page_drawer width = 390 children = {
+                stack = { id = page_drawer width = 390 visible = { bind = drawer_open } children = {
                     panel = { id = politics_page style = hud text = hud.page.politics visible = { bind = politics_active } children = {
                         column = { id = politics_column gap = 7 children = {
                             button = { id = government_card style = menu_row height = 68 icon = icon.politics text = hud.politics.government selected = yes tooltip = hud.tip.politics.government }
@@ -450,7 +450,7 @@ scripted_gui main_hud {
 
                 spacer = { id = map_view grow = 1 }
 
-                panel = { id = right_context style = outliner text = hud.outliner width = 300 children = {
+                panel = { id = right_context style = outliner text = hud.outliner width = 300 visible = { bind = outliner_open } children = {
                     column = { id = context_column gap = 7 children = {
                         panel = { id = location_empty style = outliner_group text = hud.selection height = 142 visible = { bind = no_location_selected } tooltip = hud.tip.location.empty children = {
                             row = { id = location_empty_row gap = 9 children = {

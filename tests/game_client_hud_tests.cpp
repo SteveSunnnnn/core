@@ -42,6 +42,7 @@ int main() {
 
         assert(app.camera().state().altitude_m == 300000.0);
         assert(app.is_paused());
+        assert(app.speed() == 1);
 
         // Right click drag pan
         const auto center_before_drag = app.camera().state().center;
@@ -156,8 +157,9 @@ int main() {
             return std::ranges::any_of(ui_scripted.text_runs(),
                 [wanted](const UiTextRun& run) { return run.utf8 == wanted; });
         };
-        assert(has_text("OUTLINER"));
-        assert(has_text("OBJECTIVES"));
+        assert(!has_text("OUTLINER"));
+        assert(!has_text("OBJECTIVES"));
+        assert(!has_text("NATIONAL ECONOMY"));
         assert(ui_scripted.hit_test(651.0f, 863.0f).has_value());
 
         // Retained interaction state must materially alter the rendered
@@ -202,6 +204,17 @@ int main() {
         gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
         assert(has_text("NATIONAL ECONOMY"));
         assert(has_text("TREASURY POSITION"));
+
+        // Activating the selected cabinet a second time returns to the
+        // map-first presentation instead of leaving a permanent sidebar.
+        assert(gui.activate(*economy_hit));
+        ui_scripted.clear();
+        gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
+        assert(!has_text("NATIONAL ECONOMY"));
+
+        assert(gui.activate(*economy_hit));
+        ui_scripted.clear();
+        gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
 
         const auto currency_hit = ui_scripted.hit_test(220.0f, 150.0f);
         assert(currency_hit.has_value());

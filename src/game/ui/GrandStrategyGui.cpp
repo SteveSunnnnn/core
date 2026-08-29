@@ -82,6 +82,7 @@ GrandStrategyGui::GrandStrategyGui() : schema_(symbols_) {
         "politics_active", "buildings_active", "market_active", "economy_active", "population_active",
         "technology_active", "military_active", "diplomacy_active",
         "treasury_page_active", "currency_page_active", "banking_page_active", "debt_page_active",
+        "drawer_open", "outliner_open",
         "location_selected", "no_location_selected", "paused_active",
         "speed_1_active", "speed_2_active", "speed_3_active", "speed_4_active", "speed_5_active"
     }};
@@ -109,7 +110,7 @@ GrandStrategyGui::GrandStrategyGui() : schema_(symbols_) {
         time_commands_[index] = core::ui_stable_key(time_commands[index]);
         (void)schema_.register_command(time_commands[index]);
     }
-    set_page(Page::Population);
+    page_active_.fill(false);
     set_economy_page(EconomyPage::Treasury);
 }
 
@@ -175,6 +176,7 @@ bool GrandStrategyGui::load(const std::filesystem::path& script_path,
 
 void GrandStrategyGui::set_page(Page page) noexcept {
     active_page_ = page;
+    drawer_open_ = page != Page::Count;
     page_active_.fill(false);
     const auto index = static_cast<std::size_t>(page);
     if (index < page_active_.size()) page_active_[index] = true;
@@ -318,7 +320,14 @@ bool GrandStrategyGui::activate(std::uint64_t hit_id, int* speed, bool* paused) 
     if (node == nullptr || node->command_key == 0) return false;
     for (std::size_t index = 0; index < page_commands_.size(); ++index) {
         if (page_commands_[index] == node->command_key) {
-            set_page(static_cast<Page>(index));
+            const auto requested = static_cast<Page>(index);
+            if (drawer_open_ && active_page_ == requested) {
+                drawer_open_ = false;
+                active_page_ = Page::Count;
+                page_active_.fill(false);
+            } else {
+                set_page(requested);
+            }
             (void)runtime_->refresh(*this);
             return true;
         }
@@ -408,6 +417,8 @@ bool GrandStrategyGui::read_property(core::UiDataEntityRef source,
     }
     bool value = false;
     switch (property_slot) {
+    case DrawerOpen: value = drawer_open_; break;
+    case OutlinerOpen: value = location_selected_; break;
     case LocationSelected: value = location_selected_; break;
     case NoLocationSelected: value = !location_selected_; break;
     case PausedActive: value = paused_; break;

@@ -63,6 +63,7 @@ private:
         PoliticsActive, BuildingsActive, MarketActive, EconomyActive, PopulationActive,
         TechnologyActive, MilitaryActive, DiplomacyActive,
         TreasuryPageActive, CurrencyPageActive, BankingPageActive, DebtPageActive,
+        DrawerOpen, OutlinerOpen,
         LocationSelected, NoLocationSelected, PausedActive,
         Speed1Active, Speed2Active, Speed3Active, Speed4Active, Speed5Active,
         PropertyCount
@@ -95,11 +96,12 @@ private:
     std::array<core::UiStableKey, static_cast<std::size_t>(Page::Count)> page_commands_{};
     std::array<core::UiStableKey, static_cast<std::size_t>(EconomyPage::Count)> economy_page_commands_{};
     std::array<core::UiStableKey, 6> time_commands_{};
-    Page active_page_ = Page::Population;
+    Page active_page_ = Page::Count;
     EconomyPage active_economy_page_ = EconomyPage::Treasury;
+    bool drawer_open_ = false;
     bool location_selected_ = false;
     bool paused_ = true;
-    int speed_ = 3;
+    int speed_ = 1;
 };
 
 } // namespace game

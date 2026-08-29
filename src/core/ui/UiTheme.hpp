@@ -29,18 +29,18 @@ struct UiThemeColors {
 
     // Borders
     std::uint32_t border_dark = 0xff0d0906u;
-    std::uint32_t border_normal = 0xff806a46u;       // aged bronze edge
-    std::uint32_t border_light = 0xffa88d5eu;
-    std::uint32_t border_gold = 0xffb9904fu;         // muted antique gold line
-    std::uint32_t border_brass = 0xffa77e42u;
-    std::uint32_t border_selected = 0xffc8a35fu;
+    std::uint32_t border_normal = 0xff706049u;       // dark aged bronze edge
+    std::uint32_t border_light = 0xff8f7a5au;
+    std::uint32_t border_gold = 0xff9d8355u;         // muted antique gold line
+    std::uint32_t border_brass = 0xff846a47u;
+    std::uint32_t border_selected = 0xffb49a68u;
 
     // Accents
     std::uint32_t emerald = 0xff617453u;
     std::uint32_t emerald_dark = 0xff3d4d36u;
     std::uint32_t emerald_light = 0xff829071u;
-    std::uint32_t gold = 0xffb9904fu;
-    std::uint32_t brass = 0xffa77e42u;
+    std::uint32_t gold = 0xffa08758u;
+    std::uint32_t brass = 0xff826a49u;
     std::uint32_t burgundy = 0xff5a2328u;
     std::uint32_t steel = 0xff827a68u;              // neutral oxidized support metal
 
@@ -49,7 +49,7 @@ struct UiThemeColors {
     std::uint32_t text_secondary = 0xffd0bd97u;
     std::uint32_t text_muted = 0xffa6987cu;
     std::uint32_t text_disabled = 0xff746b58u;
-    std::uint32_t text_gold = 0xffd2b274u;
+    std::uint32_t text_gold = 0xffc5ae81u;
     std::uint32_t text_positive = 0xff8eae78u;
     std::uint32_t text_negative = 0xffcf7a68u;
     std::uint32_t text_warning = 0xffd9a94eu;
@@ -57,9 +57,9 @@ struct UiThemeColors {
     // Interaction states (overlays unless noted)
     std::uint32_t state_hover = 0x36d8bd82u;         // warm local light catch
     std::uint32_t state_pressed = 0x3a000000u;       // darkening overlay
-    std::uint32_t state_selected = 0xffc8a35fu;      // persistent brass emphasis
+    std::uint32_t state_selected = 0xffb49a68u;      // persistent bronze emphasis
     std::uint32_t state_disabled = 0x8020241fu;
-    std::uint32_t state_focus = 0xffb9904fu;
+    std::uint32_t state_focus = 0xffa08758u;
 
     // Shadows per elevation: BASE < RECESSED < RAISED < FLOATING < MODAL
     std::uint32_t shadow_raised = 0x50000000u;
@@ -91,12 +91,12 @@ struct UiThemeMaterials {
     std::uint32_t leather_fillet = 0x90d4af37u;
 
     // Brushed brass (buttons, fittings)
-    std::uint32_t brass_rim = 0xff76552bu;
-    std::uint32_t brass_rim_pressed = 0xff5c4020u;
-    std::uint32_t brass_face = 0xffa77e42u;
-    std::uint32_t brass_face_pressed = 0xff806033u;
-    std::uint32_t brass_highlight = 0xffc8a35fu;
-    std::uint32_t brass_highlight_pressed = 0xff9b793fu;
+    std::uint32_t brass_rim = 0xff604c36u;
+    std::uint32_t brass_rim_pressed = 0xff49382au;
+    std::uint32_t brass_face = 0xff806b4cu;
+    std::uint32_t brass_face_pressed = 0xff66543eu;
+    std::uint32_t brass_highlight = 0xffaa936bu;
+    std::uint32_t brass_highlight_pressed = 0xff827154u;
 
     // Imperial wax seal
     std::uint32_t wax_base = 0xff8c1e1cu;
