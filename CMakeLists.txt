@@ -88,6 +88,7 @@ add_library(core_runtime
     src/core/render/GpuDrivenPipeline.cpp
     src/core/render/BindlessMaterialSystem.cpp
     src/core/render/PhysicalLighting.cpp
+    src/core/render/RenderQuality.cpp
     src/core/render/flag/DynamicFlag3D.cpp
     src/core/render/terrain/TerrainClipmap.cpp
 

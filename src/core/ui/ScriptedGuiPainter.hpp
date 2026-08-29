@@ -100,7 +100,6 @@ private:
 
     const ScriptedGuiBlueprint* blueprint_ = nullptr;
     ScriptedGuiPaintTheme theme_{};
-    mutable bool debug_ = false;
     mutable std::optional<TooltipCandidate> tooltip_;
 };
 

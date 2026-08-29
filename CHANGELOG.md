@@ -1,5 +1,26 @@
 # Changelog
 
+## Core 1.0 Development — UI polish round two: camera, fullscreen, interaction — 2026-08-29
+
+- Wired the strategic camera into the map renderer: `fullscreen.vert` now
+  takes a uv-viewport push constant and the desktop shell converts
+  `StrategicCamera` state (pan/zoom) into it every frame; middle/right-drag
+  pans and the wheel zooms the live map. The camera starts at a continental
+  overview altitude instead of a 250 km close-up.
+- Desktop shell now launches fullscreen by default (`CORE_WINDOWED=1` opts
+  out), matching grand-strategy conventions.
+- Scripted GUI interaction states: hover and pressed are tracked per node
+  (`GrandStrategyGui::set_hovered` / `set_pressed`), buttons brighten and
+  re-frame on hover, and tooltips resolve from `hud.tip.*` localization keys.
+- Typography scale raised for 1080p readability (body 15, window titles 19,
+  stat values 16); top bar reworked into flag plate plus circular stat chips
+  with icon medallions, and the navigation rail into circular icon buttons.
+- Render-quality tiers (`RenderQuality`, FXAA, MSAA, HDR tonemap, depth
+  attachment) and the 3D dynamic flag landed alongside; benchmark harness
+  scenes added under `src/game/harness/` (see `docs/RENDER_OPTIMIZATION.md`).
+- MSVC toolchain now builds and passes the full 27-test suite locally;
+  MinGW remains affected by the environment loader issue noted previously.
+
 ## Core 1.0 Development — Unified Victorian grand-strategy UI theme — 2026-08-28
 
 - Added the engine-wide design-token system `UiTheme`

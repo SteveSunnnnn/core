@@ -145,6 +145,20 @@ int DesktopApp::run() {
         if (const char* map = std::getenv("CORE_UI_WORLD_MAP")) {
             backend.set_ui_world_map(std::filesystem::path{map});
         }
+        // CORE_RENDER_QUALITY selects a tier explicitly: legacy, low, medium,
+        // high, ultra. Omit it (or pass "auto") to resolve from the device.
+        if (const char* quality = std::getenv("CORE_RENDER_QUALITY")) {
+            const std::string tier{quality};
+            if (tier == "legacy") backend.set_quality_tier(core::RenderQuality::Legacy);
+            else if (tier == "low") backend.set_quality_tier(core::RenderQuality::Low);
+            else if (tier == "medium") backend.set_quality_tier(core::RenderQuality::Medium);
+            else if (tier == "high") backend.set_quality_tier(core::RenderQuality::High);
+            else if (tier == "ultra") backend.set_quality_tier(core::RenderQuality::Ultra);
+            else if (tier != "auto") {
+                std::cerr << "CORE_RENDER_QUALITY warning: unknown tier '" << tier
+                          << "'; resolving from device capabilities\n";
+            }
+        }
         DynamicFlag3DConfig flag_config;
         flag_config.pattern = DynamicFlagPattern::CrossSaltire;
         flag_config.colors = {{0xff233a5eu, 0xffeee3c5u, 0xff8b2b2bu}};
@@ -187,6 +201,8 @@ int DesktopApp::run() {
 
         StrategicCamera camera;
         camera.set_viewport(init_w, init_h);
+        // Start with a continental overview instead of a 250 km close-up.
+        camera.state().altitude_m = 9'000'000.0;
 
         UiDrawList ui;
         game::GrandStrategyGui game_gui;

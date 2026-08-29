@@ -3,6 +3,20 @@
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 outColor;
 
+// pc.view is the map viewport consumed by fullscreen.vert.
+layout(push_constant) uniform Push {
+    vec4 view;
+    vec4 params;
+} pc;
+
+// Octave counts are specialization constants, not push-constant values.
+// The original shader hard-coded `octave < 5`, which let the driver unroll the
+// loop and fold the amplitude chain into constants. Moving the bound into a
+// runtime uniform cost ~7% GPU time on its own, so the quality tier is baked
+// in at pipeline creation instead and every tier still gets unrolled code.
+layout(constant_id = 0) const int BASE_OCTAVES = 5;
+layout(constant_id = 1) const int DETAIL_OCTAVES = 5;
+
 // Descriptor-free validation shader. The production terrain path supplies
 // streamed height/material pages; this procedural analogue exercises the same
 // biome blending, derivative-normal, and atmospheric response.
@@ -20,25 +34,33 @@ float valueNoise(vec2 p) {
                mix(hash12(i + vec2(0.0, 1.0)), hash12(i + 1.0), u.x), u.y);
 }
 
-float fbm(vec2 p) {
-    float value = 0.0;
-    float amplitude = 0.52;
-    mat2 rotation = mat2(0.80, -0.60, 0.60, 0.80);
-    for (int octave = 0; octave < 5; ++octave) {
-        value += amplitude * valueNoise(p);
-        p = rotation * p * 2.03 + 17.1;
-        amplitude *= 0.49;
-    }
-    return value;
+// Each octave costs four hash evaluations, which makes the octave count the
+// single most expensive knob in the terrain pass. Generating one function per
+// constant keeps the bound literal so the loop is always unrolled.
+#define FBM_DEFINE(NAME, OCTAVES)                    \
+float NAME(vec2 p) {                                 \
+    float value = 0.0;                               \
+    float amplitude = 0.52;                          \
+    mat2 rotation = mat2(0.80, -0.60, 0.60, 0.80);   \
+    for (int octave = 0; octave < (OCTAVES); ++octave) { \
+        value += amplitude * valueNoise(p);          \
+        p = rotation * p * 2.03 + 17.1;              \
+        amplitude *= 0.49;                           \
+    }                                                \
+    return value;                                    \
 }
+
+FBM_DEFINE(fbm_base, BASE_OCTAVES)
+FBM_DEFINE(fbm_detail, DETAIL_OCTAVES)
 
 void main() {
     vec2 mapUv = uv;
     vec2 world = (mapUv - 0.5) * vec2(7.2, 4.2);
-    float continental = fbm(world * 0.72) * 0.72 + fbm(world * 2.15) * 0.28;
-    float ridges = 1.0 - abs(fbm(world * 3.8) * 2.0 - 1.0);
+    float continental = fbm_base(world * 0.72) * 0.72
+                      + fbm_detail(world * 2.15) * 0.28;
+    float ridges = 1.0 - abs(fbm_base(world * 3.8) * 2.0 - 1.0);
     float height = continental * 0.78 + ridges * ridges * 0.22;
-    float moisture = fbm(world * 1.15 + vec2(41.0, -19.0));
+    float moisture = fbm_detail(world * 1.15 + vec2(41.0, -19.0));
 
     float dx = dFdx(height);
     float dy = dFdy(height);
@@ -47,7 +69,7 @@ void main() {
 
     // Printed cartography rather than photoreal terrain: every biome is a
     // restrained ink wash over a warm archival paper stock.
-    float paperCloud = fbm(world * 0.34 + vec2(9.0, 27.0));
+    float paperCloud = fbm_detail(world * 0.34 + vec2(9.0, 27.0));
     float paperMottle = valueNoise(mapUv * vec2(17.0, 11.0) + vec2(5.0, 13.0));
     float paperGrain = hash12(gl_FragCoord.xy * 0.47) - 0.5;
     float fiber = sin(gl_FragCoord.y * 0.093 + valueNoise(world * 5.0) * 3.0);
@@ -80,7 +102,7 @@ void main() {
 
     // Broad, nearly imperceptible press variation gives the sheet the tonal
     // richness of a bound atlas page without introducing a visible pattern.
-    float atlasWash = fbm(world * 0.83 + vec2(-31.0, 14.0));
+    float atlasWash = fbm_detail(world * 0.83 + vec2(-31.0, 14.0));
     float pressVariation = sin(mapUv.x * 5.1 + atlasWash * 1.7)
                          * sin(mapUv.y * 4.3 - atlasWash * 1.3);
     printed *= 0.975 + atlasWash * 0.035 + pressVariation * 0.006;

@@ -180,9 +180,7 @@ void ScriptedGuiPainter::paint(const ScriptedGuiRuntime& runtime,
     if (blueprint_ == nullptr || runtime.root_index() == kInvalidUiRuntimeNode ||
         runtime.root_index() >= runtime.nodes().size() || screen.w <= 0.0f || screen.h <= 0.0f) return;
     tooltip_.reset();
-    if (std::getenv("CORE_GUI_DEBUG") != nullptr) debug_ = true;
     paint_node(runtime, runtime.root_index(), draw_list, screen, resolve_text, 0u);
-    debug_ = false;
     if (tooltip_ && resolve_text) {
         const auto tooltip_text = resolve_text(tooltip_->key);
         if (!tooltip_text.empty()) draw_tooltip(draw_list, screen, tooltip_->anchor, tooltip_text);
@@ -212,10 +210,6 @@ void ScriptedGuiPainter::paint_children(const ScriptedGuiRuntime& runtime,
                 child_rect.w = bounded(child_style.width, child_style.min_width, child_style.max_width);
             if (child_style.height >= 0.0f)
                 child_rect.h = bounded(child_style.height, child_style.min_height, child_style.max_height);
-            if (debug_)
-                std::printf("DBG d%u kind=%d rect=%.0f,%.0f %.0fx%.0f\n", depth,
-                            static_cast<int>(runtime.nodes()[index].kind),
-                            child_rect.x, child_rect.y, child_rect.w, child_rect.h);
             paint_node(runtime, index, draw_list, child_rect, resolve_text, depth + 1u);
         }
         return;
@@ -254,10 +248,6 @@ void ScriptedGuiPainter::paint_children(const ScriptedGuiRuntime& runtime,
             child_rect.y = cursor;
             child_rect.h = size;
         }
-        if (debug_)
-            std::printf("DBG d%u kind=%d rect=%.0f,%.0f %.0fx%.0f\n", depth,
-                        static_cast<int>(runtime.nodes()[index].kind),
-                        child_rect.x, child_rect.y, child_rect.w, child_rect.h);
         paint_node(runtime, index, draw_list, child_rect, resolve_text, depth + 1u);
         cursor += size + gap;
     }
