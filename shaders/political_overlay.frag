@@ -22,11 +22,6 @@ float vnoise(vec2 p){
                mix(hash12(i+vec2(0,1)),hash12(i+vec2(1,1)),u.x),u.y);
 }
 
-float region_id(vec2 w){
-    vec2 q=w*1.4+vec2(vnoise(w*0.6+11.7),vnoise(w*0.75+47.3))*0.55;
-    return hash12(floor(q));
-}
-
 vec3 palette(float id){
     // Muted nineteenth-century map tints.
     vec3 c0=vec3(0.55,0.30,0.30); // dusty red
@@ -48,15 +43,18 @@ void main(){
     float s=clamp(vview.z*2.0,0.10,1.0);
     vec2 w=uv*(3.0/s);
 
-    float cont=vnoise(w*0.9+7.7)*0.60+vnoise(w*2.1+3.3)*0.28+vnoise(w*4.7+1.1)*0.12;
-    float land=smoothstep(0.42,0.50,cont);
+    float cont=vnoise(w*0.9+7.7)*0.72+vnoise(w*2.6+3.3)*0.28;
+    float land=smoothstep(0.40,0.50,cont);
 
-    float r0=region_id(w);
-    float bx=step(0.05,abs(region_id(w+vec2(0.02,0.0))-r0));
-    float by=step(0.05,abs(region_id(w+vec2(0.0,0.02))-r0));
-    float border=max(bx,by)*land;
+    // One warped-cell evaluation; borders come from the distance to the cell
+    // edge in warped space instead of extra region lookups.
+    vec2 q=w*1.4+vec2(vnoise(w*0.6+11.7),vnoise(w*0.75+47.3))*0.55;
+    float id=hash12(floor(q));
+    vec2 f=fract(q);
+    float edge=min(min(f.x,1.0-f.x),min(f.y,1.0-f.y));
+    float border=(1.0-smoothstep(0.0,0.06,edge))*land;
 
-    vec3 tint=palette(r0);
+    vec3 tint=palette(id);
     tint*=0.92+0.16*vnoise(w*6.0+5.0);
 
     float alpha=land*0.46+border*0.40;

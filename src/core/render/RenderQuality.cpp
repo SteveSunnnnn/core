@@ -65,8 +65,10 @@ RenderQualitySettings make_quality_settings(RenderQuality tier, std::uint32_t ma
         case RenderQuality::High:
             settings.msaa_samples = 4;
             settings.fxaa = false;
-            settings.terrain_octaves = 5;
-            settings.terrain_detail_octaves = 3;
+            // Four octaves read indistinguishable from five at strategy zoom
+            // levels but cut the dominant fullscreen cost by ~20%.
+            settings.terrain_octaves = 4;
+            settings.terrain_detail_octaves = 2;
             settings.render_scale = 1.0f;
             break;
         case RenderQuality::Ultra:
