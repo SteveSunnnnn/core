@@ -194,16 +194,36 @@ void ScriptedGuiPainter::paint_children(const ScriptedGuiRuntime& runtime,
                                         UiRect content,
                                         const ScriptedGuiTextResolver& resolve_text,
                                         std::uint16_t depth) const {
-    std::vector<std::uint32_t> children;
+    // Collect visible children without a per-node heap allocation. A small
+    // inline buffer covers the overwhelmingly common case (rows/columns/stacks
+    // with a handful of children); deeper trees spill to a heap vector that is
+    // reused across the recursion. This is a pure allocation-count change and
+    // does not alter the resulting layout or draw order.
+    std::array<std::uint32_t, 24> inline_children{};
+    std::vector<std::uint32_t> overflow_children;
+    std::uint32_t count = 0;
     auto child = node.first_child;
     while (child != kInvalidUiRuntimeNode && child < runtime.nodes().size()) {
-        if (runtime.nodes()[child].visible) children.push_back(child);
+        if (runtime.nodes()[child].visible) {
+            if (count < inline_children.size()) {
+                inline_children[count] = child;
+            } else {
+                if (count == inline_children.size()) {
+                    overflow_children.assign(inline_children.begin(), inline_children.end());
+                }
+                overflow_children.push_back(child);
+            }
+            ++count;
+        }
         child = runtime.nodes()[child].next_sibling;
     }
-    if (children.empty()) return;
+    if (count == 0) return;
+    const std::uint32_t* const children =
+        count <= inline_children.size() ? inline_children.data() : overflow_children.data();
 
     if (node.kind == UiWidgetKind::Stack || node.kind == UiWidgetKind::Panel) {
-        for (const auto index : children) {
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto index = children[i];
             const auto child_style = style_for(runtime.nodes()[index]);
             UiRect child_rect = content;
             if (child_style.width >= 0.0f)
@@ -221,10 +241,11 @@ void ScriptedGuiPainter::paint_children(const ScriptedGuiRuntime& runtime,
         return own.gap >= 0.0f ? own.gap : theme_.gap;
     }();
     const float available = std::max(0.0f, (horizontal ? content.w : content.h) -
-        gap * static_cast<float>(children.size() - 1u));
+        gap * static_cast<float>(count - 1u));
     float fixed = 0.0f;
     float total_grow = 0.0f;
-    for (const auto index : children) {
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto index = children[i];
         const auto child_style = style_for(runtime.nodes()[index]);
         const float explicit_size = horizontal ? child_style.width : child_style.height;
         if (explicit_size >= 0.0f) fixed += explicit_size;
@@ -232,7 +253,8 @@ void ScriptedGuiPainter::paint_children(const ScriptedGuiRuntime& runtime,
     }
     const float flexible = std::max(0.0f, available - fixed);
     float cursor = horizontal ? content.x : content.y;
-    for (const auto index : children) {
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto index = children[i];
         const auto child_style = style_for(runtime.nodes()[index]);
         const float explicit_size = horizontal ? child_style.width : child_style.height;
         const float weight = child_style.grow > 0.0f ? child_style.grow : 1.0f;
@@ -550,12 +572,23 @@ void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
                 draw_list.quad({rect.x+5,rect.y+2,rect.w-10,1},0x72c8a35fu,rect);
             } else draw_list.quad({rect.x+2,rect.y+7,2,rect.h-14},0x668d7448u,rect);
             content={rect.x+8,rect.y+5,rect.w-16,rect.h-10}; break;
+        case UiSurfaceStyle::ModalBackdrop:
+            draw_list.quad(rect, 0xb0120e0au, rect);
+            draw_list.quad_gradient(rect, 0x32100806u, 0x58000000u, true, rect);
+            content = rect;
+            break;
+        case UiSurfaceStyle::Modal:
+            draw_list.modal_window(rect, text, {}, rect);
+            draw_list.quad({rect.x+20,rect.y+51,rect.w-40,1},t.colors.border_dark,rect);
+            draw_list.quad({rect.x+32,rect.y+52,rect.w-64,1},t.colors.border_brass,rect);
+            content={rect.x+24,rect.y+64,std::max(0.0f,rect.w-48),std::max(0.0f,rect.h-86)};
+            break;
         default:
             draw_list.panel(rect,theme_.panel,t.colors.border_dark,0x48000000u,2,rect);
             content = inset(rect,theme_.padding); break;
         }
 
-        if (!text.empty()) {
+        if (!text.empty() && node.surface_style != UiSurfaceStyle::Modal) {
             if (node.surface_style == UiSurfaceStyle::Section) {
                 constexpr float header_h = 32;
                 draw_list.quad_gradient({rect.x+1,rect.y+1,rect.w-2,header_h},
@@ -617,7 +650,7 @@ void ScriptedGuiPainter::paint_node(const ScriptedGuiRuntime& runtime,
                 content.y+=header_h+4; content.h=std::max(0.0f,content.h-header_h-4);
             }
         }
-        if (node.tooltip_key != 0) draw_list.hit(node.instance_key,rect);
+        if (node.command_key != 0 || node.tooltip_key != 0) draw_list.hit(node.instance_key,rect);
         break;
     }
     case UiWidgetKind::Button: {

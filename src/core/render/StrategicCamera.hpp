@@ -31,7 +31,11 @@ public:
 
     void set_viewport(std::uint32_t width, std::uint32_t height) noexcept;
     void pan_pixels(double dx, double dy) noexcept;
-    void zoom_steps(double steps, double focus_x_normalized = 0.0, double focus_y_normalized = 0.0) noexcept;
+    void zoom_steps(double steps,
+                    double focus_x_normalized = 0.0,
+                    double focus_y_normalized = 0.0,
+                    double minimum_altitude_m = min_altitude_m,
+                    double maximum_altitude_m = max_altitude_m) noexcept;
 
     [[nodiscard]] double ground_meters_per_pixel() const noexcept;
     [[nodiscard]] double zoom_fraction() const noexcept;

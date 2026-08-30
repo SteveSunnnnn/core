@@ -559,6 +559,19 @@ static void test_strategic_camera_precision_and_zoom() {
     camera.pan_pixels(100.0, -40.0);
     assert(std::isfinite(camera.state().center.x));
     assert(std::isfinite(camera.state().center.y));
+
+    // A game can impose a closer zoom limit than the camera's engine-wide
+    // minimum. Repeated cursor-focused wheel input at that limit must not pan.
+    constexpr double game_min_altitude = 2'800'000.0;
+    camera.state().altitude_m = game_min_altitude;
+    const auto center_at_close_limit = camera.state().center;
+    for (int i = 0; i < 16; ++i) {
+        camera.zoom_steps(1.0, 0.85, -0.70,
+                          game_min_altitude, StrategicCamera::max_altitude_m);
+    }
+    assert(camera.state().altitude_m == game_min_altitude);
+    assert(camera.state().center.x == center_at_close_limit.x);
+    assert(camera.state().center.y == center_at_close_limit.y);
 }
 
 static void test_terrain_clipmap_compact_stable_build() {

@@ -23,15 +23,16 @@ float vnoise(vec2 p){
 }
 
 vec3 palette(float id){
-    // Muted nineteenth-century map tints.
-    vec3 c0=vec3(0.55,0.30,0.30); // dusty red
-    vec3 c1=vec3(0.52,0.48,0.26); // olive
-    vec3 c2=vec3(0.30,0.38,0.55); // steel blue
-    vec3 c3=vec3(0.45,0.32,0.52); // plum
-    vec3 c4=vec3(0.28,0.47,0.42); // teal
-    vec3 c5=vec3(0.62,0.52,0.30); // ochre
-    vec3 c6=vec3(0.42,0.42,0.40); // gray
-    vec3 c7=vec3(0.55,0.40,0.24); // tan
+    // Saturated nineteenth-century map tints; the overlay is near-opaque so
+    // countries read clearly instead of washing out over the paper base.
+    vec3 c0=vec3(0.62,0.30,0.28); // dusty red
+    vec3 c1=vec3(0.55,0.50,0.22); // olive
+    vec3 c2=vec3(0.28,0.38,0.60); // steel blue
+    vec3 c3=vec3(0.50,0.30,0.56); // plum
+    vec3 c4=vec3(0.24,0.52,0.44); // teal
+    vec3 c5=vec3(0.68,0.54,0.26); // ochre
+    vec3 c6=vec3(0.45,0.45,0.44); // gray
+    vec3 c7=vec3(0.62,0.46,0.26); // tan
     int k=int(mod(id*8.0,8.0));
     if(k==0)return c0;if(k==1)return c1;if(k==2)return c2;if(k==3)return c3;
     if(k==4)return c4;if(k==5)return c5;if(k==6)return c6;return c7;
@@ -57,7 +58,7 @@ void main(){
     vec3 tint=palette(id);
     tint*=0.92+0.16*vnoise(w*6.0+5.0);
 
-    float alpha=land*0.46+border*0.40;
-    vec3 col=mix(tint,vec3(0.10,0.08,0.07),clamp(border,0.0,1.0)*0.85);
+    float alpha=max(land*0.85,clamp(border,0.0,1.0)*0.95);
+    vec3 col=mix(tint,vec3(0.09,0.07,0.06),clamp(border,0.0,1.0)*0.9);
     outColor=vec4(col,alpha);
 }

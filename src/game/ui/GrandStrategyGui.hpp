@@ -5,6 +5,7 @@
 #include "core/ui/ScriptedGui.hpp"
 #include "core/ui/ScriptedGuiPainter.hpp"
 #include "core/ui/ScriptedGuiRuntime.hpp"
+#include "game/map/WorldMapData.hpp"
 
 #include <array>
 #include <filesystem>
@@ -23,6 +24,13 @@ namespace game {
 // the engine library.
 class GrandStrategyGui final : private core::ScriptedGuiDataProvider {
 public:
+    enum class ApplicationAction : std::uint8_t {
+        None,
+        EnterFullscreen,
+        EnterWindowed,
+        Quit
+    };
+
     GrandStrategyGui();
     ~GrandStrategyGui();
 
@@ -35,7 +43,8 @@ public:
     void update(const core::CoreEngine& engine,
                 int speed,
                 bool paused,
-                std::optional<core::ProvinceId> selected_province);
+                std::optional<core::ProvinceId> selected_province,
+                const WorldMapLocation* selected_world_location = nullptr);
     void paint(core::UiDrawList& draw_list, core::UiRect screen) const;
     bool activate(std::uint64_t hit_id, int* speed = nullptr, bool* paused = nullptr) noexcept;
     void set_hovered(std::optional<std::uint64_t> hit_id) noexcept;
@@ -43,6 +52,14 @@ public:
     void set_focused(std::optional<std::uint64_t> hit_id) noexcept;
     void advance_interactions(float dt_seconds) noexcept;
     void close_drawer() noexcept;
+    void toggle_game_menu(bool* paused = nullptr) noexcept;
+    void open_game_menu(bool* paused = nullptr) noexcept;
+    void close_game_menu(bool* paused = nullptr) noexcept;
+    void set_fullscreen(bool fullscreen) noexcept;
+    [[nodiscard]] ApplicationAction take_application_action() noexcept;
+    [[nodiscard]] bool game_menu_open() const noexcept { return game_menu_open_; }
+    [[nodiscard]] bool drawer_open() const noexcept { return drawer_open_; }
+    [[nodiscard]] std::string localize(core::UiStableKey key) const;
     [[nodiscard]] bool loaded() const noexcept { return runtime_ != nullptr; }
 
 private:
@@ -54,7 +71,7 @@ private:
     };
     enum PropertySlot : std::uint16_t {
         CountryName, Rank, Treasury, Balance, Population, Gdp, Date, Speed,
-        SelectedName, SelectedState, SelectedPopulation, SelectedInfrastructure,
+        SelectedName, SelectedState, SelectedPopulation, SelectedArea,
         CurrencyName, MonetaryStandard, ExchangeRate, Convertibility,
         GoldParity, SilverParity, ForeignReserves, Seigniorage,
         MonetarySovereign, BankStatus, BankReserves, BankDeposits, BankEquity,
@@ -67,6 +84,7 @@ private:
         DrawerOpen, OutlinerOpen,
         LocationSelected, NoLocationSelected, PausedActive,
         Speed1Active, Speed2Active, Speed3Active, Speed4Active, Speed5Active,
+        MapActive, GameMenuOpen, FullscreenActive, WindowedActive,
         PropertyCount
     };
 
@@ -97,12 +115,17 @@ private:
     std::array<core::UiStableKey, static_cast<std::size_t>(Page::Count)> page_commands_{};
     std::array<core::UiStableKey, static_cast<std::size_t>(EconomyPage::Count)> economy_page_commands_{};
     std::array<core::UiStableKey, 6> time_commands_{};
+    std::array<core::UiStableKey, 8> game_menu_commands_{};
     Page active_page_ = Page::Count;
     EconomyPage active_economy_page_ = EconomyPage::Treasury;
     bool drawer_open_ = false;
     bool location_selected_ = false;
     bool paused_ = true;
+    bool paused_before_menu_ = true;
+    bool game_menu_open_ = false;
+    bool fullscreen_ = true;
     int speed_ = 1;
+    ApplicationAction pending_application_action_ = ApplicationAction::None;
 };
 
 } // namespace game

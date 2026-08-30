@@ -3,9 +3,11 @@
 #include "game/ui/GrandStrategyGui.hpp"
 #include "game/ui/StrategyHudSystem.hpp"
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <string_view>
 
 using namespace core;
 
@@ -222,6 +224,97 @@ int main() {
         ui_scripted.clear();
         gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
         assert(has_text("CURRENCY REGIME"));
+
+        // Every persistent time control is actionable. Selecting a speed
+        // must not change pause state, whether the game is paused or running.
+        bool paused = true;
+        int speed = 1;
+        const auto pause_hit = ui_scripted.hit_test(1459.0f, 41.0f);
+        assert(pause_hit.has_value());
+        assert(gui.activate(*pause_hit, &speed, &paused));
+        assert(!paused && speed == 1);
+        for (int selected_speed = 1; selected_speed <= 5; ++selected_speed) {
+            const auto speed_hit = ui_scripted.hit_test(
+                1483.0f + static_cast<float>(selected_speed - 1) * 24.0f, 41.0f);
+            assert(speed_hit.has_value());
+            assert(gui.activate(*speed_hit, &speed, &paused));
+            assert(speed == selected_speed);
+            assert(!paused);
+        }
+
+        // All eight cabinet navigation buttons open their matching page and
+        // a second activation closes it back to the map-first state.
+        gui.close_drawer();
+        constexpr std::array<std::string_view, 8> cabinet_titles{{
+            "POLITICS", "BUILDINGS", "NATIONAL MARKET", "NATIONAL ECONOMY",
+            "POPULATION", "TECHNOLOGY", "MILITARY", "DIPLOMACY"
+        }};
+        for (std::size_t index = 0; index < cabinet_titles.size(); ++index) {
+            ui_scripted.clear();
+            gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
+            const auto navigation_hit = ui_scripted.hit_test(
+                32.0f, 118.0f + static_cast<float>(index) * 60.0f);
+            assert(navigation_hit.has_value());
+            assert(gui.activate(*navigation_hit, &speed, &paused));
+            ui_scripted.clear();
+            gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
+            assert(has_text(cabinet_titles[index]));
+            assert(gui.activate(*navigation_hit, &speed, &paused));
+        }
+
+        // The ESC/game-menu state pauses input, draws above the HUD, consumes
+        // the backdrop, restores the prior pause state on resume, and emits
+        // application actions for display mode rather than faking them in UI.
+        paused = false;
+        gui.open_game_menu(&paused);
+        assert(gui.game_menu_open());
+        assert(paused);
+        ui_scripted.clear();
+        gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
+        assert(has_text("GAME MENU"));
+        assert(has_text("RESUME GAME"));
+
+        const auto backdrop_hit = ui_scripted.hit_test(80.0f, 400.0f);
+        assert(backdrop_hit.has_value());
+        assert(gui.activate(*backdrop_hit, &speed, &paused));
+        assert(gui.game_menu_open() && paused);
+
+        const auto windowed_hit = ui_scripted.hit_test(920.0f, 370.0f);
+        assert(windowed_hit.has_value());
+        assert(gui.activate(*windowed_hit, &speed, &paused));
+        assert(gui.take_application_action() ==
+               game::GrandStrategyGui::ApplicationAction::EnterWindowed);
+        gui.set_fullscreen(false);
+
+        const auto resume_hit = ui_scripted.hit_test(800.0f, 275.0f);
+        assert(resume_hit.has_value());
+        assert(gui.activate(*resume_hit, &speed, &paused));
+        assert(!gui.game_menu_open());
+        assert(!paused);
+
+        // The bottom toolbar exposes only real actions: menu, existing page
+        // shortcuts, return-to-map, and one visibly disabled future lens. The
+        // housing still captures the disabled slot so it cannot click through
+        // to the strategic map.
+        ui_scripted.clear();
+        gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
+        constexpr std::array<float, 6> bottom_x{{632.0f, 681.0f, 733.0f, 789.0f, 845.0f, 897.0f}};
+        for (const float x : bottom_x)
+            assert(ui_scripted.hit_test(x, 850.0f).has_value());
+        const auto market_shortcut = ui_scripted.hit_test(897.0f, 850.0f);
+        assert(market_shortcut.has_value());
+        assert(gui.activate(*market_shortcut, &speed, &paused));
+        ui_scripted.clear();
+        gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
+        assert(has_text("NATIONAL MARKET"));
+
+        const auto disabled_lens_capture = ui_scripted.hit_test(945.0f, 850.0f);
+        assert(disabled_lens_capture.has_value());
+        assert(gui.activate(*disabled_lens_capture, &speed, &paused));
+        ui_scripted.clear();
+        gui.paint(ui_scripted, {0.0f, 0.0f, 1600.0f, 900.0f});
+        assert(has_text("NATIONAL MARKET"));
+
         std::cout << "  [PASS] Sample scripted HUD compiles and paints through the theme\n";
     }
 

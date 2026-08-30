@@ -68,7 +68,7 @@ GrandStrategyGui::GrandStrategyGui() : schema_(symbols_) {
     constexpr std::array<std::string_view, PoliticsActive> text_properties{{
         "country_name", "rank", "treasury", "balance", "population", "gdp",
         "date", "speed", "selected_name", "selected_state", "selected_population",
-        "selected_infrastructure", "currency_name", "monetary_standard", "exchange_rate",
+        "selected_area", "currency_name", "monetary_standard", "exchange_rate",
         "convertibility", "gold_parity", "silver_parity", "foreign_reserves",
         "seigniorage", "monetary_sovereign", "bank_status", "bank_reserves",
         "bank_deposits", "bank_equity", "bank_loans", "bank_bonds",
@@ -84,7 +84,8 @@ GrandStrategyGui::GrandStrategyGui() : schema_(symbols_) {
         "treasury_page_active", "currency_page_active", "banking_page_active", "debt_page_active",
         "drawer_open", "outliner_open",
         "location_selected", "no_location_selected", "paused_active",
-        "speed_1_active", "speed_2_active", "speed_3_active", "speed_4_active", "speed_5_active"
+        "speed_1_active", "speed_2_active", "speed_3_active", "speed_4_active", "speed_5_active",
+        "map_active", "game_menu_open", "fullscreen_active", "windowed_active"
     }};
     constexpr std::array<std::string_view, static_cast<std::size_t>(Page::Count)> commands{{
         "open_politics", "open_buildings", "open_market", "open_economy", "open_population",
@@ -109,6 +110,14 @@ GrandStrategyGui::GrandStrategyGui() : schema_(symbols_) {
     for (std::size_t index = 0; index < time_commands.size(); ++index) {
         time_commands_[index] = core::ui_stable_key(time_commands[index]);
         (void)schema_.register_command(time_commands[index]);
+    }
+    constexpr std::array<std::string_view, 8> game_menu_commands{{
+        "open_game_menu", "resume_game", "enter_fullscreen", "enter_windowed",
+        "quit_game", "capture_game_menu", "close_drawer", "capture_ui"
+    }};
+    for (std::size_t index = 0; index < game_menu_commands.size(); ++index) {
+        game_menu_commands_[index] = core::ui_stable_key(game_menu_commands[index]);
+        (void)schema_.register_command(game_menu_commands[index]);
     }
     page_active_.fill(false);
     set_economy_page(EconomyPage::Treasury);
@@ -180,6 +189,44 @@ void GrandStrategyGui::close_drawer() noexcept {
     (void)runtime_->refresh(*this);
 }
 
+void GrandStrategyGui::open_game_menu(bool* paused) noexcept {
+    if (!runtime_ || game_menu_open_) return;
+    paused_before_menu_ = paused != nullptr ? *paused : paused_;
+    game_menu_open_ = true;
+    paused_ = true;
+    if (paused != nullptr) *paused = true;
+    set_pressed(std::nullopt);
+    set_focused(std::nullopt);
+    (void)runtime_->refresh(*this);
+}
+
+void GrandStrategyGui::close_game_menu(bool* paused) noexcept {
+    if (!runtime_ || !game_menu_open_) return;
+    game_menu_open_ = false;
+    paused_ = paused_before_menu_;
+    if (paused != nullptr) *paused = paused_before_menu_;
+    set_pressed(std::nullopt);
+    set_focused(std::nullopt);
+    (void)runtime_->refresh(*this);
+}
+
+void GrandStrategyGui::toggle_game_menu(bool* paused) noexcept {
+    if (game_menu_open_) close_game_menu(paused);
+    else open_game_menu(paused);
+}
+
+void GrandStrategyGui::set_fullscreen(bool fullscreen) noexcept {
+    if (fullscreen_ == fullscreen) return;
+    fullscreen_ = fullscreen;
+    if (runtime_) (void)runtime_->refresh(*this);
+}
+
+GrandStrategyGui::ApplicationAction GrandStrategyGui::take_application_action() noexcept {
+    const auto action = pending_application_action_;
+    pending_application_action_ = ApplicationAction::None;
+    return action;
+}
+
 void GrandStrategyGui::set_page(Page page) noexcept {
     active_page_ = page;
     drawer_open_ = page != Page::Count;
@@ -198,7 +245,8 @@ void GrandStrategyGui::set_economy_page(EconomyPage page) noexcept {
 void GrandStrategyGui::update(const core::CoreEngine& engine,
                               int speed,
                               bool paused,
-                              std::optional<core::ProvinceId> selected_province) {
+                              std::optional<core::ProvinceId> selected_province,
+                              const WorldMapLocation* selected_world_location) {
     if (!runtime_) return;
     speed_ = std::clamp(speed, 1, 5);
     paused_ = paused;
@@ -295,8 +343,16 @@ void GrandStrategyGui::update(const core::CoreEngine& engine,
     text_values_[SelectedName] = resolve_text(core::ui_stable_key("hud.none_selected"));
     text_values_[SelectedState].clear();
     text_values_[SelectedPopulation] = "—";
-    text_values_[SelectedInfrastructure] = "—";
-    if (selected_province && selected_province->valid() &&
+    text_values_[SelectedArea] = "—";
+    if (selected_world_location != nullptr) {
+        location_selected_ = true;
+        text_values_[SelectedName] = selected_world_location->name;
+        text_values_[SelectedState] = selected_world_location->country;
+        text_values_[SelectedPopulation] = compact_number(
+            static_cast<double>(selected_world_location->population));
+        text_values_[SelectedArea] = compact_number(
+            static_cast<double>(selected_world_location->area_km2)) + " sq km";
+    } else if (selected_province && selected_province->valid() &&
         static_cast<std::size_t>(selected_province->value()) < world.geography.province_count()) {
         location_selected_ = true;
         const auto province = *selected_province;
@@ -324,8 +380,37 @@ bool GrandStrategyGui::activate(std::uint64_t hit_id, int* speed, bool* paused) 
     if (!runtime_) return false;
     const auto* node = runtime_->find(hit_id);
     if (node == nullptr || node->command_key == 0) return false;
+    const auto command = node->command_key;
+
+    if (game_menu_open_) {
+        if (command == game_menu_commands_[1]) {
+            close_game_menu(paused);
+        } else if (command == game_menu_commands_[2]) {
+            if (!fullscreen_) pending_application_action_ = ApplicationAction::EnterFullscreen;
+        } else if (command == game_menu_commands_[3]) {
+            if (fullscreen_) pending_application_action_ = ApplicationAction::EnterWindowed;
+        } else if (command == game_menu_commands_[4]) {
+            pending_application_action_ = ApplicationAction::Quit;
+        }
+        // The modal capture surface and every click while the game menu is
+        // open are consumed here so no map or HUD action leaks underneath.
+        return true;
+    }
+    if (command == game_menu_commands_[0]) {
+        open_game_menu(paused);
+        return true;
+    }
+    if (command == game_menu_commands_[6]) {
+        close_drawer();
+        return true;
+    }
+    if (command == game_menu_commands_[7]) {
+        // Static HUD surfaces consume pointer input so clicks cannot leak
+        // through to province selection or dismiss an open drawer.
+        return true;
+    }
     for (std::size_t index = 0; index < page_commands_.size(); ++index) {
-        if (page_commands_[index] == node->command_key) {
+        if (page_commands_[index] == command) {
             const auto requested = static_cast<Page>(index);
             if (drawer_open_ && active_page_ == requested) {
                 drawer_open_ = false;
@@ -339,14 +424,14 @@ bool GrandStrategyGui::activate(std::uint64_t hit_id, int* speed, bool* paused) 
         }
     }
     for (std::size_t index = 0; index < economy_page_commands_.size(); ++index) {
-        if (economy_page_commands_[index] == node->command_key) {
+        if (economy_page_commands_[index] == command) {
             set_economy_page(static_cast<EconomyPage>(index));
             (void)runtime_->refresh(*this);
             return true;
         }
     }
     for (std::size_t index = 0; index < time_commands_.size(); ++index) {
-        if (time_commands_[index] != node->command_key) continue;
+        if (time_commands_[index] != command) continue;
         if (index == 0) {
             if (paused != nullptr) *paused = !*paused;
             paused_ = paused != nullptr ? *paused : !paused_;
@@ -433,10 +518,18 @@ bool GrandStrategyGui::read_property(core::UiDataEntityRef source,
     case Speed3Active: value = speed_ == 3; break;
     case Speed4Active: value = speed_ == 4; break;
     case Speed5Active: value = speed_ == 5; break;
+    case MapActive: value = !drawer_open_; break;
+    case GameMenuOpen: value = game_menu_open_; break;
+    case FullscreenActive: value = fullscreen_; break;
+    case WindowedActive: value = !fullscreen_; break;
     default: return false;
     }
     out = core::UiDataValue::boolean_value(value);
     return true;
+}
+
+std::string GrandStrategyGui::localize(core::UiStableKey key) const {
+    return resolve_text(key);
 }
 
 std::string GrandStrategyGui::resolve_text(core::UiStableKey key) const {

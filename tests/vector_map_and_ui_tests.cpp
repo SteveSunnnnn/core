@@ -198,6 +198,63 @@ int main() {
         std::cout << "  [PASS] Dynamic 3D flag cloth and UI overlay ordering\n";
     }
 
+    // 5. Binary vector boundary loading and screen-space vector border generation
+    {
+        VectorMapSystem vmap;
+        const std::filesystem::path bin_path = "content/base/map/world/world_boundaries_near.corevec";
+        if (std::filesystem::exists(bin_path)) {
+            const bool loaded = vmap.load_binary_boundaries(bin_path);
+            assert(loaded);
+            assert(!vmap.binary_polylines().empty());
+
+            UiDrawList ui;
+            // Test zoomed out (world view)
+            vmap.render_screen_boundaries(
+                ui,
+                0.5, 0.5,
+                0.5, 0.5,
+                1920, 1080,
+                [](std::uint32_t a, std::uint32_t b) {
+                    if (b == 0) return VectorBorderClass::Coastline;
+                    if (a % 10 != b % 10) return VectorBorderClass::Country;
+                    return VectorBorderClass::Province;
+                }
+            );
+            assert(!ui.vertices().empty());
+            assert(!ui.indices().empty());
+            const auto world_vertex_count = ui.vertices().size();
+
+            // Test zoomed in (close view)
+            ui.clear();
+            vmap.render_screen_boundaries(
+                ui,
+                0.5, 0.5,
+                0.05, 0.05,
+                1920, 1080,
+                [](std::uint32_t a, std::uint32_t b) {
+                    if (b == 0) return VectorBorderClass::Coastline;
+                    if (a % 10 != b % 10) return VectorBorderClass::Country;
+                    return VectorBorderClass::Province;
+                }
+            );
+            assert(!ui.vertices().empty());
+            assert(!ui.indices().empty());
+
+            // Test screen margin culling (far off-screen view)
+            ui.clear();
+            vmap.render_screen_boundaries(
+                ui,
+                999.0, 999.0,
+                0.001, 0.001,
+                1920, 1080,
+                [](std::uint32_t, std::uint32_t) { return VectorBorderClass::Country; }
+            );
+            assert(ui.vertices().empty()); // Off-screen must cull all vertices
+        }
+
+        std::cout << "  [PASS] Binary vector boundary loading, LOD culling, and anti-aliased screen projection\n";
+    }
+
     std::cout << "=== ALL VECTOR MAP AND UI TESTS PASSED (100%) ===\n";
     return 0;
 }

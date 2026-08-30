@@ -217,6 +217,8 @@ enum class UiSurfaceStyle : std::uint8_t {
     Outliner,
     OutlinerGroup,
     OutlinerRow,
+    ModalBackdrop,
+    Modal,
     Center,
     CenterMuted
 };

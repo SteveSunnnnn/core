@@ -217,6 +217,7 @@ add_executable(core_living_demo src/apps/core_living_demo.cpp)
 target_link_libraries(core_living_demo PRIVATE core_runtime)
 add_library(core_game_ui STATIC
     src/game/content/GameProjectConfig.cpp
+    src/game/map/WorldMapData.cpp
     src/game/runtime/GameAppController.cpp
     src/game/ui/StrategyHudSystem.cpp
     src/game/ui/GrandStrategyGui.cpp
@@ -349,6 +350,9 @@ if(CORE_BUILD_TESTS)
     add_executable(core_game_client_hud_tests tests/game_client_hud_tests.cpp)
     target_link_libraries(core_game_client_hud_tests PRIVATE core_game_ui)
     add_test(NAME core_game_client_hud_tests COMMAND core_game_client_hud_tests)
+    add_executable(core_world_map_data_tests tests/world_map_data_tests.cpp)
+    target_link_libraries(core_world_map_data_tests PRIVATE core_game_ui)
+    add_test(NAME core_world_map_data_tests COMMAND core_world_map_data_tests)
     add_executable(core_tooltip_stack_tests tests/tooltip_stack_tests.cpp)
     target_link_libraries(core_tooltip_stack_tests PRIVATE core_runtime)
     add_test(NAME core_tooltip_stack_tests COMMAND core_tooltip_stack_tests)

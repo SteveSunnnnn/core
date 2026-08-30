@@ -508,7 +508,8 @@ void VulkanDesktopBackend::create_swapchain() {
     int width = 0;
     int height = 0;
     SDL_GetWindowSizeInPixels(window_, &width, &height);
-    if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
+    if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max() &&
+        capabilities.currentExtent.width > 0 && capabilities.currentExtent.height > 0) {
         extent_ = capabilities.currentExtent;
     } else {
         extent_.width = std::clamp(static_cast<std::uint32_t>(std::max(width, 1)),
@@ -732,6 +733,15 @@ void VulkanDesktopBackend::resolve_quality_tier() {
     if (requested_quality_ != active_quality_) {
         active_quality_ = requested_quality_;
         settings_ = make_quality_settings(active_quality_, properties_.limits.framebufferColorSampleCounts);
+    }
+
+    // The installed strategy map is a fullscreen analytic pass with its
+    // authoritative borders drawn in screen space. Multisampling the entire
+    // RGBA16F target adds resolve bandwidth but cannot improve those edges.
+    // Keep native resolution and HDR grading while avoiding that dead cost.
+    if (!world_map_ids_path_.empty() && !world_map_terrain_path_.empty()) {
+        settings_.msaa_samples = 1u;
+        settings_.fxaa = false;
     }
 
     msaa_samples_ = static_cast<VkSampleCountFlagBits>(settings_.msaa_samples);
@@ -1234,6 +1244,32 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     vkcheck(vkCreatePipelineLayout(device_, &ui_textured_layout_info, nullptr, &ui_textured_layout_),
             "vkCreatePipelineLayout(ui textured)");
 
+    // The political map is a scene pass, not a UI texture. Its four inputs
+    // follow the V3-style split: categorical province IDs are sampled
+    // nearest, while terrain and height are filtered independently and the
+    // compact LUT resolves the current political ownership.
+    std::array<VkDescriptorSetLayoutBinding, 4> world_map_bindings{};
+    for (std::uint32_t binding = 0; binding < world_map_bindings.size(); ++binding) {
+        world_map_bindings[binding].binding = binding;
+        world_map_bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        world_map_bindings[binding].descriptorCount = 1;
+        world_map_bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo world_map_descriptor_info{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    world_map_descriptor_info.bindingCount = static_cast<std::uint32_t>(world_map_bindings.size());
+    world_map_descriptor_info.pBindings = world_map_bindings.data();
+    vkcheck(vkCreateDescriptorSetLayout(device_, &world_map_descriptor_info, nullptr,
+                                         &world_map_scene_descriptor_layout_),
+            "vkCreateDescriptorSetLayout(world map)");
+    VkPipelineLayoutCreateInfo world_map_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    world_map_layout_info.setLayoutCount = 1;
+    world_map_layout_info.pSetLayouts = &world_map_scene_descriptor_layout_;
+    world_map_layout_info.pushConstantRangeCount = 1;
+    world_map_layout_info.pPushConstantRanges = &fullscreen_range;
+    vkcheck(vkCreatePipelineLayout(device_, &world_map_layout_info, nullptr, &world_map_layout_),
+            "vkCreatePipelineLayout(world map)");
+
     if (!ui_font_atlas_path_.empty()) {
         load_ui_font_metrics();
         create_ui_image(ui_font_atlas_path_, ui_font_image_, ui_font_image_memory_,
@@ -1277,7 +1313,8 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
         std::uint32_t map_width = 0;
         std::uint32_t map_height = 0;
         create_ui_image(ui_world_map_path_, ui_world_map_image_, ui_world_map_memory_,
-                        ui_world_map_view_, ui_world_map_sampler_, map_width, map_height);
+                        ui_world_map_view_, ui_world_map_sampler_, map_width, map_height,
+                        true, false, true);
         if (ui_world_map_image_ != VK_NULL_HANDLE) {
             VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
             VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -1306,16 +1343,62 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
         }
     }
 
-    // 3D passes render into an MSAA RGBA16F target; the tonemap pass samples
-    // the resolved copy and writes the (possibly non-sRGB) swapchain.
-    const auto color_samples = properties_.limits.framebufferColorSampleCounts;
-    msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
-    for (const auto candidate : {VK_SAMPLE_COUNT_8_BIT, VK_SAMPLE_COUNT_4_BIT, VK_SAMPLE_COUNT_2_BIT}) {
-        if ((color_samples & candidate) != 0u) {
-            msaa_samples_ = candidate;
-            break;
+    if (!world_map_ids_path_.empty() && !world_map_terrain_path_.empty() &&
+        !world_map_height_path_.empty() && !world_map_political_lut_path_.empty()) {
+        std::uint32_t ignored_width = 0;
+        std::uint32_t ignored_height = 0;
+        create_ui_image(world_map_ids_path_, world_map_ids_image_, world_map_ids_memory_,
+                        world_map_ids_view_, world_map_ids_sampler_, ignored_width, ignored_height,
+                        true, true);
+        create_ui_image(world_map_terrain_path_, world_map_terrain_image_, world_map_terrain_memory_,
+                        world_map_terrain_view_, world_map_terrain_sampler_, ignored_width, ignored_height,
+                        true, false, true);
+        create_ui_image(world_map_height_path_, world_map_height_image_, world_map_height_memory_,
+                        world_map_height_view_, world_map_height_sampler_, ignored_width, ignored_height,
+                        true, false, true);
+        create_ui_image(world_map_political_lut_path_, world_map_political_lut_image_,
+                        world_map_political_lut_memory_, world_map_political_lut_view_,
+                        world_map_political_lut_sampler_, ignored_width, ignored_height,
+                        false, true);
+        if (world_map_ids_image_ != VK_NULL_HANDLE && world_map_terrain_image_ != VK_NULL_HANDLE &&
+            world_map_height_image_ != VK_NULL_HANDLE && world_map_political_lut_image_ != VK_NULL_HANDLE) {
+            std::array<VkDescriptorPoolSize, 1> world_pool_sizes{{
+                {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4u}}};
+            VkDescriptorPoolCreateInfo world_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            world_pool_info.maxSets = 1;
+            world_pool_info.poolSizeCount = static_cast<std::uint32_t>(world_pool_sizes.size());
+            world_pool_info.pPoolSizes = world_pool_sizes.data();
+            vkcheck(vkCreateDescriptorPool(device_, &world_pool_info, nullptr,
+                                            &world_map_scene_descriptor_pool_),
+                    "vkCreateDescriptorPool(world map)");
+            VkDescriptorSetAllocateInfo world_allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            world_allocate.descriptorPool = world_map_scene_descriptor_pool_;
+            world_allocate.descriptorSetCount = 1;
+            world_allocate.pSetLayouts = &world_map_scene_descriptor_layout_;
+            vkcheck(vkAllocateDescriptorSets(device_, &world_allocate, &world_map_scene_descriptor_set_),
+                    "vkAllocateDescriptorSets(world map)");
+            const std::array<VkDescriptorImageInfo, 4> world_images{{
+                {world_map_ids_sampler_, world_map_ids_view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {world_map_terrain_sampler_, world_map_terrain_view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {world_map_height_sampler_, world_map_height_view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {world_map_political_lut_sampler_, world_map_political_lut_view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}}};
+            std::array<VkWriteDescriptorSet, 4> world_writes{};
+            for (std::uint32_t binding = 0; binding < world_writes.size(); ++binding) {
+                world_writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                world_writes[binding].dstSet = world_map_scene_descriptor_set_;
+                world_writes[binding].dstBinding = binding;
+                world_writes[binding].descriptorCount = 1;
+                world_writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                world_writes[binding].pImageInfo = &world_images[binding];
+            }
+            vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(world_writes.size()),
+                                   world_writes.data(), 0, nullptr);
         }
     }
+
+    // 3D passes render into an MSAA RGBA16F target; the tonemap pass samples
+    // the resolved copy and writes the (possibly non-sRGB) swapchain.
+    msaa_samples_ = static_cast<VkSampleCountFlagBits>(settings_.msaa_samples);
 
     VkDescriptorSetLayoutBinding sampled_binding{};
     sampled_binding.binding = 0;
@@ -1372,6 +1455,7 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     const auto terrain = load_shader_module(shader_dir_ / "terrain.frag.spv");
     const auto ocean = load_shader_module(shader_dir_ / "ocean.frag.spv");
     const auto political = load_shader_module(shader_dir_ / "political_overlay.frag.spv");
+    const auto world_map_fragment = load_shader_module(shader_dir_ / "world_map.frag.spv");
     const auto living_vertex = load_shader_module(shader_dir_ / "living.vert.spv");
     const auto living_fragment = load_shader_module(shader_dir_ / "living.frag.spv");
     const auto flag_vertex = load_shader_module(shader_dir_ / "flag.vert.spv");
@@ -1492,6 +1576,8 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
                                         &terrain_specialization);
     ocean_pipeline_ = create_pipeline(fullscreen, ocean, fullscreen_layout_, true, nullptr, scene_format, scene_samples);
     political_pipeline_ = create_pipeline(fullscreen, political, political_layout_, true, nullptr, scene_format, scene_samples);
+    world_map_pipeline_ = create_pipeline(fullscreen, world_map_fragment, world_map_layout_, false, nullptr,
+                                          scene_format, scene_samples, false, false);
 
     const VkVertexInputBindingDescription living_bindings[]{
         {0, sizeof(LivingVertex), VK_VERTEX_INPUT_RATE_VERTEX},
@@ -1545,6 +1631,11 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     ui_pipeline_ = create_pipeline(ui_vertex, ui_fragment, ui_layout_, true, &ui_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
     ui_textured_pipeline_ = create_pipeline(ui_vertex, ui_textured_fragment, ui_textured_layout_, true, &ui_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
     ui_msdf_pipeline_ = create_pipeline(ui_vertex, ui_msdf_fragment, ui_textured_layout_, true, &ui_input, swapchain_format_, VK_SAMPLE_COUNT_1_BIT);
+    // Country/state typography is part of the map artwork, not the display-
+    // space HUD. Rendering the same MSDF geometry into the HDR scene makes it
+    // inherit map grading and lets living-map geometry naturally cover it.
+    map_label_pipeline_ = create_pipeline(ui_vertex, ui_msdf_fragment, ui_textured_layout_, true,
+                                          &ui_input, scene_format, scene_samples, false, false);
 
     // Tonemap resolves the HDR scene into the swapchain. It always exists on
     // the HDR path, even without FXAA, because it is what applies dithering.
@@ -1568,6 +1659,7 @@ void VulkanDesktopBackend::create_live_validation_renderer() {
     vkDestroyShaderModule(device_, flag_fragment, nullptr);
     vkDestroyShaderModule(device_, flag_vertex, nullptr);
     vkDestroyShaderModule(device_, political, nullptr);
+    vkDestroyShaderModule(device_, world_map_fragment, nullptr);
     vkDestroyShaderModule(device_, ocean, nullptr);
     vkDestroyShaderModule(device_, terrain, nullptr);
     vkDestroyShaderModule(device_, fullscreen, nullptr);
@@ -1711,7 +1803,10 @@ void VulkanDesktopBackend::create_ui_image(const std::filesystem::path& path,
                                            VkImageView& view,
                                            VkSampler& sampler,
                                            std::uint32_t& width,
-                                           std::uint32_t& height) {
+                                           std::uint32_t& height,
+                                           bool repeat_horizontal,
+                                           bool nearest_filter,
+                                           bool generate_mipmaps) {
     image = VK_NULL_HANDLE;
     memory = VK_NULL_HANDLE;
     view = VK_NULL_HANDLE;
@@ -1751,6 +1846,17 @@ void VulkanDesktopBackend::create_ui_image(const std::filesystem::path& path,
         payload_size > 256ull * 1024ull * 1024ull || bytes.size() != 24u + payload_size) {
         throw std::runtime_error("invalid UI image dimensions or payload: " + path.string());
     }
+    std::uint32_t mip_levels = 1u;
+    if (generate_mipmaps && !nearest_filter) {
+        VkFormatProperties format_properties{};
+        vkGetPhysicalDeviceFormatProperties(physical_, VK_FORMAT_R8G8B8A8_UNORM,
+                                            &format_properties);
+        if ((format_properties.optimalTilingFeatures &
+             VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0u) {
+            mip_levels = 1u + static_cast<std::uint32_t>(
+                std::floor(std::log2(static_cast<double>(std::max(width, height)))));
+        }
+    }
     const auto* pixels = bytes.data() + 24u;
     VkBuffer staging = VK_NULL_HANDLE;
     VkDeviceMemory staging_memory = VK_NULL_HANDLE;
@@ -1781,11 +1887,12 @@ void VulkanDesktopBackend::create_ui_image(const std::filesystem::path& path,
         image_info.imageType = VK_IMAGE_TYPE_2D;
         image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
         image_info.extent = {width, height, 1u};
-        image_info.mipLevels = 1;
+        image_info.mipLevels = mip_levels;
         image_info.arrayLayers = 1;
         image_info.samples = VK_SAMPLE_COUNT_1_BIT;
         image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                           (mip_levels > 1u ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u);
         image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         vkcheck(vkCreateImage(device_, &image_info, nullptr, &image), "vkCreateImage(ui image)");
@@ -1815,22 +1922,62 @@ void VulkanDesktopBackend::create_ui_image(const std::filesystem::path& path,
         to_transfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         to_transfer.image = image;
-        to_transfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        to_transfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_levels, 0, 1};
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer);
         VkBufferImageCopy copy{};
         copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         copy.imageExtent = {width, height, 1u};
         vkCmdCopyBufferToImage(command, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-        VkImageMemoryBarrier to_shader{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        to_shader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        to_shader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        to_shader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        to_shader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        to_shader.image = image;
-        to_shader.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        std::int32_t mip_width = static_cast<std::int32_t>(width);
+        std::int32_t mip_height = static_cast<std::int32_t>(height);
+        for (std::uint32_t level = 1u; level < mip_levels; ++level) {
+            VkImageMemoryBarrier source_to_blit{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            source_to_blit.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            source_to_blit.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            source_to_blit.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            source_to_blit.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            source_to_blit.image = image;
+            source_to_blit.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1u, 1u, 0u, 1u};
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                                 0, nullptr, 1, &source_to_blit);
+
+            const std::int32_t next_width = std::max(mip_width / 2, 1);
+            const std::int32_t next_height = std::max(mip_height / 2, 1);
+            VkImageBlit blit{};
+            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1u, 0u, 1u};
+            blit.srcOffsets[1] = {mip_width, mip_height, 1};
+            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0u, 1u};
+            blit.dstOffsets[1] = {next_width, next_height, 1};
+            vkCmdBlitImage(command, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           1, &blit, VK_FILTER_LINEAR);
+
+            VkImageMemoryBarrier source_to_shader{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            source_to_shader.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            source_to_shader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            source_to_shader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            source_to_shader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            source_to_shader.image = image;
+            source_to_shader.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1u, 1u, 0u, 1u};
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                                 0, nullptr, 1, &source_to_shader);
+            mip_width = next_width;
+            mip_height = next_height;
+        }
+
+        VkImageMemoryBarrier last_to_shader{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        last_to_shader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        last_to_shader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        last_to_shader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        last_to_shader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        last_to_shader.image = image;
+        last_to_shader.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip_levels - 1u, 1u, 0u, 1u};
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_shader);
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                             0, nullptr, 1, &last_to_shader);
         vkcheck(vkEndCommandBuffer(command), "vkEndCommandBuffer(ui image)");
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submit.commandBufferCount = 1;
@@ -1843,16 +1990,17 @@ void VulkanDesktopBackend::create_ui_image(const std::filesystem::path& path,
         view_info.image = image;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_levels, 0, 1};
         vkcheck(vkCreateImageView(device_, &view_info, nullptr, &view), "vkCreateImageView(ui image)");
         VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        sampler_info.magFilter = VK_FILTER_LINEAR;
-        sampler_info.minFilter = VK_FILTER_LINEAR;
+        sampler_info.magFilter = nearest_filter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+        sampler_info.minFilter = nearest_filter ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
         sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.addressModeU = repeat_horizontal ? VK_SAMPLER_ADDRESS_MODE_REPEAT
+                                                      : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        sampler_info.maxLod = 1.0f;
+        sampler_info.maxLod = static_cast<float>(mip_levels - 1u);
         vkcheck(vkCreateSampler(device_, &sampler_info, nullptr, &sampler), "vkCreateSampler(ui image)");
         vkDestroyBuffer(device_, staging, nullptr);
         vkFreeMemory(device_, staging_memory, nullptr);
@@ -1913,6 +2061,23 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
         }
         frame.index_capacity = 0;
     }
+    if (map_overlay_vb_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, map_overlay_vb_, nullptr);
+        map_overlay_vb_ = VK_NULL_HANDLE;
+    }
+    if (map_overlay_vb_memory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, map_overlay_vb_memory_, nullptr);
+        map_overlay_vb_memory_ = VK_NULL_HANDLE;
+    }
+    if (map_overlay_ib_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, map_overlay_ib_, nullptr);
+        map_overlay_ib_ = VK_NULL_HANDLE;
+    }
+    if (map_overlay_ib_memory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, map_overlay_ib_memory_, nullptr);
+        map_overlay_ib_memory_ = VK_NULL_HANDLE;
+    }
+    map_overlay_index_count_ = 0;
     if (ui_vertices_ != VK_NULL_HANDLE) {
         vkDestroyBuffer(device_, ui_vertices_, nullptr);
         ui_vertices_ = VK_NULL_HANDLE;
@@ -1955,9 +2120,10 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
     }
     flag_index_count_ = 0;
 
-    const std::array<VkPipeline*, 10> pipelines{{
-        &ui_pipeline_, &ui_textured_pipeline_, &ui_msdf_pipeline_, &living_pipeline_, &flag_pipeline_,
-        &political_pipeline_, &ocean_pipeline_, &terrain_pipeline_,
+    const std::array<VkPipeline*, 12> pipelines{{
+        &ui_pipeline_, &ui_textured_pipeline_, &ui_msdf_pipeline_, &map_label_pipeline_,
+        &living_pipeline_, &flag_pipeline_,
+        &world_map_pipeline_, &political_pipeline_, &ocean_pipeline_, &terrain_pipeline_,
         &tonemap_pipeline_, &fxaa_pipeline_}};
     for (auto* pipeline : pipelines) {
         if (*pipeline != VK_NULL_HANDLE) {
@@ -1984,6 +2150,10 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
     if (fullscreen_layout_ != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device_, fullscreen_layout_, nullptr);
         fullscreen_layout_ = VK_NULL_HANDLE;
+    }
+    if (world_map_layout_ != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device_, world_map_layout_, nullptr);
+        world_map_layout_ = VK_NULL_HANDLE;
     }
     if (tonemap_layout_ != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device_, tonemap_layout_, nullptr);
@@ -2012,6 +2182,11 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
         ui_world_map_descriptor_pool_ = VK_NULL_HANDLE;
         ui_world_map_descriptor_set_ = VK_NULL_HANDLE;
     }
+    if (world_map_scene_descriptor_pool_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device_, world_map_scene_descriptor_pool_, nullptr);
+        world_map_scene_descriptor_pool_ = VK_NULL_HANDLE;
+        world_map_scene_descriptor_set_ = VK_NULL_HANDLE;
+    }
     if (ui_font_descriptor_layout_ != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(device_, ui_font_descriptor_layout_, nullptr);
         ui_font_descriptor_layout_ = VK_NULL_HANDLE;
@@ -2020,8 +2195,19 @@ void VulkanDesktopBackend::destroy_live_validation_renderer() {
         vkDestroyDescriptorSetLayout(device_, ui_world_map_descriptor_layout_, nullptr);
         ui_world_map_descriptor_layout_ = VK_NULL_HANDLE;
     }
+    if (world_map_scene_descriptor_layout_ != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device_, world_map_scene_descriptor_layout_, nullptr);
+        world_map_scene_descriptor_layout_ = VK_NULL_HANDLE;
+    }
     destroy_ui_image(ui_font_image_, ui_font_image_memory_, ui_font_view_, ui_font_sampler_);
     destroy_ui_image(ui_world_map_image_, ui_world_map_memory_, ui_world_map_view_, ui_world_map_sampler_);
+    destroy_ui_image(world_map_ids_image_, world_map_ids_memory_, world_map_ids_view_, world_map_ids_sampler_);
+    destroy_ui_image(world_map_terrain_image_, world_map_terrain_memory_,
+                     world_map_terrain_view_, world_map_terrain_sampler_);
+    destroy_ui_image(world_map_height_image_, world_map_height_memory_,
+                     world_map_height_view_, world_map_height_sampler_);
+    destroy_ui_image(world_map_political_lut_image_, world_map_political_lut_memory_,
+                     world_map_political_lut_view_, world_map_political_lut_sampler_);
     ui_font_slots_.clear();
     ui_font_metrics_.reset();
     ui_font_width_ = ui_font_height_ = ui_font_cell_ = ui_font_columns_ = 0;
@@ -2090,19 +2276,44 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
         const auto color = ui_gpu_vertex(UiVertex{0.0f, 0.0f, 0.0f, 0.0f, run.rgba});
         if (ui_font_image_ != VK_NULL_HANDLE && ui_font_metrics_) {
             const auto& atlas = *ui_font_metrics_;
-            float pen_x = run.x;
-            float baseline_y = run.y + run.size * 0.82f;
+            const auto glyph_for = [&atlas](std::uint32_t codepoint) {
+                const FontGlyph* glyph = atlas.find(codepoint);
+                if (glyph == nullptr) glyph = atlas.find(0xfffdu);
+                if (glyph == nullptr) glyph = atlas.find(static_cast<std::uint32_t>('?'));
+                return glyph;
+            };
+            float measured_width = 0.0f;
+            if (run.centered) {
+                std::size_t measure_index = 0;
+                while (measure_index < run.utf8.size()) {
+                    const auto codepoint = decode_utf8(run.utf8, measure_index);
+                    if (codepoint == static_cast<std::uint32_t>('\n')) continue;
+                    if (const auto* glyph = glyph_for(codepoint))
+                        measured_width += glyph->advance * run.size + run.letter_spacing;
+                }
+                if (measured_width > 0.0f) measured_width -= run.letter_spacing;
+            }
+            float pen_x = run.centered ? -measured_width * 0.5f : run.x;
+            // MSDF metrics are baseline-relative. A baseline around +0.30em
+            // vertically centres typical serif caps around a map anchor.
+            float baseline_y = run.map_space ? run.size * 0.30f : run.y + run.size * 0.82f;
+            const float angle_cos = std::cos(run.angle_rad);
+            const float angle_sin = std::sin(run.angle_rad);
+            const auto place = [&](float px, float py) {
+                if (!run.map_space) return std::array<float, 2>{{px, py}};
+                return std::array<float, 2>{{
+                    run.x + px * angle_cos - py * angle_sin,
+                    run.y + px * angle_sin + py * angle_cos}};
+            };
             std::size_t index = 0;
             while (index < run.utf8.size()) {
                 const auto codepoint = decode_utf8(run.utf8, index);
                 if (codepoint == static_cast<std::uint32_t>('\n')) {
-                    pen_x = run.x;
+                    pen_x = run.centered ? -measured_width * 0.5f : run.x;
                     baseline_y += run.size * 1.25f;
                     continue;
                 }
-                const FontGlyph* glyph = atlas.find(codepoint);
-                if (glyph == nullptr) glyph = atlas.find(0xfffdu);
-                if (glyph == nullptr) glyph = atlas.find(static_cast<std::uint32_t>('?'));
+                const FontGlyph* glyph = glyph_for(codepoint);
                 if (glyph == nullptr) continue;
 
                 const float x0 = pen_x + glyph->plane_left * run.size;
@@ -2115,20 +2326,26 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
                     const float v0 = 1.0f - glyph->atlas_top / static_cast<float>(atlas.height());
                     const float v1 = 1.0f - glyph->atlas_bottom / static_cast<float>(atlas.height());
                     const auto base = static_cast<std::uint32_t>(ui_staging_vertices_.size());
-                    ui_staging_vertices_.push_back(UiGpuVertex{x0, y0, u0, v0, color.r, color.g, color.b, color.a});
-                    ui_staging_vertices_.push_back(UiGpuVertex{x1, y0, u1, v0, color.r, color.g, color.b, color.a});
-                    ui_staging_vertices_.push_back(UiGpuVertex{x1, y1, u1, v1, color.r, color.g, color.b, color.a});
-                    ui_staging_vertices_.push_back(UiGpuVertex{x0, y1, u0, v1, color.r, color.g, color.b, color.a});
+                    const auto p0 = place(x0, y0);
+                    const auto p1 = place(x1, y0);
+                    const auto p2 = place(x1, y1);
+                    const auto p3 = place(x0, y1);
+                    ui_staging_vertices_.push_back(UiGpuVertex{p0[0], p0[1], u0, v0, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{p1[0], p1[1], u1, v0, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{p2[0], p2[1], u1, v1, color.r, color.g, color.b, color.a});
+                    ui_staging_vertices_.push_back(UiGpuVertex{p3[0], p3[1], u0, v1, color.r, color.g, color.b, color.a});
                     ui_staging_indices_.insert(ui_staging_indices_.end(), {base + 0u, base + 1u, base + 2u,
                                                                              base + 0u, base + 2u, base + 3u});
                 }
-                pen_x += glyph->advance * run.size;
+                pen_x += glyph->advance * run.size + run.letter_spacing;
             }
             const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
             if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{
                 first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
-                UiBatchKind::MsdfText, atlas.texture_hash(), run.order});
-        } else if (ui_font_image_ != VK_NULL_HANDLE && ui_font_cell_ != 0u && ui_font_columns_ != 0u &&
+                run.map_space ? UiBatchKind::MapMsdfText : UiBatchKind::MsdfText,
+                atlas.texture_hash(), run.order});
+        } else if (!run.map_space && std::getenv("CORE_ALLOW_LEGACY_BITMAP_FONT") != nullptr &&
+                   ui_font_image_ != VK_NULL_HANDLE && ui_font_cell_ != 0u && ui_font_columns_ != 0u &&
             !ui_font_slots_.empty()) {
             float x = run.x;
             float y = run.y;
@@ -2171,7 +2388,7 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
             const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
             if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
                                                                        UiBatchKind::Textured, kUiFontTextureKey, run.order});
-        } else {
+        } else if (!run.map_space && std::getenv("CORE_ALLOW_LEGACY_BITMAP_FONT") != nullptr) {
             const float cell = std::max(1.0f, run.size / 7.0f);
             float x = run.x;
             float y = run.y;
@@ -2205,6 +2422,11 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
             const auto count = static_cast<std::uint32_t>(ui_staging_indices_.size()) - first;
             if (count != 0u) ui_staging_batches_.push_back(UiGpuBatch{first, count, ui_scissor(run.scissor, extent_, ui_scale_x_, ui_scale_y_),
                                                                        UiBatchKind::Solid, 0, run.order});
+        } else {
+            // Shipping desktop builds never silently substitute a pixel font.
+            // Missing MSDF content leaves the run out and keeps the visual
+            // contract explicit; development can opt into the old diagnostic
+            // path with CORE_ALLOW_LEGACY_BITMAP_FONT=1.
         }
     }
 
@@ -2219,6 +2441,44 @@ void VulkanDesktopBackend::submit_ui(const UiDrawList& ui) {
     if (!ui_staging_vertices_.empty() && !ui_staging_indices_.empty() && device_ != VK_NULL_HANDLE) {
         ensure_ui_frame_buffers();
     }
+}
+
+void VulkanDesktopBackend::submit_map_overlay(std::span<const UiVertex> vertices,
+                                              std::span<const std::uint32_t> indices) {
+    if (vertices.empty() || indices.empty() || device_ == VK_NULL_HANDLE) {
+        map_overlay_index_count_ = 0u;
+        return;
+    }
+
+    // Convert the compact AARRGGBB draw-list vertices to the GPU layout once.
+    // The staging vector is reused across camera moves so the only allocation
+    // is the resident GPU buffers themselves.
+    map_overlay_staging_vertices_.clear();
+    map_overlay_staging_vertices_.reserve(vertices.size());
+    for (const auto& vertex : vertices) {
+        map_overlay_staging_vertices_.push_back(ui_gpu_vertex(vertex));
+    }
+
+    // The overlay may still be referenced by up to `frames_in_flight`
+    // outstanding submissions, so tear the old buffers down only after the
+    // device is idle. Camera movement is infrequent, making this sync cheap in
+    // practice and identical in spirit to the resize sync already used for the
+    // per-frame UI staging buffers.
+    vkcheck(vkDeviceWaitIdle(device_), "vkDeviceWaitIdle(map overlay)");
+    if (map_overlay_vb_ != VK_NULL_HANDLE) { vkDestroyBuffer(device_, map_overlay_vb_, nullptr); map_overlay_vb_ = VK_NULL_HANDLE; }
+    if (map_overlay_vb_memory_ != VK_NULL_HANDLE) { vkFreeMemory(device_, map_overlay_vb_memory_, nullptr); map_overlay_vb_memory_ = VK_NULL_HANDLE; }
+    if (map_overlay_ib_ != VK_NULL_HANDLE) { vkDestroyBuffer(device_, map_overlay_ib_, nullptr); map_overlay_ib_ = VK_NULL_HANDLE; }
+    if (map_overlay_ib_memory_ != VK_NULL_HANDLE) { vkFreeMemory(device_, map_overlay_ib_memory_, nullptr); map_overlay_ib_memory_ = VK_NULL_HANDLE; }
+
+    create_host_buffer(map_overlay_staging_vertices_.size() * sizeof(UiGpuVertex),
+                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                       map_overlay_staging_vertices_.data(),
+                       map_overlay_vb_, map_overlay_vb_memory_);
+    create_host_buffer(indices.size() * sizeof(std::uint32_t),
+                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                       indices.data(),
+                       map_overlay_ib_, map_overlay_ib_memory_);
+    map_overlay_index_count_ = static_cast<std::uint32_t>(indices.size());
 }
 
 void VulkanDesktopBackend::ensure_ui_frame_buffers() {
@@ -2283,10 +2543,11 @@ void VulkanDesktopBackend::ensure_ui_frame_buffers() {
 }
 
 void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
+    const bool has_overlay = map_overlay_index_count_ != 0u &&
+                             map_overlay_vb_ != VK_NULL_HANDLE && map_overlay_ib_ != VK_NULL_HANDLE;
+    const bool has_dynamic = !(ui_staging_indices_.empty() && ui_staging_modules_.empty());
     if (!live_renderer_enabled_ || ui_pipeline_ == VK_NULL_HANDLE ||
-        (ui_staging_indices_.empty() && ui_staging_modules_.empty())) return;
-    const auto& frame = ui_frame_buffers_[frame_index_];
-    if (frame.vertex_buffer == VK_NULL_HANDLE || frame.index_buffer == VK_NULL_HANDLE) return;
+        (!has_overlay && !has_dynamic)) return;
     VkViewport viewport{};
     viewport.width = static_cast<float>(extent_.width);
     viewport.height = static_cast<float>(extent_.height);
@@ -2295,10 +2556,34 @@ void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
     VkRect2D full{{0, 0}, extent_};
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &full);
+
+    // The vector-border overlay is the bottommost UI layer. It is drawn from
+    // the resident GPU buffers first, then the dynamic draw-list batches are
+    // drawn on top exactly as before.
+    if (has_overlay) {
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        const std::array<float, 4> ui_constants{{
+            1.0f / std::max(ui_logical_width_, 1.0f),
+            1.0f / std::max(ui_logical_height_, 1.0f),
+            0.0f, 0.0f}};
+        vkCmdPushConstants(command, ui_layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(ui_constants), ui_constants.data());
+        const VkDeviceSize overlay_vb_offset = 0;
+        vkCmdBindVertexBuffers(command, 0, 1, &map_overlay_vb_, &overlay_vb_offset);
+        vkCmdBindIndexBuffer(command, map_overlay_ib_, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(command, map_overlay_index_count_, 1, 0, 0, 0);
+        ++draw_calls_;
+    }
+
+    if (!has_dynamic) return;
+    const auto& frame = ui_frame_buffers_[frame_index_];
+    if (frame.vertex_buffer == VK_NULL_HANDLE || frame.index_buffer == VK_NULL_HANDLE) return;
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(command, 0, 1, &frame.vertex_buffer, &offset);
     vkCmdBindIndexBuffer(command, frame.index_buffer, 0, VK_INDEX_TYPE_UINT32);
     VkPipeline bound_pipeline = VK_NULL_HANDLE;
+    VkDescriptorSet bound_descriptor = VK_NULL_HANDLE;
     std::size_t module_index = 0;
     const auto draw_modules_before = [&](std::uint64_t order) {
         while (module_index < ui_staging_modules_.size() &&
@@ -2309,6 +2594,7 @@ void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
             vkCmdBindVertexBuffers(command, 0, 1, &frame.vertex_buffer, &offset);
             vkCmdBindIndexBuffer(command, frame.index_buffer, 0, VK_INDEX_TYPE_UINT32);
             bound_pipeline = VK_NULL_HANDLE;
+            bound_descriptor = VK_NULL_HANDLE;
         }
     };
     for (const auto& batch : ui_staging_batches_) {
@@ -2343,8 +2629,11 @@ void VulkanDesktopBackend::record_ui_draws(VkCommandBuffer command) const {
         vkCmdSetScissor(command, 0, 1, &batch.scissor);
         if (sampled) {
             const auto descriptor = world_texture ? ui_world_map_descriptor_set_ : ui_font_descriptor_set_;
-            vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_textured_layout_,
-                                    0, 1, &descriptor, 0, nullptr);
+            if (descriptor != bound_descriptor) {
+                vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_textured_layout_,
+                                        0, 1, &descriptor, 0, nullptr);
+                bound_descriptor = descriptor;
+            }
         }
         vkCmdDrawIndexed(command, batch.index_count, 1, batch.first_index, 0, 0);
     }
@@ -2403,35 +2692,49 @@ void VulkanDesktopBackend::record_live_validation_draws(VkCommandBuffer command)
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &scissor);
 
-    // One push-constant call per fullscreen pass carries both the vertex-stage
-    // map viewport and the fragment-stage parameter block. The octave counts
-    // used to ride along here; they are pipeline specialization constants now.
+    // One push-constant block carries the map viewport and the scene
+    // parameters. With the V3-style layered map installed, political borders
+    // come from exact categorical ID samples in the map shader rather than a
+    // softened fullscreen UI image.
     const std::array<float, 8> scene_push{{
         map_view_[0], map_view_[1], map_view_[2], map_view_[3], 0.0f, 0.0f, 0.0f, 0.0f}};
 
-    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_pipeline_);
-    vkCmdPushConstants(command, fullscreen_layout_,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                       0, sizeof(scene_push), scene_push.data());
-    vkCmdDraw(command, 3, 1, 0, 0);
-    ++draw_calls_;
+    if (world_map_pipeline_ != VK_NULL_HANDLE && world_map_scene_descriptor_set_ != VK_NULL_HANDLE) {
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, world_map_pipeline_);
+        vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, world_map_layout_,
+                                0, 1, &world_map_scene_descriptor_set_, 0, nullptr);
+        vkCmdPushConstants(command, world_map_layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(scene_push), scene_push.data());
+        vkCmdDraw(command, 3, 1, 0, 0);
+        ++draw_calls_;
+    } else {
+        // Compatibility fallback for pre-layer projects that only provide the
+        // old procedural validation passes.
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_pipeline_);
+        vkCmdPushConstants(command, fullscreen_layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(scene_push), scene_push.data());
+        vkCmdDraw(command, 3, 1, 0, 0);
+        ++draw_calls_;
 
-    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ocean_pipeline_);
-    vkCmdPushConstants(command, fullscreen_layout_,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                       0, sizeof(scene_push), scene_push.data());
-    vkCmdDraw(command, 3, 1, 0, 0);
-    ++draw_calls_;
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ocean_pipeline_);
+        vkCmdPushConstants(command, fullscreen_layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(scene_push), scene_push.data());
+        vkCmdDraw(command, 3, 1, 0, 0);
+        ++draw_calls_;
 
-    const std::array<float, 8> political_push{{
-        map_view_[0], map_view_[1], map_view_[2], map_view_[3],
-        0.30f, 0.19f, 0.09f, 0.10f}};
-    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, political_pipeline_);
-    vkCmdPushConstants(command, political_layout_,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                       0, sizeof(political_push), political_push.data());
-    vkCmdDraw(command, 3, 1, 0, 0);
-    ++draw_calls_;
+        const std::array<float, 8> political_push{{
+            map_view_[0], map_view_[1], map_view_[2], map_view_[3],
+            0.30f, 0.19f, 0.09f, 0.10f}};
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, political_pipeline_);
+        vkCmdPushConstants(command, political_layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(political_push), political_push.data());
+        vkCmdDraw(command, 3, 1, 0, 0);
+        ++draw_calls_;
+    }
 
     const VkBuffer living_buffers[]{living_vertices_, living_instance_};
     const VkDeviceSize living_offsets[]{0, 0};
@@ -2490,7 +2793,7 @@ void VulkanDesktopBackend::record_tonemap(VkCommandBuffer command) const {
         srgb_swapchain_ ? 1.0f : 0.0f,
         settings_.dither ? 1.0f : 0.0f,
         1.0f,
-        0.28f}};
+        0.08f}};
     vkCmdPushConstants(command, tonemap_layout_,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(tonemap_push), tonemap_push.data());
@@ -2738,7 +3041,8 @@ void VulkanDesktopBackend::draw_frame() {
         // tonemapping and must never pass through ACES.
         const bool has_ui = !ui_staging_batches_.empty() ||
                             ui_staging_indices_.empty() ||
-                            !ui_staging_modules_.empty();
+                            !ui_staging_modules_.empty() ||
+                            map_overlay_index_count_ != 0u;
         if (has_ui) {
             post_color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
             vkCmdBeginRendering(frame.command, &post_rendering);

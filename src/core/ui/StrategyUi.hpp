@@ -30,7 +30,7 @@ struct UiControlVisualState {
 struct UiInsets { float left=0, top=0, right=0, bottom=0; };
 struct UiNineSlice { UiRect outer_uv{0,0,1,1}; UiRect inner_uv{0,0,1,1}; UiInsets border{}; };
 struct UiVertex { float x=0, y=0, u=0, v=0; std::uint32_t rgba=0xffffffffu; };
-enum class UiBatchKind : std::uint8_t { Solid, Textured, MsdfText, Polyline };
+enum class UiBatchKind : std::uint8_t { Solid, Textured, MsdfText, MapMsdfText, Polyline };
 // Stable client-owned texture key reserved for a full-world political map.
 // Render clients may bind a different image to this key without making the
 // simulation or UI draw-list data depend on a particular game/content pack.
@@ -38,7 +38,19 @@ inline constexpr std::uint64_t kUiWorldMapTextureKey = 0x434f5245574d4150ull; //
 inline constexpr std::uint64_t kUiFontTextureKey = 0x434f5245464e54ull; // "COREFNT"
 struct UiBatch { UiBatchKind kind=UiBatchKind::Solid; std::uint32_t first_index=0, index_count=0; std::uint64_t texture=0; UiRect scissor{}; std::uint64_t order=0; };
 struct UiHitRegion { std::uint64_t id=0; UiRect rect{}; };
-struct UiTextRun { std::string utf8; float x=0, y=0, size=16; std::uint32_t rgba=0xffffffffu; UiRect scissor{}; std::uint64_t order=0; };
+struct UiTextRun {
+    std::string utf8;
+    float x = 0;
+    float y = 0;
+    float size = 16;
+    std::uint32_t rgba = 0xffffffffu;
+    UiRect scissor{};
+    float angle_rad = 0.0f;
+    float letter_spacing = 0.0f;
+    bool centered = false;
+    bool map_space = false;
+    std::uint64_t order = 0;
+};
 // Backend-rendered module slot authored by the declarative UI. The draw list
 // owns placement, clipping and ordering; render backends only resolve the
 // stable module key to an installed module implementation.
@@ -61,10 +73,22 @@ public:
                  UiRect scissor = {},
                  std::uint64_t texture = 0,
                  UiBatchKind kind = UiBatchKind::Textured);
+    void quad_points(float x0, float y0,
+                     float x1, float y1,
+                     float x2, float y2,
+                     float x3, float y3,
+                     std::uint32_t rgba,
+                     UiRect scissor = {},
+                     std::uint64_t texture = 0,
+                     UiBatchKind kind = UiBatchKind::Solid);
     void polyline(std::span<const float> xy, std::uint32_t rgba, UiRect scissor = {});
     void radial_disc(float cx, float cy, float radius,
                      std::uint32_t center_rgba, std::uint32_t edge_rgba,
                      UiRect scissor = {}, std::uint32_t segments = 32);
+    void append_geometry(std::span<const UiVertex> vertices,
+                         std::span<const std::uint32_t> indices,
+                         UiRect scissor = {},
+                         UiBatchKind kind = UiBatchKind::Solid);
     void nine_slice(UiRect rect, const UiNineSlice& slice, std::uint32_t rgba,
                     std::uint64_t texture, UiRect scissor = {});
 
@@ -154,6 +178,12 @@ public:
                       UiRect scissor = {});
 
     void text(std::string utf8, float x, float y, float size, std::uint32_t rgba, UiRect scissor = {});
+    // Geography-bound MSDF text. The backend composites these runs into the
+    // HDR map pass (before HUD/tonemap), supports rotation and tracking, and
+    // interprets x/y as the run centre.
+    void map_text(std::string utf8, float center_x, float center_y, float size,
+                  std::uint32_t rgba, float angle_rad = 0.0f,
+                  float letter_spacing = 0.0f, UiRect scissor = {});
     void module(std::uint64_t module_key, UiRect rect, UiRect scissor = {});
     void hit(std::uint64_t id, UiRect rect);
     [[nodiscard]] std::optional<std::uint64_t> hit_test(float x, float y) const noexcept;

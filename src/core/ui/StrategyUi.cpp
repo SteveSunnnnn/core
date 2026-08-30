@@ -69,6 +69,37 @@ void UiDrawList::quad_uv(UiRect rect, float u0, float v0, float u1, float v1,
     append_quad_batch(kind, first_idx, 6, texture, scissor);
 }
 
+void UiDrawList::quad_points(float x0, float y0,
+                             float x1, float y1,
+                             float x2, float y2,
+                             float x3, float y3,
+                             std::uint32_t rgba,
+                             UiRect scissor,
+                             std::uint64_t texture,
+                             UiBatchKind kind) {
+    if (!std::isfinite(x0) || !std::isfinite(y0) ||
+        !std::isfinite(x1) || !std::isfinite(y1) ||
+        !std::isfinite(x2) || !std::isfinite(y2) ||
+        !std::isfinite(x3) || !std::isfinite(y3)) return;
+
+    const auto base = static_cast<std::uint32_t>(vertices_.size());
+    const auto first_idx = static_cast<std::uint32_t>(indices_.size());
+
+    vertices_.push_back(UiVertex{x0, y0, 0.0f, 0.0f, rgba});
+    vertices_.push_back(UiVertex{x1, y1, 1.0f, 0.0f, rgba});
+    vertices_.push_back(UiVertex{x2, y2, 1.0f, 1.0f, rgba});
+    vertices_.push_back(UiVertex{x3, y3, 0.0f, 1.0f, rgba});
+
+    indices_.push_back(base + 0);
+    indices_.push_back(base + 1);
+    indices_.push_back(base + 2);
+    indices_.push_back(base + 0);
+    indices_.push_back(base + 2);
+    indices_.push_back(base + 3);
+
+    append_quad_batch(kind, first_idx, 6, texture, scissor);
+}
+
 void UiDrawList::polyline(std::span<const float> xy, std::uint32_t rgba, UiRect scissor) {
     if (xy.size() < 4) return;
     constexpr float half_w = 1.0f;
@@ -103,6 +134,22 @@ void UiDrawList::polyline(std::span<const float> xy, std::uint32_t rgba, UiRect 
     if (count > 0) {
         append_quad_batch(UiBatchKind::Polyline, first_idx, count, 0, scissor);
     }
+}
+
+void UiDrawList::append_geometry(std::span<const UiVertex> vertices,
+                                 std::span<const std::uint32_t> indices,
+                                 UiRect scissor,
+                                 UiBatchKind kind) {
+    if (vertices.empty() || indices.empty()) return;
+    const auto base_idx = static_cast<std::uint32_t>(vertices_.size());
+    const auto first_idx = static_cast<std::uint32_t>(indices_.size());
+
+    vertices_.insert(vertices_.end(), vertices.begin(), vertices.end());
+    indices_.reserve(indices_.size() + indices.size());
+    for (auto idx : indices) {
+        indices_.push_back(base_idx + idx);
+    }
+    append_quad_batch(kind, first_idx, static_cast<std::uint32_t>(indices.size()), 0, scissor);
 }
 
 void UiDrawList::radial_disc(float cx, float cy, float radius,
@@ -1094,7 +1141,19 @@ void UiDrawList::modal_window(UiRect rect, const std::string& title, const std::
 
 void UiDrawList::text(std::string utf8, float x, float y, float size, std::uint32_t rgba, UiRect scissor) {
     if (utf8.empty() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(size) || size <= 0.0f) return;
-    text_.push_back(UiTextRun{std::move(utf8), x, y, size, rgba, scissor, next_order_++});
+    text_.push_back(UiTextRun{std::move(utf8), x, y, size, rgba, scissor,
+                              0.0f, 0.0f, false, false, next_order_++});
+    last_was_geometry_ = false;
+}
+
+void UiDrawList::map_text(std::string utf8, float center_x, float center_y, float size,
+                          std::uint32_t rgba, float angle_rad,
+                          float letter_spacing, UiRect scissor) {
+    if (utf8.empty() || !std::isfinite(center_x) || !std::isfinite(center_y) ||
+        !std::isfinite(size) || size <= 0.0f || !std::isfinite(angle_rad) ||
+        !std::isfinite(letter_spacing)) return;
+    text_.push_back(UiTextRun{std::move(utf8), center_x, center_y, size, rgba, scissor,
+                              angle_rad, letter_spacing, true, true, next_order_++});
     last_was_geometry_ = false;
 }
 

@@ -973,6 +973,8 @@ private:
                 else if (style_name == "outliner") style = UiSurfaceStyle::Outliner;
                 else if (style_name == "outliner_group") style = UiSurfaceStyle::OutlinerGroup;
                 else if (style_name == "outliner_row") style = UiSurfaceStyle::OutlinerRow;
+                else if (style_name == "modal_backdrop") style = UiSurfaceStyle::ModalBackdrop;
+                else if (style_name == "modal") style = UiSurfaceStyle::Modal;
                 else if (style_name == "center") style = UiSurfaceStyle::Center;
                 else if (style_name == "center_muted") style = UiSurfaceStyle::CenterMuted;
                 else if (style_name != "standard") known = false;

@@ -31,14 +31,26 @@ void StrategicCamera::pan_pixels(double dx, double dy) noexcept {
     state_.center.y += dy * meters_per_pixel * forward_y;
 }
 
-void StrategicCamera::zoom_steps(double steps, double focus_x_normalized, double focus_y_normalized) noexcept {
+void StrategicCamera::zoom_steps(double steps,
+                                 double focus_x_normalized,
+                                 double focus_y_normalized,
+                                 double minimum_altitude,
+                                 double maximum_altitude) noexcept {
+    const double lower_altitude = std::clamp(
+        std::min(minimum_altitude, maximum_altitude), min_altitude_m, max_altitude_m);
+    const double upper_altitude = std::clamp(
+        std::max(minimum_altitude, maximum_altitude), lower_altitude, max_altitude_m);
+    state_.altitude_m = std::clamp(state_.altitude_m, lower_altitude, upper_altitude);
     const double old_mpp = ground_meters_per_pixel();
     const double factor = std::exp(-steps * 0.16);
-    state_.altitude_m *= factor;
-    clamp();
+    state_.altitude_m = std::clamp(state_.altitude_m * factor,
+                                   lower_altitude, upper_altitude);
     const double new_mpp = ground_meters_per_pixel();
 
     // Keep the approximate ground point under the cursor stable while zooming.
+    // The offset must be derived from the *effective* clamped zoom.  Otherwise
+    // repeated wheel input at a game-specific zoom limit continues panning the
+    // map even though the altitude cannot change.
     const double half_width = static_cast<double>(state_.viewport_width) * 0.5;
     const double half_height = static_cast<double>(state_.viewport_height) * 0.5;
     const double dx_pixels = focus_x_normalized * half_width;

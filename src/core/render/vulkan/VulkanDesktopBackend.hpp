@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -72,6 +73,20 @@ public:
         ui_font_metrics_path_ = std::move(metrics_path);
     }
     void set_ui_world_map(std::filesystem::path path) { ui_world_map_path_ = std::move(path); }
+    // V3-style map inputs: a categorical province/location ID field, a
+    // separately filtered terrain layer, a height field and a small political
+    // colour lookup. Keeping these independent prevents filtered colour
+    // averaging from ever softening political borders.
+    void set_world_map_layers(std::filesystem::path ids,
+                              std::filesystem::path terrain,
+                              std::filesystem::path height,
+                              std::filesystem::path political_lut) {
+        world_map_ids_path_ = std::move(ids);
+        world_map_terrain_path_ = std::move(terrain);
+        world_map_height_path_ = std::move(height);
+        world_map_political_lut_path_ = std::move(political_lut);
+    }
+    void set_shader_dir(std::filesystem::path path) { shader_dir_ = std::move(path); }
     void set_dynamic_flag(DynamicFlag3D flag) { dynamic_flag_ = std::move(flag); }
     void draw_frame();
     // Stage a UI draw list for the next frame. Solid and polyline batches are
@@ -79,6 +94,14 @@ public:
     // batches use stable keys and are sampled when their optional resources
     // have been installed.
     void submit_ui(const UiDrawList& ui);
+
+    // Stage the static map overlay (vector borders) for persistent GPU reuse.
+    // Unlike submit_ui(), the geometry is uploaded only when the caller reports
+    // that it changed (camera moved / resize) and is redrawn every frame from
+    // the resident buffers, so stationary frames avoid re-converting and
+    // re-uploading hundreds of thousands of border vertices.
+    void submit_map_overlay(std::span<const UiVertex> vertices,
+                            std::span<const std::uint32_t> indices);
 
     // Map viewport for the live validation renderer, in uv space:
     // (cx, cy) center and (hx, hy) half extents. Defaults to the full map.
@@ -152,7 +175,10 @@ private:
                          VkImageView& view,
                          VkSampler& sampler,
                          std::uint32_t& width,
-                         std::uint32_t& height);
+                         std::uint32_t& height,
+                         bool repeat_horizontal = false,
+                         bool nearest_filter = false,
+                         bool generate_mipmaps = false);
     void destroy_ui_image(VkImage& image, VkDeviceMemory& memory,
                           VkImageView& view, VkSampler& sampler) noexcept;
     void load_font_slots(const std::filesystem::path& path);
@@ -191,6 +217,7 @@ private:
     void collect_gpu_timing(std::uint32_t frame);
     void update_stats(double frame_ms, double gpu_ms, double cpu_ms);
     void record_live_validation_draws(VkCommandBuffer command) const;
+    void record_map_label_draws(VkCommandBuffer command) const;
     void record_ui_fallback(VkCommandBuffer command) const;
     void record_tonemap(VkCommandBuffer command) const;
     void record_fxaa(VkCommandBuffer command) const;
@@ -244,6 +271,7 @@ private:
     std::filesystem::path shader_dir_;
     bool live_renderer_enabled_ = false;
     VkPipelineLayout fullscreen_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout world_map_layout_ = VK_NULL_HANDLE;
     float map_view_[4] = {0.5f, 0.5f, 0.5f, 0.5f};
     VkPipelineLayout political_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout flag_layout_ = VK_NULL_HANDLE;
@@ -252,11 +280,13 @@ private:
     VkPipeline terrain_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ocean_pipeline_ = VK_NULL_HANDLE;
     VkPipeline political_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline world_map_pipeline_ = VK_NULL_HANDLE;
     VkPipeline living_pipeline_ = VK_NULL_HANDLE;
     VkPipeline flag_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ui_textured_pipeline_ = VK_NULL_HANDLE;
     VkPipeline ui_msdf_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline map_label_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout ui_textured_layout_ = VK_NULL_HANDLE;
     VkPipeline tonemap_pipeline_ = VK_NULL_HANDLE;
     VkBuffer living_vertices_ = VK_NULL_HANDLE;
@@ -292,6 +322,33 @@ private:
     VkDescriptorSetLayout ui_world_map_descriptor_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool ui_world_map_descriptor_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet ui_world_map_descriptor_set_ = VK_NULL_HANDLE;
+
+    // Scene map layers. These are deliberately separate from the UI map
+    // compatibility resource above: the map is rendered before tonemapping,
+    // while the HUD remains a display-space overlay.
+    std::filesystem::path world_map_ids_path_;
+    std::filesystem::path world_map_terrain_path_;
+    std::filesystem::path world_map_height_path_;
+    std::filesystem::path world_map_political_lut_path_;
+    VkImage world_map_ids_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory world_map_ids_memory_ = VK_NULL_HANDLE;
+    VkImageView world_map_ids_view_ = VK_NULL_HANDLE;
+    VkSampler world_map_ids_sampler_ = VK_NULL_HANDLE;
+    VkImage world_map_terrain_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory world_map_terrain_memory_ = VK_NULL_HANDLE;
+    VkImageView world_map_terrain_view_ = VK_NULL_HANDLE;
+    VkSampler world_map_terrain_sampler_ = VK_NULL_HANDLE;
+    VkImage world_map_height_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory world_map_height_memory_ = VK_NULL_HANDLE;
+    VkImageView world_map_height_view_ = VK_NULL_HANDLE;
+    VkSampler world_map_height_sampler_ = VK_NULL_HANDLE;
+    VkImage world_map_political_lut_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory world_map_political_lut_memory_ = VK_NULL_HANDLE;
+    VkImageView world_map_political_lut_view_ = VK_NULL_HANDLE;
+    VkSampler world_map_political_lut_sampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout world_map_scene_descriptor_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool world_map_scene_descriptor_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet world_map_scene_descriptor_set_ = VK_NULL_HANDLE;
     std::uint32_t ui_font_width_ = 0;
     std::uint32_t ui_font_height_ = 0;
     std::uint32_t ui_font_cell_ = 0;
@@ -356,6 +413,16 @@ private:
     std::vector<UiGpuBatch> ui_staging_batches_;
     std::vector<UiModuleSlot> ui_staging_modules_;
     UiFrameBuffer ui_frame_buffers_[frames_in_flight]{};
+
+    // Persistent static map-overlay geometry (vector borders). Uploaded on
+    // camera movement only; redrawn ahead of the dynamic UI every frame.
+    VkBuffer map_overlay_vb_ = VK_NULL_HANDLE;
+    VkDeviceMemory map_overlay_vb_memory_ = VK_NULL_HANDLE;
+    VkBuffer map_overlay_ib_ = VK_NULL_HANDLE;
+    VkDeviceMemory map_overlay_ib_memory_ = VK_NULL_HANDLE;
+    std::uint32_t map_overlay_index_count_ = 0;
+    std::vector<UiGpuVertex> map_overlay_staging_vertices_;
+
 
     std::atomic<std::uint32_t> validation_errors_{0};
     std::atomic<std::uint32_t> validation_warnings_{0};
