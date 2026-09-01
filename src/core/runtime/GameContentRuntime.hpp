@@ -10,6 +10,7 @@
 namespace core {
 
 class CoreEngine;
+class WorldPackReader;
 
 // Owns symbols and compiled programs for the full lifetime of a running game.
 // This prevents the desktop/client layer from keeping temporary parser objects
@@ -22,6 +23,10 @@ public:
     bool install_new_game(CoreEngine& engine,
                           std::int32_t history_date,
                           std::vector<ScriptCompileDiagnostic>& diagnostics);
+    bool install_new_game(CoreEngine& engine,
+                          std::int32_t history_date,
+                          std::vector<ScriptCompileDiagnostic>& diagnostics,
+                          const WorldPackReader* world_pack);
 
     [[nodiscard]] bool loaded() const noexcept { return loaded_; }
     [[nodiscard]] bool installed() const noexcept { return installed_; }
@@ -38,4 +43,3 @@ private:
 };
 
 } // namespace core
-

@@ -1,3 +1,0 @@
-#include "core/world/WorldBootstrap.hpp"
-#include <iostream>
-int main(int argc,char**argv){try{if(argc!=2){std::cerr<<"Usage: core_world_bootstrap_check <world.coreworld>\n";return 2;}core::EconomyDefinitions defs;defs.add_good({"bootstrap_placeholder_good",1000});core::WorldPackReader pack;pack.open(argv[1]);auto result=core::WorldBootstrap::load(pack,defs);std::cout<<"Core World Bootstrap PASS\ncountries="<<result.world.countries.size()<<"\nstates="<<result.world.geography.state_count()<<"\nprovinces="<<result.world.geography.province_count()<<"\nworld_pack_hash=0x"<<std::hex<<result.world_pack_hash<<std::dec<<"\n";return 0;}catch(const std::exception&e){std::cerr<<"Core World Bootstrap FAIL: "<<e.what()<<'\n';return 1;}}

@@ -32,22 +32,13 @@ generated with `tools/assets/cook_fonts.py` (msdf-atlas-gen, MIT).
 
 ## Acquired or detected at build time
 
-- SDL 3.4.14 is fetched by CMake (`libsdl-org/SDL` tagged `release-3.4.14`) only when
-  `CORE_BUILD_DESKTOP=ON`; SDL is distributed under the zlib License.
 - Zstandard (`libzstd`) is an optional `.coreworld` compression backend detected via
   pkg-config (`CORE_HAS_ZSTD=1`); distributed under BSD/GPL dual licensing terms.
 - xxHash (`libxxhash`) is an optional XXH3-64 integrity backend detected via
   pkg-config (`CORE_HAS_XXHASH=1`); distributed under BSD-2-Clause terms.
-- Vulkan SDK/loader is required by the production desktop Vulkan target and is
-  distributed separately by its respective vendor/Khronos packages.
-
-## Technical demo data
-
-Generated Britain technical-demo artifacts are excluded from normal commits by
-`.gitignore`. Their land/coast source was based on the Basemap package's bundled
-GSHHS-derived mask; synthetic province regions were produced by Core tooling.
-Anyone publishing generated demo packages must verify and preserve the source
-dataset's applicable notices and redistribution terms.
+- Vulkan SDK/loader is an external dependency for host applications that enable
+  the optional Vulkan renderer and is distributed separately by its vendor/Khronos
+  packages.
 
 No proprietary commercial-game source code or extracted commercial-game asset
 is licensed for inclusion in this repository.

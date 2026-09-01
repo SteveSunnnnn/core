@@ -9,6 +9,7 @@
 #include "core/content/OnActionContent.hpp"
 #include "core/content/ResearchContent.hpp"
 #include "core/economy/EconomyDefinitions.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -26,6 +27,7 @@ struct CountryDefinition {
     double gdp = 0.0;
     double treasury = 0.0;
     double tax_rate = 0.20;
+    std::array<std::uint8_t, 4> map_color{160u, 160u, 160u, 255u};
 };
 
 struct EconomyFlowSpec {
@@ -40,6 +42,7 @@ struct GoodContentDefinition {
 
 struct BuildingTypeContentDefinition {
     SymbolId key{};
+    SymbolId visual{};
     std::uint32_t workers_per_level = 1000;
     std::vector<EconomyFlowSpec> inputs;
     std::vector<EconomyFlowSpec> outputs;
@@ -56,6 +59,28 @@ struct ProductionMethodContentDefinition {
 struct NeedProfileContentDefinition {
     SymbolId key{};
     std::vector<EconomyFlowSpec> needs;
+};
+
+struct BuildingContentDefinition {
+    SymbolId key{};
+    SymbolId type{};
+    SymbolId province{};
+    SymbolId state{};
+    SymbolId production_method{};
+    std::uint16_t level = 1u;
+};
+
+struct PopContentDefinition {
+    SymbolId key{};
+    SymbolId province{};
+    SymbolId state{};
+    SymbolId employer{};
+    SymbolId need_profile{};
+    PopulationCount size = 0u;
+    std::uint16_t literacy_permyriad = 0u;
+    std::uint16_t qualification_permyriad = 0u;
+    std::int32_t wealth_milli = 0;
+    std::uint32_t political_strength_milli = 0u;
 };
 
 class DefinitionDatabase {
@@ -81,8 +106,12 @@ public:
     [[nodiscard]] const CountryDefinition* find_country(SymbolId tag) const noexcept;
     [[nodiscard]] CountryId runtime_country(SymbolId tag) const noexcept;
     [[nodiscard]] std::span<const CountryDefinition> countries() const noexcept { return countries_; }
+    [[nodiscard]] bool country_map_color(std::string_view tag,
+                                          std::array<std::uint8_t, 4>& out) const noexcept;
     [[nodiscard]] const ScriptProgramDatabase& scripts() const noexcept { return scripts_; }
     [[nodiscard]] ScriptProgramDatabase& scripts() noexcept { return scripts_; }
+    [[nodiscard]] const SymbolTable& symbols() const noexcept { return symbols_; }
+    [[nodiscard]] const ScriptRegistry& script_registry() const noexcept { return registry_; }
     [[nodiscard]] const LocalizationDatabase& localization() const noexcept { return localization_; }
     [[nodiscard]] LocalizationDatabase& localization() noexcept { return localization_; }
     [[nodiscard]] const GameplayContentDatabase& gameplay_content() const noexcept { return gameplay_content_; }
@@ -97,6 +126,8 @@ public:
     [[nodiscard]] std::span<const BuildingTypeContentDefinition> building_types() const noexcept { return building_types_; }
     [[nodiscard]] std::span<const ProductionMethodContentDefinition> production_methods() const noexcept { return production_methods_; }
     [[nodiscard]] std::span<const NeedProfileContentDefinition> need_profiles() const noexcept { return need_profiles_; }
+    [[nodiscard]] std::span<const BuildingContentDefinition> buildings() const noexcept { return buildings_; }
+    [[nodiscard]] std::span<const PopContentDefinition> pops() const noexcept { return pops_; }
     [[nodiscard]] std::size_t immutable_bytes() const noexcept;
 
 public:
@@ -151,6 +182,26 @@ private:
     SymbolId sym_output_{};
     SymbolId sym_need_{};
     SymbolId sym_quantity_milli_{};
+    SymbolId sym_map_color_{};
+    SymbolId sym_red_{};
+    SymbolId sym_green_{};
+    SymbolId sym_blue_{};
+    SymbolId sym_alpha_{};
+    SymbolId sym_building_{};
+    SymbolId sym_pop_{};
+    SymbolId sym_type_{};
+    SymbolId sym_province_{};
+    SymbolId sym_state_{};
+    SymbolId sym_level_{};
+    SymbolId sym_size_{};
+    SymbolId sym_employer_{};
+    SymbolId sym_literacy_permyriad_{};
+    SymbolId sym_qualification_permyriad_{};
+    SymbolId sym_wealth_milli_{};
+    SymbolId sym_political_strength_milli_{};
+    SymbolId sym_visual_{};
+    std::vector<BuildingContentDefinition> buildings_;
+    std::vector<PopContentDefinition> pops_;
 };
 
 } // namespace core

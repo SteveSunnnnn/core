@@ -1,4 +1,7 @@
-# Core Map Mode Architecture — 0.5
+# Core Map Mode Architecture
+
+> Top-level boundaries and dependency direction live in [ARCHITECTURE.md](ARCHITECTURE.md);
+> this file is the map-mode subsystem contract.
 
 Map mode switching must not regenerate province geometry or repaint a world-sized texture.
 

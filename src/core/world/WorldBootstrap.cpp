@@ -1,23 +1,40 @@
 #include "core/world/WorldBootstrap.hpp"
-#include <bit>
-#include <cstring>
-#include <stdexcept>
-#include <string>
-namespace core { namespace {
-class W { public: void u8(std::uint8_t v){b.push_back(static_cast<std::byte>(v));}void u16(std::uint16_t v){for(unsigned s=0;s<16;s+=8)u8(static_cast<std::uint8_t>(v>>s));}void u32(std::uint32_t v){for(unsigned s=0;s<32;s+=8)u8(static_cast<std::uint8_t>(v>>s));}void u64(std::uint64_t v){for(unsigned s=0;s<64;s+=8)u8(static_cast<std::uint8_t>(v>>s));}void f64(double v){u64(std::bit_cast<std::uint64_t>(v));}void str(std::string_view s){if(s.size()>65535u)throw std::invalid_argument("world definition key too large");u16(static_cast<std::uint16_t>(s.size()));const auto*p=reinterpret_cast<const std::byte*>(s.data());b.insert(b.end(),p,p+s.size());}std::vector<std::byte>b;};
-class R { public: explicit R(std::span<const std::byte>x):b(x){}void need(std::size_t n){if(n>b.size()-p)throw std::runtime_error("truncated world definition chunk");}std::uint8_t u8(){need(1);return std::to_integer<std::uint8_t>(b[p++]);}std::uint16_t u16(){std::uint16_t v=0;for(unsigned s=0;s<16;s+=8)v=static_cast<std::uint16_t>(v|(static_cast<std::uint16_t>(u8())<<s));return v;}std::uint32_t u32(){std::uint32_t v=0;for(unsigned s=0;s<32;s+=8)v|=static_cast<std::uint32_t>(u8())<<s;return v;}std::uint64_t u64(){std::uint64_t v=0;for(unsigned s=0;s<64;s+=8)v|=static_cast<std::uint64_t>(u8())<<s;return v;}double f64(){return std::bit_cast<double>(u64());}std::string str(){const auto n=u16();need(n);std::string s(reinterpret_cast<const char*>(b.data()+p),n);p+=n;return s;}bool done()const noexcept{return p==b.size();}std::span<const std::byte>b;std::size_t p=0;};
-template<class Id>void id(W&w,Id x){w.u32(x.value());}template<class Id>Id id(R&r){return Id{static_cast<typename Id::rep_type>(r.u32())};}
-constexpr WorldChunkKey ck(WorldChunkType t){return {t,0,0,0,0};}
+
+#include "core/world/WorldTopology.hpp"
+
+#include <utility>
+
+namespace core {
+
+WorldBootstrapResult WorldBootstrap::load(const WorldPackReader& pack,
+                                          const EconomyDefinitions& definitions) {
+    auto topology = WorldTopology::load(pack);
+
+    WorldBootstrapResult result;
+    result.metadata = std::move(topology.metadata);
+    result.sea_starts = std::move(topology.sea_starts);
+    result.world_pack_hash = topology.world_pack_hash;
+    result.scope_index = std::move(topology.scope_index);
+    result.state_regions = std::move(topology.state_regions);
+    result.adjacency = std::move(topology.adjacency);
+    result.spatial_placement = std::move(topology.spatial_placement);
+    result.static_layers = std::move(topology.static_layers);
+    result.map_hierarchy = std::move(topology.map_hierarchy);
+
+    result.world.countries.reserve(topology.countries.size());
+    for (const auto& country : topology.countries) {
+        result.world.countries.create({country.tag, country.population, country.gdp,
+                                       country.treasury, country.tax_rate});
+    }
+    result.world.markets.resize(topology.market_owners.size(), definitions);
+    for (std::size_t index = 0u; index < topology.market_owners.size(); ++index) {
+        result.world.markets.set_owner(
+            MarketId{static_cast<MarketId::rep_type>(index)},
+            topology.market_owners[index]);
+    }
+    result.world.geography = std::move(topology.geography);
+    result.world.map_hierarchy = result.map_hierarchy;
+    return result;
 }
-std::vector<std::byte> WorldBootstrapWire::countries(std::span<const CountryInit> rs){W w;w.u32(static_cast<std::uint32_t>(rs.size()));for(const auto&r:rs){w.str(r.tag);w.f64(r.population);w.f64(r.gdp);w.f64(r.treasury);w.f64(r.tax_rate);}return std::move(w.b);}std::vector<std::byte> WorldBootstrapWire::markets(std::span<const MarketBootstrapRecord> rs){W w;w.u32(static_cast<std::uint32_t>(rs.size()));for(const auto&r:rs)id(w,r.owner);return std::move(w.b);}std::vector<std::byte> WorldBootstrapWire::states(std::span<const StateInit> rs){W w;w.u32(static_cast<std::uint32_t>(rs.size()));for(const auto&r:rs){w.str(r.key);id(w,r.owner);id(w,r.market);id(w,r.capital);}return std::move(w.b);}std::vector<std::byte> WorldBootstrapWire::provinces(std::span<const ProvinceInit> rs){W w;w.u32(static_cast<std::uint32_t>(rs.size()));for(const auto&r:rs){w.str(r.key);id(w,r.state);id(w,r.owner);id(w,r.market);w.f64(r.center_x_m);w.f64(r.center_y_m);w.u32(r.area_km2);}return std::move(w.b);}std::vector<std::byte> WorldBootstrapWire::adjacency_offsets(std::span<const std::uint32_t>rs){W w;w.u32(static_cast<std::uint32_t>(rs.size()));for(auto x:rs)w.u32(x);return std::move(w.b);}std::vector<std::byte> WorldBootstrapWire::adjacency_neighbors(std::span<const ProvinceNeighbor>rs){W w;w.u32(static_cast<std::uint32_t>(rs.size()));for(const auto&r:rs){w.u32(r.province);w.u16(r.flags);w.u16(r.base_cost_q8);}return std::move(w.b);}
-WorldBootstrapResult WorldBootstrap::load(const WorldPackReader& pack,const EconomyDefinitions& defs){WorldBootstrapResult out;out.world_pack_hash=pack.stats().build_hash;auto load=[&](WorldChunkType t){const auto e=pack.find(ck(t));if(!e)throw std::runtime_error("required world definition chunk missing");return pack.read(ck(t));};
-    {const auto b=load(WorldChunkType::CountryDefinitions);R r(b);const auto n=r.u32();if(n>65536u)throw std::runtime_error("too many countries");out.world.countries.reserve(n);for(std::uint32_t i=0;i<n;++i)out.world.countries.create({r.str(),r.f64(),r.f64(),r.f64(),r.f64()});if(!r.done())throw std::runtime_error("trailing country definition bytes");}
-    {const auto b=load(WorldChunkType::MarketDefinitions);R r(b);const auto n=r.u32();if(n>65536u)throw std::runtime_error("too many markets");out.world.markets.resize(n,defs);for(std::uint32_t i=0;i<n;++i)out.world.markets.set_owner(MarketId{i},id<CountryId>(r));if(!r.done())throw std::runtime_error("trailing market definition bytes");}
-    {const auto b=load(WorldChunkType::StateDefinitions);R r(b);const auto n=r.u32();if(n>1'000'000u)throw std::runtime_error("too many states");out.world.geography.reserve_states(n);for(std::uint32_t i=0;i<n;++i)out.world.geography.create_state({r.str(),id<CountryId>(r),id<MarketId>(r),id<ProvinceId>(r)});if(!r.done())throw std::runtime_error("trailing state definition bytes");}
-    {const auto b=load(WorldChunkType::ProvinceDefinitions);R r(b);const auto n=r.u32();if(n>1'000'000u)throw std::runtime_error("too many provinces");out.world.geography.reserve_provinces(n);for(std::uint32_t i=0;i<n;++i)out.world.geography.create_province({r.str(),id<StateId>(r),id<CountryId>(r),id<MarketId>(r),r.f64(),r.f64(),r.u32()});if(!r.done())throw std::runtime_error("trailing province definition bytes");}
-    if (!out.world.geography.validate(out.world.countries.size(), out.world.markets.size()))
-        throw std::runtime_error("invalid geography in world pack");
-    out.scope_index.rebuild(out.world.countries.size(), out.world.geography);
-    out.spatial_placement.load_from_worldpack(pack, out.world.geography.province_count());
-    const auto oe=pack.find(ck(WorldChunkType::AdjacencyOffsets));const auto ne=pack.find(ck(WorldChunkType::AdjacencyNeighbors));if(oe||ne){if(!oe||!ne)throw std::runtime_error("incomplete adjacency chunks");const auto ob=pack.read(ck(WorldChunkType::AdjacencyOffsets));const auto nb=pack.read(ck(WorldChunkType::AdjacencyNeighbors));R ro(ob),rn(nb);const auto on=ro.u32();if(static_cast<std::uint64_t>(on)*4ull>(ro.b.size()-ro.p))throw std::runtime_error("adjacency offsets exceed chunk size");std::vector<std::uint32_t> offsets;offsets.reserve(on);for(std::uint32_t i=0;i<on;++i)offsets.push_back(ro.u32());const auto nn=rn.u32();if(static_cast<std::uint64_t>(nn)*8ull>(rn.b.size()-rn.p))throw std::runtime_error("adjacency neighbors exceed chunk size");std::vector<ProvinceNeighbor> neighbors;neighbors.reserve(nn);for(std::uint32_t i=0;i<nn;++i)neighbors.push_back({rn.u32(),rn.u16(),rn.u16()});if(!ro.done()||!rn.done())throw std::runtime_error("trailing adjacency bytes");if(offsets.size()!=out.world.geography.province_count()+1u)throw std::runtime_error("adjacency province count mismatch");out.adjacency.load_csr(offsets,neighbors);}return out;}
+
 } // namespace core

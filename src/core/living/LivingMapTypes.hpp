@@ -40,6 +40,9 @@ struct ProvinceVisualDefinition {
     std::uint32_t visual_radius_m = 8'000u;
     BiomeClass biome = BiomeClass::Temperate;
     bool coastal = false;
+    // Compact GPU family selector derived from the pack-authored
+    // ArchitectureRegion key. Zero means use the neutral/default family.
+    std::uint16_t architecture_family = 0u;
 };
 
 struct LivingChunkKey {

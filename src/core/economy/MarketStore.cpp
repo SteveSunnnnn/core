@@ -37,10 +37,6 @@ void MarketStore::resize(std::size_t market_count, const EconomyDefinitions& def
         demand_ = std::move(new_demand);
         inventory_ = std::move(new_inventory);
         shortage_ = std::move(new_shortage);
-    } else {
-        prices_.resize(market_count * good_count_);
-        supply_.assign(market_count * good_count_, 0);
-        demand_.assign(market_count * good_count_, 0);
     }
     for (std::size_t market = old_markets; market < market_count; ++market) {
         settlement_accounts_[market] = market_settlement_account_id(

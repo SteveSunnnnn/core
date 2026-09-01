@@ -10,6 +10,29 @@
 
 namespace core {
 
+// Shared terrain vocabulary for simulation, map authoring and rendering.
+// Keeping one enum prevents the editor and warfare layers from silently
+// interpreting the same terrain value differently.
+enum class TerrainType : std::uint8_t {
+    Plains = 0,
+    Hills = 1,
+    Mountains = 2,
+    Forest = 3,
+    Marsh = 4,
+    Desert = 5,
+    Jungle = 6,
+    Urban = 7,
+    Arctic = 8,
+    Ocean = 9,
+    Count = 10
+};
+
+enum class ProvinceKind : std::uint8_t {
+    Land = 0,
+    Sea = 1,
+    Lake = 2,
+};
+
 struct StateInit {
     std::string key;
     CountryId owner{};
@@ -26,6 +49,9 @@ struct ProvinceInit {
     double center_x_m = 0.0;
     double center_y_m = 0.0;
     std::uint32_t area_km2 = 0;
+    ProvinceKind kind = ProvinceKind::Land;
+    bool coastal = false;
+    bool impassable = false;
 };
 
 class GeographyStore {
@@ -48,6 +74,9 @@ public:
     [[nodiscard]] MarketId province_market(ProvinceId id) const;
     [[nodiscard]] double province_center_x(ProvinceId id) const;
     [[nodiscard]] double province_center_y(ProvinceId id) const;
+    [[nodiscard]] ProvinceKind province_kind(ProvinceId id) const;
+    [[nodiscard]] bool province_is_coastal(ProvinceId id) const;
+    [[nodiscard]] bool province_is_impassable(ProvinceId id) const;
 
     void set_state_owner(StateId id, CountryId owner);
     void set_state_market(StateId id, MarketId market);
@@ -57,6 +86,9 @@ public:
     void set_province_owner(ProvinceId id, CountryId owner);
     void set_province_market(ProvinceId id, MarketId market);
     void set_province_state(ProvinceId id, StateId state);
+    void set_province_kind(ProvinceId id, ProvinceKind kind);
+    void set_province_coastal(ProvinceId id, bool coastal);
+    void set_province_impassable(ProvinceId id, bool impassable);
 
     [[nodiscard]] std::span<const CountryId> state_owners() const noexcept { return state_owners_; }
     [[nodiscard]] std::span<const MarketId> state_markets() const noexcept { return state_markets_; }
@@ -68,6 +100,9 @@ public:
     [[nodiscard]] std::span<const double> province_center_xs() const noexcept { return province_center_x_m_; }
     [[nodiscard]] std::span<const double> province_center_ys() const noexcept { return province_center_y_m_; }
     [[nodiscard]] std::span<const std::uint32_t> province_areas_km2() const noexcept { return province_area_km2_; }
+    [[nodiscard]] std::span<const ProvinceKind> province_kinds() const noexcept { return province_kinds_; }
+    [[nodiscard]] std::span<const std::uint8_t> province_coastal() const noexcept { return province_coastal_; }
+    [[nodiscard]] std::span<const std::uint8_t> province_impassable() const noexcept { return province_impassable_; }
 
     [[nodiscard]] bool validate(std::size_t country_count, std::size_t market_count) const noexcept;
     [[nodiscard]] std::uint64_t checksum() const noexcept;
@@ -90,6 +125,9 @@ private:
     std::vector<double> province_center_x_m_;
     std::vector<double> province_center_y_m_;
     std::vector<std::uint32_t> province_area_km2_;
+    std::vector<ProvinceKind> province_kinds_;
+    std::vector<std::uint8_t> province_coastal_;
+    std::vector<std::uint8_t> province_impassable_;
 };
 
 class GeographyScopeIndex {

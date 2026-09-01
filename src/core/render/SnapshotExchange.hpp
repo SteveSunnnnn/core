@@ -1,5 +1,5 @@
 #pragma once
-#include "core/render/RenderSnapshot.hpp"
+#include "core/render/RenderSnapshotData.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>

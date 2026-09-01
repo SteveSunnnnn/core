@@ -42,7 +42,9 @@ CurvedLabelLayout VectorMapTypography::layout_curved_label(std::string text,
                                                           std::span<const VectorPoint> anchors,
                                                           float font_size,
                                                           std::uint32_t rgba,
-                                                          int priority) {
+                                                          int priority,
+                                                          float tracking_factor,
+                                                          float fill_ratio) {
     CurvedLabelLayout layout;
     layout.text = std::move(text);
     layout.priority = priority;
@@ -52,8 +54,19 @@ CurvedLabelLayout VectorMapTypography::layout_curved_label(std::string text,
     if (spline.empty()) return layout;
 
     const float total_length = spline.back().distance;
-    const float char_spacing = font_size * 0.75f;
+    const float safe_tracking = std::clamp(tracking_factor, 0.35f, 1.75f);
+    const float safe_fill = std::clamp(fill_ratio, 0.45f, 1.0f);
+    const float char_spacing = font_size * 0.75f * safe_tracking;
     const float total_text_w = static_cast<float>(layout.text.size()) * char_spacing;
+    if (total_text_w > total_length * 1.25f) {
+        // Preserve geographic label composition instead of letting a long
+        // country name fold or stack vertically. The glyph scale is bounded
+        // so small countries do not turn into unreadable hairlines.
+        const float fit = std::clamp((total_length * safe_fill) /
+                                         std::max(total_text_w, 1.0f),
+                                     0.45f, 1.0f);
+        font_size *= fit;
+    }
 
     const float start_dist = std::max(0.0f, (total_length - total_text_w) * 0.5f);
 

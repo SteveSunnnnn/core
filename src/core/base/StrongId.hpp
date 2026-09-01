@@ -28,8 +28,12 @@ private:
 };
 
 struct CountryTag {};
+struct AreaTag {};
 struct StateTag {};
+struct StateRegionTag {};
+struct TradeProvinceTag {};
 struct ProvinceTag {};
+struct LocationTag {};
 struct PopTag {};
 struct MarketTag {};
 struct ModifierNodeTag {};
@@ -80,8 +84,12 @@ struct SeaZoneTag {};
 struct NavalBattleTag {};
 
 using CountryId = StrongId<CountryTag>;
+using AreaId = StrongId<AreaTag>;
 using StateId = StrongId<StateTag>;
+using StateRegionId = StrongId<StateRegionTag>;
+using TradeProvinceId = StrongId<TradeProvinceTag>;
 using ProvinceId = StrongId<ProvinceTag>;
+using LocationId = StrongId<LocationTag>;
 using PopId = StrongId<PopTag>;
 using MarketId = StrongId<MarketTag>;
 using ModifierNodeId = StrongId<ModifierNodeTag>;

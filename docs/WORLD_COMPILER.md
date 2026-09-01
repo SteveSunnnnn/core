@@ -1,4 +1,7 @@
-# Core World Compiler / `.coreworld` format — 0.5
+# Core World Compiler / `.coreworld` format
+
+> Top-level boundaries and dependency direction live in [ARCHITECTURE.md](ARCHITECTURE.md);
+> this file is the world-compiler and pack-format contract.
 
 ## Goal
 
@@ -17,7 +20,10 @@ source-specific preprocessors
         +-- province-id 128x128 pages (R16_UINT convention, 0 = water)
         +-- coast signed-distance 128x128 pages (int16, 0.5 m units)
         +-- height pages
-        +-- adjacency / definitions / strings
+        +-- lake-mask pages
+        +-- adjacency / geography identity / strings
+        +-- chunked river/transport vectors
+        +-- architecture-region and resource-distribution tables
         |
         v
 core_world_compiler
@@ -50,6 +56,18 @@ A 64 KiB political page bundle stores:
 
 Keeping both layers atomic prevents a frame from observing different residency generations.
 
+The page family also carries one `LakeMask` and one `SpatialMask` page per clip
+level. Lake provinces remain real province IDs for picking/history, but the
+masks keep the renderer from treating water or non-land pixels as land. Static
+vector/table chunks use binary contracts:
+`RIV1`/`PTR1` for chunk-local polylines, `ARC1` for province architecture
+assignments, and `RDS1` for state resource capacities. Runtime never parses the
+source GIS or the compiler's intermediate JSON.
+
+`CountryDefinitions` in a world pack is an identity table (`tag` only in CNT2).
+Population, GDP, treasury, tax rules, goods, buildings and POPs are content
+script data and are bound by `GameContentRuntime` after the pack is loaded.
+
 ## Runtime I/O
 
 `RandomAccessFile` uses POSIX `pread()` on Unix-like systems. This has no shared seek cursor, so
@@ -79,15 +97,3 @@ at their natural block size; logical chunks do not need 4 KiB offsets for ordina
 
 If DirectStorage/io_uring/O_DIRECT-style paths later prove useful, Core can introduce larger packed
 I/O blocks without changing logical chunk keys.
-
-## Britain technical fixture
-
-`tools/build_britain_technical_demo.py` builds a deterministic 2048x2048 test fixture:
-
-- land/coast: Basemap bundled GSHHS-derived land/sea mask;
-- provinces: 72 deterministic synthetic Voronoi regions;
-- page size: 128x128;
-- 256 political/coast bundles;
-- **not historical and not intended as 1836 content**.
-
-It exists only to validate the complete data path before historical GIS is introduced.

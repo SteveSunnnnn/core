@@ -34,7 +34,11 @@ void ConditionMemoizer::record(std::uint64_t program_key,
     k.scope_raw_id = scope_raw_id;
     k.salt = salt;
 
-    cache_[k] = result;
+    // insert_or_assign avoids the default-construct-then-assign round-trip
+    // that operator[] performs on unordered_map; for an existing key the
+    // value is updated in place without touching the node, and for a new key
+    // the entry is constructed once. size()/hits()/misses() are unaffected.
+    cache_.insert_or_assign(k, result);
 }
 
 void ConditionMemoizer::reset_tick() noexcept {

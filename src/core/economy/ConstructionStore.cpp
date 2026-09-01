@@ -237,7 +237,7 @@ JobDispatchStats ConstructionStore::tick_weekly(World& world) {
                 p.weekly_progress_ppm = static_cast<std::uint32_t>(
                     mul_div_nonnegative(actual_points, 1'000'000, p.total_points_required));
             }
-            remaining_capacity -= allocated_points;
+            remaining_capacity -= actual_points;
 
             // If project is complete, execute transformation
             if (p.progress_points >= p.total_points_required) {

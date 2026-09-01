@@ -15,11 +15,11 @@ ProvincePickingCache::ProvincePickingCache(std::uint32_t page_capacity, Province
     lookup_.max_load_factor(0.70f);
 }
 
-TerrainPatchKey ProvincePickingCache::key_for_world(WorldMeters world, std::uint16_t level) const noexcept {
+WorldMapPageKey ProvincePickingCache::key_for_world(WorldMeters world, std::uint16_t level) const noexcept {
     const auto clamped_level = std::min(level, config_.maximum_level);
     const double page_size = config_.base_page_world_size_m * static_cast<double>(std::uint64_t{1} << clamped_level);
-    const auto x = static_cast<std::int64_t>(std::floor(world.x / page_size));
-    const auto y = static_cast<std::int64_t>(std::floor(world.y / page_size));
+    const auto x = static_cast<std::int64_t>(std::floor((world.x - config_.origin_x_m) / page_size));
+    const auto y = static_cast<std::int64_t>(std::floor((world.y - config_.origin_y_m) / page_size));
     return {
         static_cast<std::int32_t>(std::clamp<std::int64_t>(x, INT32_MIN, INT32_MAX)),
         static_cast<std::int32_t>(std::clamp<std::int64_t>(y, INT32_MIN, INT32_MAX)),
@@ -28,19 +28,23 @@ TerrainPatchKey ProvincePickingCache::key_for_world(WorldMeters world, std::uint
 }
 
 std::pair<std::uint32_t, std::uint32_t> ProvincePickingCache::texel_for_world(WorldMeters world,
-                                                                              TerrainPatchKey key) const noexcept {
+                                                                              WorldMapPageKey key) const noexcept {
     const double page_size = config_.base_page_world_size_m * static_cast<double>(std::uint64_t{1} << key.level);
-    const double origin_x = static_cast<double>(key.x) * page_size;
-    const double origin_y = static_cast<double>(key.y) * page_size;
+    const double origin_x = config_.origin_x_m + static_cast<double>(key.x) * page_size;
+    const double origin_y = config_.origin_y_m + static_cast<double>(key.y) * page_size;
     const double u = std::clamp((world.x - origin_x) / page_size, 0.0, 0.999999999);
-    const double v = std::clamp((world.y - origin_y) / page_size, 0.0, 0.999999999);
+    // GIS raster rows are encoded north-to-south (`from_origin`). Keep CPU
+    // picking in the same convention as the GPU page sampler instead of
+    // vertically mirroring province IDs.
+    const double v = std::clamp((origin_y + page_size - world.y) / page_size,
+                                0.0, 0.999999999);
     return {
         static_cast<std::uint32_t>(u * ProvinceRasterPage::samples_per_side),
         static_cast<std::uint32_t>(v * ProvinceRasterPage::samples_per_side)
     };
 }
 
-void ProvincePickingCache::insert(TerrainPatchKey key, const ProvinceRasterPage& page, std::uint64_t frame) {
+void ProvincePickingCache::insert(WorldMapPageKey key, const ProvinceRasterPage& page, std::uint64_t frame) {
     if (const auto it = lookup_.find(key); it != lookup_.end()) {
         auto& slot = slots_[it->second];
         slot.page = page;
@@ -76,7 +80,7 @@ void ProvincePickingCache::insert(TerrainPatchKey key, const ProvinceRasterPage&
     next_victim_ = (victim + 1u) % static_cast<std::uint32_t>(slots_.size());
 }
 
-ProvinceId ProvincePickingCache::pick_exact(WorldMeters world, TerrainPatchKey key, std::uint64_t frame) noexcept {
+ProvinceId ProvincePickingCache::pick_exact(WorldMeters world, WorldMapPageKey key, std::uint64_t frame) noexcept {
     const auto it = lookup_.find(key);
     if (it == lookup_.end()) return ProvinceId{};
     auto& slot = slots_[it->second];
@@ -99,7 +103,7 @@ ProvinceId ProvincePickingCache::pick_with_fallback(WorldMeters world, std::uint
     return ProvinceId{};
 }
 
-bool ProvincePickingCache::resident(TerrainPatchKey key) const noexcept {
+bool ProvincePickingCache::resident(WorldMapPageKey key) const noexcept {
     return lookup_.find(key) != lookup_.end();
 }
 

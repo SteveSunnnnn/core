@@ -87,4 +87,19 @@ bool ProvinceAdjacencyGraph::adjacent(ProvinceId a, ProvinceId b) const noexcept
     return it != row.end() && it->province == b.value();
 }
 
+bool ProvinceAdjacencyGraph::is_symmetric() const noexcept {
+    for (std::uint32_t from = 0; from < province_count(); ++from) {
+        for (const auto& edge : neighbors(ProvinceId{from})) {
+            const auto reverse = neighbors(ProvinceId{edge.province});
+            const auto it = std::lower_bound(reverse.begin(), reverse.end(), from,
+                                             [](const ProvinceNeighbor& n, std::uint32_t value) {
+                                                 return n.province < value;
+                                             });
+            if (it == reverse.end() || it->province != from ||
+                it->flags != edge.flags || it->base_cost_q8 != edge.base_cost_q8) return false;
+        }
+    }
+    return true;
+}
+
 } // namespace core

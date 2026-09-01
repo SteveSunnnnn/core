@@ -320,13 +320,15 @@ static bool parse_boundary_file(const std::filesystem::path& path, std::vector<V
 
     char magic[8]{};
     stream.read(magic, 8);
-    if (stream.gcount() != 8 || std::memcmp(magic, "COREVEC1", 8) != 0) {
+    if (stream.gcount() != 8 ||
+        (std::memcmp(magic, "COREVEC1", 8) != 0 && std::memcmp(magic, "COREVEC2", 8) != 0)) {
         return false;
     }
+    const bool version_two_magic = std::memcmp(magic, "COREVEC2", 8) == 0;
 
     std::uint32_t version = 0;
     stream.read(reinterpret_cast<char*>(&version), sizeof(version));
-    if (version != 1) return false;
+    if (version != 1 && version != 2) return false;
 
     std::uint32_t count = 0;
     stream.read(reinterpret_cast<char*>(&count), sizeof(count));
@@ -335,14 +337,22 @@ static bool parse_boundary_file(const std::filesystem::path& path, std::vector<V
     out_polylines.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
         std::uint32_t loc_a = 0, loc_b = 0, vcount = 0;
+        std::uint8_t authored_class = static_cast<std::uint8_t>(VectorBorderClass::Province);
         stream.read(reinterpret_cast<char*>(&loc_a), sizeof(loc_a));
         stream.read(reinterpret_cast<char*>(&loc_b), sizeof(loc_b));
+        if (version >= 2 || version_two_magic) {
+            std::uint8_t reserved = 0;
+            stream.read(reinterpret_cast<char*>(&authored_class), sizeof(authored_class));
+            stream.read(reinterpret_cast<char*>(&reserved), sizeof(reserved));
+            if (!stream || authored_class > static_cast<std::uint8_t>(VectorBorderClass::Coastline)) return false;
+        }
         stream.read(reinterpret_cast<char*>(&vcount), sizeof(vcount));
         if (!stream || vcount > 100'000u) return false;
 
         VectorBoundaryPolyline poly;
         poly.location_a = loc_a;
         poly.location_b = loc_b;
+        poly.authored_class = static_cast<VectorBorderClass>(authored_class);
         poly.points.resize(vcount);
 
         stream.read(reinterpret_cast<char*>(poly.points.data()),
@@ -398,9 +408,10 @@ void VectorMapSystem::render_screen_boundaries(
     double half_u, double half_v,
     int screen_w, int screen_h,
     const std::function<VectorBorderClass(std::uint32_t loc_a, std::uint32_t loc_b)>& classifier,
-    float line_scale) const {
+    float line_scale,
+    const std::function<bool(float u, float v)>& is_land) const {
     (void)build_screen_boundaries(center_u, center_v, half_u, half_v, screen_w, screen_h,
-                                  classifier, line_scale);
+                                  classifier, line_scale, is_land);
     if (screen_cache_valid_) {
         ui.append_geometry(temp_vertices_, temp_indices_);
     }
@@ -411,7 +422,8 @@ bool VectorMapSystem::build_screen_boundaries(
     double half_u, double half_v,
     int screen_w, int screen_h,
     const std::function<VectorBorderClass(std::uint32_t loc_a, std::uint32_t loc_b)>& classifier,
-    float line_scale) const {
+    float line_scale,
+    const std::function<bool(float u, float v)>& is_land) const {
     if (half_u <= 1e-6 || half_v <= 1e-6 || screen_w <= 0 || screen_h <= 0) {
         // Invalid viewport: nothing to draw. If a previous valid mesh was
         // cached, drop it so the draw-list wrapper and the persistent overlay
@@ -437,6 +449,14 @@ bool VectorMapSystem::build_screen_boundaries(
         polylines_ptr = &far_polylines_;
     } else if (half_u > 0.05 && !medium_polylines_.empty()) {
         polylines_ptr = &medium_polylines_;
+    } else if (!far_polylines_.empty()) {
+        // Near detail is represented by the GPU raster-ID boundary pass. The
+        // authored near vector file contains hundreds of thousands of leaf
+        // segments; walking all of them on every mouse-drag frame would make
+        // the UI thread fall behind the camera and create an apparent map/
+        // border desynchronisation. Keep the CPU overlay to sovereign/coast
+        // strokes at this scale and let the page atlas draw leaf hairlines.
+        polylines_ptr = &far_polylines_;
     } else if (!near_polylines_.empty()) {
         polylines_ptr = &near_polylines_;
     } else if (!binary_polylines_.empty()) {
@@ -474,7 +494,7 @@ bool VectorMapSystem::build_screen_boundaries(
         double poly_half_h = static_cast<double>(poly.max_v - poly.min_v) * 0.5;
         if (std::abs(poly_mid_v - center_v) > vis_half_v + poly_half_h) continue;
 
-        const auto cls = classifier ? classifier(poly.location_a, poly.location_b) : VectorBorderClass::Province;
+        const auto cls = classifier ? classifier(poly.location_a, poly.location_b) : poly.authored_class;
         if (cls == VectorBorderClass::Province && !show_provinces) {
             continue;
         }
@@ -484,22 +504,22 @@ bool VectorMapSystem::build_screen_boundaries(
 
         switch (cls) {
         case VectorBorderClass::Country:
-            width_px = 1.7f * line_scale;
-            rgba = 0xe6282521u; // restrained charcoal-brown sovereign line
+            width_px = 0.95f * line_scale;
+            rgba = 0xd63b3430u; // thin carbon/charcoal sovereign ink
             break;
         case VectorBorderClass::State:
-            width_px = 1.15f * line_scale;
-            rgba = 0xa850463au; // warm grey state boundary
+            width_px = 0.72f * line_scale;
+            rgba = 0x9a61584du; // quieter area/state ink
             break;
         case VectorBorderClass::Coastline:
-            width_px = 1.35f * line_scale;
-            rgba = 0xdb41382fu; // blue-charcoal shoreline ink
+            width_px = 0.48f * line_scale; // natural edge, never a political outline
+            rgba = 0x704f7d7du; // pale cyan/graphite land-edge separation
             break;
         case VectorBorderClass::Province:
         default: {
-            width_px = 0.75f * line_scale;
+            width_px = 0.55f * line_scale;
             const auto alpha = static_cast<std::uint32_t>(province_fade * 72.0f);
-            rgba = (alpha << 24) | 0x00443c34u; // quiet administrative hairline
+            rgba = (alpha << 24) | 0x003e342cu; // quiet administrative hairline
             break;
         }
         }
@@ -535,10 +555,12 @@ bool VectorMapSystem::build_screen_boundaries(
 
             // Screen margin culling
             constexpr float margin = 30.0f;
+            const float sw = static_cast<float>(screen_w);
+            const float sh = static_cast<float>(screen_h);
             if ((sx0 < -margin && sx1 < -margin) ||
-                (sx0 > screen_w + margin && sx1 > screen_w + margin) ||
+                (sx0 > sw + margin && sx1 > sw + margin) ||
                 (sy0 < -margin && sy1 < -margin) ||
-                (sy0 > screen_h + margin && sy1 > screen_h + margin)) {
+                (sy0 > sh + margin && sy1 > sh + margin)) {
                 continue;
             }
 
@@ -550,19 +572,64 @@ bool VectorMapSystem::build_screen_boundaries(
             const float nx = -dy / len;
             const float ny = dx / len;
 
-            // Country lines get a narrow parchment keyline rather than a gold
-            // ribbon. This remains legible over both paper and terrain modes.
+            // 1. Country Borders: soft semi-transparent gradient shadow on BOTH sides
             if (cls == VectorBorderClass::Country) {
-                const float under_hw = half_w + 0.85f;
-                constexpr std::uint32_t shadow_rgba = 0x78c3d1d8u;
+                const float shadow_w = 6.0f * line_scale;
+                constexpr std::uint32_t shadow_center_rgba = 0x50181410u; // ~31% alpha
+                constexpr std::uint32_t shadow_outer_rgba = 0x00181410u;  // 0% alpha
+
+                // Negative side shadow (-nx to center)
+                auto base = static_cast<std::uint32_t>(temp_vertices_.size());
+                temp_vertices_.push_back(UiVertex{sx0 - nx * shadow_w, sy0 - ny * shadow_w, 0.0f, 0.0f, shadow_outer_rgba});
+                temp_vertices_.push_back(UiVertex{sx0, sy0, 0.5f, 0.0f, shadow_center_rgba});
+                temp_vertices_.push_back(UiVertex{sx1, sy1, 0.5f, 1.0f, shadow_center_rgba});
+                temp_vertices_.push_back(UiVertex{sx1 - nx * shadow_w, sy1 - ny * shadow_w, 0.0f, 1.0f, shadow_outer_rgba});
+                temp_indices_.insert(temp_indices_.end(), {base + 0, base + 1, base + 2, base + 0, base + 2, base + 3});
+
+                // Positive side shadow (center to +nx)
+                base = static_cast<std::uint32_t>(temp_vertices_.size());
+                temp_vertices_.push_back(UiVertex{sx0, sy0, 0.5f, 0.0f, shadow_center_rgba});
+                temp_vertices_.push_back(UiVertex{sx0 + nx * shadow_w, sy0 + ny * shadow_w, 1.0f, 0.0f, shadow_outer_rgba});
+                temp_vertices_.push_back(UiVertex{sx1 + nx * shadow_w, sy1 + ny * shadow_w, 1.0f, 1.0f, shadow_outer_rgba});
+                temp_vertices_.push_back(UiVertex{sx1, sy1, 0.5f, 1.0f, shadow_center_rgba});
+                temp_indices_.insert(temp_indices_.end(), {base + 0, base + 1, base + 2, base + 0, base + 2, base + 3});
+            }
+            // 2. Coastlines: soft semi-transparent gradient shadow on CONTINENTAL/LAND side ONLY
+            else if (cls == VectorBorderClass::Coastline) {
+                float land_sign = 1.0f;
+                if (is_land) {
+                    const double mid_u = (static_cast<double>(p0.x) + static_cast<double>(p1.x)) * 0.5;
+                    const double mid_v = (static_cast<double>(p0.y) + static_cast<double>(p1.y)) * 0.5;
+                    const double du_uv = static_cast<double>(p1.x - p0.x);
+                    const double dv_uv = static_cast<double>(p1.y - p0.y);
+                    const double l_uv = std::sqrt(du_uv * du_uv + dv_uv * dv_uv);
+                    if (l_uv > 1e-6) {
+                        const double nx_uv = -dv_uv / l_uv;
+                        const double ny_uv = du_uv / l_uv;
+                        constexpr double step = 0.0004;
+                        if (is_land(static_cast<float>(mid_u + nx_uv * step),
+                                    static_cast<float>(mid_v + ny_uv * step))) {
+                            land_sign = 1.0f;
+                        } else {
+                            land_sign = -1.0f;
+                        }
+                    }
+                }
+                const float shadow_w = 5.0f * line_scale;
+                constexpr std::uint32_t shadow_center_rgba = 0x44181410u; // ~27% alpha
+                constexpr std::uint32_t shadow_outer_rgba = 0x00181410u;  // 0% alpha
+
+                // Single shadow strip extending into the land side
                 const auto base = static_cast<std::uint32_t>(temp_vertices_.size());
-                temp_vertices_.push_back(UiVertex{sx0 - nx * under_hw, sy0 - ny * under_hw, 0.0f, 0.0f, shadow_rgba});
-                temp_vertices_.push_back(UiVertex{sx0 + nx * under_hw, sy0 + ny * under_hw, 1.0f, 0.0f, shadow_rgba});
-                temp_vertices_.push_back(UiVertex{sx1 + nx * under_hw, sy1 + ny * under_hw, 1.0f, 1.0f, shadow_rgba});
-                temp_vertices_.push_back(UiVertex{sx1 - nx * under_hw, sy1 - ny * under_hw, 0.0f, 1.0f, shadow_rgba});
+                temp_vertices_.push_back(UiVertex{sx0, sy0, 0.0f, 0.0f, shadow_center_rgba});
+                temp_vertices_.push_back(UiVertex{sx0 + land_sign * nx * shadow_w, sy0 + land_sign * ny * shadow_w, 1.0f, 0.0f, shadow_outer_rgba});
+                temp_vertices_.push_back(UiVertex{sx1 + land_sign * nx * shadow_w, sy1 + land_sign * ny * shadow_w, 1.0f, 1.0f, shadow_outer_rgba});
+                temp_vertices_.push_back(UiVertex{sx1, sy1, 0.0f, 1.0f, shadow_center_rgba});
                 temp_indices_.insert(temp_indices_.end(), {base + 0, base + 1, base + 2, base + 0, base + 2, base + 3});
             }
 
+            // The coastline is a natural land edge. Keep only its very faint
+            // cyan separation; country borders receive the crisp carbon core.
             const auto base = static_cast<std::uint32_t>(temp_vertices_.size());
             temp_vertices_.push_back(UiVertex{sx0 - nx * half_w, sy0 - ny * half_w, 0.0f, 0.0f, rgba});
             temp_vertices_.push_back(UiVertex{sx0 + nx * half_w, sy0 + ny * half_w, 1.0f, 0.0f, rgba});

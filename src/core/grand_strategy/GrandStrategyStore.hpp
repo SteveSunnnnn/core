@@ -2,6 +2,7 @@
 #include "core/base/Hash.hpp"
 #include "core/base/StrongId.hpp"
 #include "core/economy/EconomicTypes.hpp"
+#include "core/world/GeographyStore.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -173,16 +174,6 @@ enum class SwayOfferType : std::uint8_t {
     DiplomaticObligation = 0,
     ConcessionTreaty = 1,
     StateTransfer = 2
-};
-
-enum class TerrainType : std::uint8_t {
-    Plains = 0,
-    Hills = 1,
-    Mountains = 2,
-    Forest = 3,
-    Marsh = 4,
-    Desert = 5,
-    Urban = 6
 };
 
 enum class UnitType : std::uint8_t {

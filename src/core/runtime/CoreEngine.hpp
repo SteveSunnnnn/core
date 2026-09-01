@@ -1,50 +1,88 @@
 #pragma once
-#include "core/economy/EconomyDefinitions.hpp"
-#include "core/economy/EconomySystem.hpp"
-#include "core/scripting/ScriptRegistry.hpp"
-#include "core/gameplay/ScriptedGameplay.hpp"
-#include "core/gameplay/OnActionRuntime.hpp"
-#include "core/gameplay/NotificationRuntime.hpp"
-#include "core/ai/UtilityAi.hpp"
-#include "core/jobs/JobSystem.hpp"
-#include "core/research/ResearchSystem.hpp"
-#include "core/save/ReplayJournal.hpp"
-#include "core/save/SaveGame.hpp"
-#include "core/simulation/CommandQueue.hpp"
-#include "core/simulation/GameClock.hpp"
-#include "core/simulation/World.hpp"
+
+#include "core/base/StrongId.hpp"
+
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <span>
 
 namespace core {
-struct CoreEngineConfig { std::size_t background_threads = JobSystem::recommended_background_threads(); std::uint64_t content_hash=0; std::uint64_t world_pack_hash=0; };
+
+class EconomyDefinitions;
+class GameClock;
+class JobSystem;
+class ReplayJournal;
+class ScriptRegistry;
+class ScriptedGameplayRuntime;
+class OnActionRuntime;
+class UtilityAiEngine;
+class ResearchSystem;
+class NotificationRuntime;
+class World;
+class ProvinceAdjacencyGraph;
+class SpatialPlacementDatabase;
+class StateRegionIndex;
+struct WorldStaticLayers;
+struct EconomyTickProfile;
+struct SaveGameBlob;
+enum class CommandType : std::uint8_t;
+
+// Zero selects JobSystem's recommended worker count. Keeping this config
+// header small prevents every client that needs CoreEngine from importing all
+// simulation stores and render-adjacent headers.
+struct CoreEngineConfig {
+    std::size_t background_threads = 0;
+    std::uint64_t content_hash = 0;
+    std::uint64_t world_pack_hash = 0;
+};
+
+// Public composition facade. Concrete subsystem storage lives in CoreEngine's
+// private implementation so engine clients depend on capability interfaces,
+// not on the complete simulation include graph.
 class CoreEngine {
 public:
     explicit CoreEngine(CoreEngineConfig config = {});
-    [[nodiscard]] EconomyDefinitions& definitions() noexcept { return definitions_; }
-    [[nodiscard]] const EconomyDefinitions& definitions() const noexcept { return definitions_; }
-    [[nodiscard]] World& world() noexcept { return world_; }
-    [[nodiscard]] const World& world() const noexcept { return world_; }
-    [[nodiscard]] GameClock& clock() noexcept { return clock_; }
-    [[nodiscard]] const GameClock& clock() const noexcept { return clock_; }
-    [[nodiscard]] JobSystem& jobs() noexcept { return jobs_; }
-    [[nodiscard]] ReplayJournal& replay() noexcept { return replay_; }
-    [[nodiscard]] ScriptRegistry& scripts() noexcept { return scripts_; }
-    [[nodiscard]] const ScriptRegistry& scripts() const noexcept { return scripts_; }
-    [[nodiscard]] ScriptedGameplayRuntime& gameplay() noexcept { return gameplay_; }
-    [[nodiscard]] const ScriptedGameplayRuntime& gameplay() const noexcept { return gameplay_; }
-    [[nodiscard]] OnActionRuntime& on_actions() noexcept { return on_actions_; }
-    [[nodiscard]] const OnActionRuntime& on_actions() const noexcept { return on_actions_; }
-    [[nodiscard]] UtilityAiEngine& ai() noexcept { return ai_; }
-    [[nodiscard]] const UtilityAiEngine& ai() const noexcept { return ai_; }
-    [[nodiscard]] ResearchSystem& research() noexcept { return research_; }
-    [[nodiscard]] const ResearchSystem& research() const noexcept { return research_; }
-    [[nodiscard]] NotificationRuntime& notifications() noexcept { return notifications_; }
-    [[nodiscard]] const NotificationRuntime& notifications() const noexcept { return notifications_; }
+    ~CoreEngine();
+    CoreEngine(const CoreEngine&) = delete;
+    CoreEngine& operator=(const CoreEngine&) = delete;
+    CoreEngine(CoreEngine&&) noexcept;
+    CoreEngine& operator=(CoreEngine&&) noexcept;
 
-    // Content identity is fixed before authoritative state is created. Runtime
-    // bootstrap uses this to bind the effective script/mod hash into saves.
+    [[nodiscard]] EconomyDefinitions& definitions() noexcept;
+    [[nodiscard]] const EconomyDefinitions& definitions() const noexcept;
+    [[nodiscard]] World& world() noexcept;
+    [[nodiscard]] const World& world() const noexcept;
+    [[nodiscard]] GameClock& clock() noexcept;
+    [[nodiscard]] const GameClock& clock() const noexcept;
+    [[nodiscard]] JobSystem& jobs() noexcept;
+    [[nodiscard]] ReplayJournal& replay() noexcept;
+    [[nodiscard]] ScriptRegistry& scripts() noexcept;
+    [[nodiscard]] const ScriptRegistry& scripts() const noexcept;
+    [[nodiscard]] ScriptedGameplayRuntime& gameplay() noexcept;
+    [[nodiscard]] const ScriptedGameplayRuntime& gameplay() const noexcept;
+    [[nodiscard]] OnActionRuntime& on_actions() noexcept;
+    [[nodiscard]] const OnActionRuntime& on_actions() const noexcept;
+    [[nodiscard]] UtilityAiEngine& ai() noexcept;
+    [[nodiscard]] const UtilityAiEngine& ai() const noexcept;
+    [[nodiscard]] ResearchSystem& research() noexcept;
+    [[nodiscard]] const ResearchSystem& research() const noexcept;
+    [[nodiscard]] NotificationRuntime& notifications() noexcept;
+    [[nodiscard]] const NotificationRuntime& notifications() const noexcept;
+
     void set_new_game_content_hash(std::uint64_t content_hash);
+    void set_world_pack_hash(std::uint64_t world_pack_hash);
+    void set_world_topology(ProvinceAdjacencyGraph adjacency,
+                            SpatialPlacementDatabase spatial_placement);
+    void set_world_topology(ProvinceAdjacencyGraph adjacency,
+                            SpatialPlacementDatabase spatial_placement,
+                            StateRegionIndex state_regions);
+    [[nodiscard]] const ProvinceAdjacencyGraph& adjacency() const noexcept;
+    [[nodiscard]] const SpatialPlacementDatabase& spatial_placement() const noexcept;
+    [[nodiscard]] const StateRegionIndex& state_regions() const noexcept;
+    void set_world_static_layers(WorldStaticLayers layers);
+    [[nodiscard]] const WorldStaticLayers& static_layers() const noexcept;
+
     void initialize_economy();
     std::uint64_t queue_command(CommandType type, CountryId country, double value);
     void advance_tick(EconomyTickProfile* economy_profile = nullptr);
@@ -53,20 +91,10 @@ public:
     void restore(std::span<const std::byte> save);
     [[nodiscard]] bool validate_world() const noexcept;
     [[nodiscard]] std::uint64_t engine_checksum() const noexcept;
+
 private:
-    CoreEngineConfig config_{};
-    EconomyDefinitions definitions_;
-    World world_;
-    GameClock clock_;
-    JobSystem jobs_;
-    EconomySystem economy_;
-    CommandQueue commands_;
-    ReplayJournal replay_;
-    ScriptRegistry scripts_;
-    ScriptedGameplayRuntime gameplay_;
-    OnActionRuntime on_actions_;
-    UtilityAiEngine ai_;
-    ResearchSystem research_;
-    NotificationRuntime notifications_;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
+
 } // namespace core

@@ -1,4 +1,7 @@
-# Core Political Map Architecture — 0.4
+# Core Political Map Architecture
+
+> Top-level boundaries and dependency direction live in [ARCHITECTURE.md](ARCHITECTURE.md);
+> this file is the political-map subsystem contract.
 
 Core treats the political map as a **virtualized lookup surface**, not as thousands of mutable meshes.
 The permanent GIS geometry is compiled once; normal gameplay changes only small indirection buffers.
@@ -6,7 +9,7 @@ The permanent GIS geometry is compiled once; normal gameplay changes only small 
 ## 1. Runtime data path
 
 ```text
-Terrain / screen position
+World-map / screen position
         |
         v
 Province ID virtual page (R16_UINT)
@@ -38,10 +41,14 @@ country mesh or repaint the province raster. Country recoloring is a 4-byte pale
 - max supported province count in this raster tier = 65,534;
 - intended production worlds are far below that limit;
 - runtime GPU format target: `R16_UINT`;
-- pages form a multiresolution pyramid keyed by the same virtual page coordinates used by terrain.
+- pages form a multiresolution pyramid keyed by `WorldMapPageKey`; terrain
+  mesh topology may consume the same geographic page family without owning
+  its identity.
 
-At the default level-0 1,024 m page size, one texel represents 8 m. Coarser levels double page
-world size. The world compiler will bake all levels so zooming does not require runtime GIS work.
+At the default level-0 64,000 m page size, one texel represents 500 m. Coarser levels double
+page world size. The world compiler will bake all levels so zooming does not require runtime GIS
+work. A close-up terrain clipmap can use a finer mesh/page family without changing political
+page identity.
 
 ## 3. Coast distance pages
 
@@ -142,5 +149,7 @@ Target steady-state CPU costs at production scale:
 | political page streaming plan | <0.05 ms |
 | topology neighbor access | contiguous span, no allocation |
 
-GPU cost must be measured once the live Vulkan backend runs. Political overlay is intended as a
-single fullscreen/terrain overlay pass reading virtual pages and compact buffers.
+GPU cost must be measured once the live Vulkan backend runs. The current flat strategic map pass
+uses an instanced visible-page mesh over the resident virtual-page atlas and compact buffers; a
+future 3D terrain clipmap may sample the same page family without moving page admission into the
+Vulkan facade.

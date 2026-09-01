@@ -1,4 +1,7 @@
-# Core 0.7 Simulation Job System
+# Core Simulation Job System
+
+> Top-level boundaries and dependency direction live in [ARCHITECTURE.md](ARCHITECTURE.md);
+> this file is the scheduling subsystem contract.
 
 Core's job system is specialized for deterministic grand-strategy simulation. It is not a generic
 fiber runtime and does not allow scheduling order to define game results.

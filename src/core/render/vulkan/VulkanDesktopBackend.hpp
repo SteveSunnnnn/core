@@ -1,8 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -13,6 +15,8 @@
 #include "core/ui/FontAtlas.hpp"
 #include "core/ui/StrategyUi.hpp"
 #include "core/render/flag/DynamicFlag3D.hpp"
+#include "core/render/map/PoliticalMapState.hpp"
+#include "core/render/map/WorldMapPageStreamer.hpp"
 #include "core/render/RenderQuality.hpp"
 
 #include <chrono>
@@ -59,7 +63,7 @@ struct UiGpuVertex {
 
 class VulkanDesktopBackend {
 public:
-    VulkanDesktopBackend() = default;
+    VulkanDesktopBackend();
     ~VulkanDesktopBackend();
     VulkanDesktopBackend(const VulkanDesktopBackend&) = delete;
     VulkanDesktopBackend& operator=(const VulkanDesktopBackend&) = delete;
@@ -72,20 +76,12 @@ public:
         ui_font_atlas_path_ = std::move(image_path);
         ui_font_metrics_path_ = std::move(metrics_path);
     }
-    void set_ui_world_map(std::filesystem::path path) { ui_world_map_path_ = std::move(path); }
-    // V3-style map inputs: a categorical province/location ID field, a
-    // separately filtered terrain layer, a height field and a small political
-    // colour lookup. Keeping these independent prevents filtered colour
-    // averaging from ever softening political borders.
-    void set_world_map_layers(std::filesystem::path ids,
-                              std::filesystem::path terrain,
-                              std::filesystem::path height,
-                              std::filesystem::path political_lut) {
-        world_map_ids_path_ = std::move(ids);
-        world_map_terrain_path_ = std::move(terrain);
-        world_map_height_path_ = std::move(height);
-        world_map_political_lut_path_ = std::move(political_lut);
-    }
+    // The world map is a streamable .coreworld page family. It is opened once
+    // during renderer setup; the backend never accepts a second legacy atlas.
+    void set_world_pack(std::filesystem::path path) { world_pack_path_ = std::move(path); }
+    void set_world_political_state(std::span<const ProvincePoliticalRecord> records,
+                                   std::span<const Rgba8> country_colors);
+    void submit_living_instances(std::span<const std::array<float, 16>> transforms);
     void set_shader_dir(std::filesystem::path path) { shader_dir_ = std::move(path); }
     void set_dynamic_flag(DynamicFlag3D flag) { dynamic_flag_ = std::move(flag); }
     void draw_frame();
@@ -105,11 +101,25 @@ public:
 
     // Map viewport for the live validation renderer, in uv space:
     // (cx, cy) center and (hx, hy) half extents. Defaults to the full map.
-    void set_map_view(float cx, float cy, float hx, float hy) noexcept {
+    void set_map_view(float cx, float cy, float hx, float hy,
+                      float altitude_m = 250'000.0f,
+                      float pitch_deg = 52.0f) noexcept {
         map_view_[0] = cx;
         map_view_[1] = cy;
         map_view_[2] = hx;
         map_view_[3] = hy;
+        map_camera_[0] = altitude_m;
+        map_camera_[1] = pitch_deg;
+    }
+    // Static screen-space map overlays must use the same view as the last
+    // fully resident page set. During a drag the requested camera may be one
+    // or more page uploads ahead of that committed view.
+    [[nodiscard]] std::array<float, 4> committed_map_view() const noexcept {
+        return {{world_render_view_[0], world_render_view_[1],
+                 world_render_view_[2], world_render_view_[3]}};
+    }
+    [[nodiscard]] bool committed_map_ready() const noexcept {
+        return world_patch_count_ != 0u;
     }
     void wait_idle();
     void write_report(const std::filesystem::path& path) const;
@@ -216,7 +226,7 @@ private:
     void write_gpu_timestamp(VkCommandBuffer command, std::uint32_t frame, bool start) const;
     void collect_gpu_timing(std::uint32_t frame);
     void update_stats(double frame_ms, double gpu_ms, double cpu_ms);
-    void record_live_validation_draws(VkCommandBuffer command) const;
+    void record_runtime_draws(VkCommandBuffer command) const;
     void record_map_label_draws(VkCommandBuffer command) const;
     void record_ui_fallback(VkCommandBuffer command) const;
     void record_tonemap(VkCommandBuffer command) const;
@@ -231,6 +241,23 @@ private:
                             const void* data,
                             VkBuffer& buffer,
                             VkDeviceMemory& memory);
+    void create_mapped_host_buffer(VkDeviceSize size,
+                                   VkBufferUsageFlags usage,
+                                   VkBuffer& buffer,
+                                   VkDeviceMemory& memory,
+                                   void*& mapped);
+    void destroy_mapped_host_buffer(VkBuffer& buffer,
+                                    VkDeviceMemory& memory,
+                                    void*& mapped) noexcept;
+    void create_runtime_renderer();
+    void destroy_runtime_renderer();
+    void create_world_page_resources();
+    void destroy_world_page_resources() noexcept;
+    void open_world_pack();
+    void stream_world_pages();
+    void record_world_page_uploads(VkCommandBuffer command);
+    void upload_map_overlay_frame();
+    void ensure_living_frame_buffers(std::size_t required_bytes);
 
     SDL_Window* window_ = nullptr;
     bool validation_enabled_ = false;
@@ -269,10 +296,16 @@ private:
     std::uint64_t frames_presented_ = 0;
 
     std::filesystem::path shader_dir_;
-    bool live_renderer_enabled_ = false;
+    bool runtime_renderer_enabled_ = false;
     VkPipelineLayout fullscreen_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout world_map_layout_ = VK_NULL_HANDLE;
     float map_view_[4] = {0.5f, 0.5f, 0.5f, 0.5f};
+    // The requested camera can move ahead of page residency. The map pass
+    // consumes this last complete view until the new page set is uploaded,
+    // preventing half-updated atlases from appearing as misplaced geography.
+    float world_render_view_[4] = {0.5f, 0.5f, 0.5f, 0.5f};
+    float map_camera_[4] = {250'000.0f, 52.0f, 0.0f, 0.0f};
+    float world_render_camera_[2] = {250'000.0f, 52.0f};
     VkPipelineLayout political_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout flag_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE;
@@ -302,12 +335,10 @@ private:
     VkBuffer ui_vertices_ = VK_NULL_HANDLE;
     VkDeviceMemory ui_vertices_memory_ = VK_NULL_HANDLE;
 
-    // Optional atlas-backed UI resources.  The map is an ordinary RGBA image;
-    // fonts prefer Core's MSDF metrics and retain the legacy fixed-cell map as
-    // a compatibility fallback for older client content.
+    // Optional atlas-backed UI resources. Fonts prefer Core's MSDF metrics;
+    // the fixed-cell branch is retained only for diagnostics.
     std::filesystem::path ui_font_atlas_path_;
     std::filesystem::path ui_font_metrics_path_;
-    std::filesystem::path ui_world_map_path_;
     VkImage ui_font_image_ = VK_NULL_HANDLE;
     VkDeviceMemory ui_font_image_memory_ = VK_NULL_HANDLE;
     VkImageView ui_font_view_ = VK_NULL_HANDLE;
@@ -315,46 +346,12 @@ private:
     VkDescriptorSetLayout ui_font_descriptor_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool ui_font_descriptor_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet ui_font_descriptor_set_ = VK_NULL_HANDLE;
-    VkImage ui_world_map_image_ = VK_NULL_HANDLE;
-    VkDeviceMemory ui_world_map_memory_ = VK_NULL_HANDLE;
-    VkImageView ui_world_map_view_ = VK_NULL_HANDLE;
-    VkSampler ui_world_map_sampler_ = VK_NULL_HANDLE;
-    VkDescriptorSetLayout ui_world_map_descriptor_layout_ = VK_NULL_HANDLE;
-    VkDescriptorPool ui_world_map_descriptor_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet ui_world_map_descriptor_set_ = VK_NULL_HANDLE;
-
-    // Scene map layers. These are deliberately separate from the UI map
-    // compatibility resource above: the map is rendered before tonemapping,
-    // while the HUD remains a display-space overlay.
-    std::filesystem::path world_map_ids_path_;
-    std::filesystem::path world_map_terrain_path_;
-    std::filesystem::path world_map_height_path_;
-    std::filesystem::path world_map_political_lut_path_;
-    VkImage world_map_ids_image_ = VK_NULL_HANDLE;
-    VkDeviceMemory world_map_ids_memory_ = VK_NULL_HANDLE;
-    VkImageView world_map_ids_view_ = VK_NULL_HANDLE;
-    VkSampler world_map_ids_sampler_ = VK_NULL_HANDLE;
-    VkImage world_map_terrain_image_ = VK_NULL_HANDLE;
-    VkDeviceMemory world_map_terrain_memory_ = VK_NULL_HANDLE;
-    VkImageView world_map_terrain_view_ = VK_NULL_HANDLE;
-    VkSampler world_map_terrain_sampler_ = VK_NULL_HANDLE;
-    VkImage world_map_height_image_ = VK_NULL_HANDLE;
-    VkDeviceMemory world_map_height_memory_ = VK_NULL_HANDLE;
-    VkImageView world_map_height_view_ = VK_NULL_HANDLE;
-    VkSampler world_map_height_sampler_ = VK_NULL_HANDLE;
-    VkImage world_map_political_lut_image_ = VK_NULL_HANDLE;
-    VkDeviceMemory world_map_political_lut_memory_ = VK_NULL_HANDLE;
-    VkImageView world_map_political_lut_view_ = VK_NULL_HANDLE;
-    VkSampler world_map_political_lut_sampler_ = VK_NULL_HANDLE;
-    VkDescriptorSetLayout world_map_scene_descriptor_layout_ = VK_NULL_HANDLE;
-    VkDescriptorPool world_map_scene_descriptor_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet world_map_scene_descriptor_set_ = VK_NULL_HANDLE;
     std::uint32_t ui_font_width_ = 0;
     std::uint32_t ui_font_height_ = 0;
     std::uint32_t ui_font_cell_ = 0;
     std::uint32_t ui_font_columns_ = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> ui_font_slots_;
-    std::optional<FontAtlas> ui_font_metrics_;
+    std::unique_ptr<FontAtlas> ui_font_metrics_;
     float ui_logical_width_ = 1.0f;
     float ui_logical_height_ = 1.0f;
     float ui_scale_x_ = 1.0f;
@@ -416,12 +413,86 @@ private:
 
     // Persistent static map-overlay geometry (vector borders). Uploaded on
     // camera movement only; redrawn ahead of the dynamic UI every frame.
-    VkBuffer map_overlay_vb_ = VK_NULL_HANDLE;
-    VkDeviceMemory map_overlay_vb_memory_ = VK_NULL_HANDLE;
-    VkBuffer map_overlay_ib_ = VK_NULL_HANDLE;
-    VkDeviceMemory map_overlay_ib_memory_ = VK_NULL_HANDLE;
-    std::uint32_t map_overlay_index_count_ = 0;
+    struct MapOverlayFrameBuffer {
+        VkBuffer vertex_buffer = VK_NULL_HANDLE;
+        VkDeviceMemory vertex_memory = VK_NULL_HANDLE;
+        void* vertex_mapped = nullptr;
+        VkDeviceSize vertex_capacity = 0;
+        VkBuffer index_buffer = VK_NULL_HANDLE;
+        VkDeviceMemory index_memory = VK_NULL_HANDLE;
+        void* index_mapped = nullptr;
+        VkDeviceSize index_capacity = 0;
+        std::uint32_t index_count = 0;
+        std::uint64_t generation = 0;
+    };
+    MapOverlayFrameBuffer map_overlay_frames_[frames_in_flight]{};
     std::vector<UiGpuVertex> map_overlay_staging_vertices_;
+    std::vector<std::uint32_t> map_overlay_staging_indices_;
+    std::uint64_t map_overlay_generation_ = 0;
+
+    // ---- Streamed world-map resources -----------------------------------
+    struct MappedHostBuffer {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        void* mapped = nullptr;
+        VkDeviceSize capacity = 0;
+    };
+    struct WorldMapPatchGpu {
+        std::array<float, 4> map_rect{{0.0f, 0.0f, 0.0f, 0.0f}};
+    };
+
+    static constexpr std::uint32_t world_atlas_page_size_ = 128u;
+    static constexpr std::uint32_t world_atlas_pages_per_side_ = 16u;
+    static constexpr std::uint32_t world_atlas_size_ =
+        world_atlas_page_size_ * world_atlas_pages_per_side_;
+    static constexpr std::uint32_t world_cpu_page_capacity_ = 512u;
+    static constexpr std::uint32_t world_upload_page_budget_ = 4u;
+    static constexpr std::size_t world_rgba_page_bytes_ =
+        static_cast<std::size_t>(world_atlas_page_size_) * world_atlas_page_size_ * 4u;
+    static constexpr std::size_t world_palette_bytes_ = 256u * 256u * 4u;
+    static constexpr std::size_t world_upload_buffer_bytes_ =
+        world_palette_bytes_ + world_upload_page_budget_ * world_rgba_page_bytes_ * 2u;
+    static constexpr std::size_t world_patch_buffer_bytes_ =
+        static_cast<std::size_t>(world_atlas_pages_per_side_) * world_atlas_pages_per_side_ *
+        sizeof(WorldMapPatchGpu);
+
+    std::filesystem::path world_pack_path_;
+    std::unique_ptr<WorldMapPageStreamer> world_page_streamer_;
+    bool world_pack_ready_ = false;
+    VkImage world_page_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory world_page_memory_ = VK_NULL_HANDLE;
+    VkImageView world_page_view_ = VK_NULL_HANDLE;
+    VkSampler world_page_sampler_ = VK_NULL_HANDLE;
+    VkImage world_height_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory world_height_memory_ = VK_NULL_HANDLE;
+    VkImageView world_height_view_ = VK_NULL_HANDLE;
+    VkSampler world_height_sampler_ = VK_NULL_HANDLE;
+    VkImage world_palette_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory world_palette_memory_ = VK_NULL_HANDLE;
+    VkImageView world_palette_view_ = VK_NULL_HANDLE;
+    VkSampler world_palette_sampler_ = VK_NULL_HANDLE;
+    MappedHostBuffer world_upload_frames_[frames_in_flight]{};
+    MappedHostBuffer world_patch_frames_[frames_in_flight]{};
+    std::array<std::optional<WorldMapPageKey>,
+               static_cast<std::size_t>(world_atlas_pages_per_side_) * world_atlas_pages_per_side_>
+        world_gpu_pages_{};
+    std::vector<WorldMapPatchGpu> world_patch_staging_;
+    std::uint32_t world_patch_count_ = 0u;
+    std::vector<WorldMapPatchGpu> world_pending_patch_staging_;
+    std::array<float, 4> world_stream_params_{{0.0f, 0.0f, 1.0f, 1.0f}};
+    std::array<float, 4> world_pending_stream_params_{{0.0f, 0.0f, 1.0f, 1.0f}};
+    std::vector<std::byte> world_palette_cpu_;
+    bool world_palette_dirty_ = true;
+    bool world_page_layout_initialized_ = false;
+    bool world_height_layout_initialized_ = false;
+    bool world_palette_layout_initialized_ = false;
+    VkDescriptorSetLayout world_map_scene_descriptor_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool world_map_scene_descriptor_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet world_map_scene_descriptor_set_ = VK_NULL_HANDLE;
+
+    // ---- Dynamic living-map uploads -------------------------------------
+    MappedHostBuffer living_frame_buffers_[frames_in_flight]{};
+    std::uint32_t living_instance_count_ = 0u;
 
 
     std::atomic<std::uint32_t> validation_errors_{0};

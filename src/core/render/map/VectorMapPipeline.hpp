@@ -71,6 +71,7 @@ struct VectorBoundaryPolyline {
     float min_v = 0.0f;
     float max_v = 0.0f;
     std::vector<VectorPoint> points; // Normalized map coordinates [0..1]
+    VectorBorderClass authored_class = VectorBorderClass::Province;
 };
 
 class VectorMapSystem {
@@ -101,7 +102,8 @@ public:
         double half_u, double half_v,
         int screen_w, int screen_h,
         const std::function<VectorBorderClass(std::uint32_t loc_a, std::uint32_t loc_b)>& classifier,
-        float line_scale = 1.0f) const;
+        float line_scale = 1.0f,
+        const std::function<bool(float u, float v)>& is_land = {}) const;
 
     // Compute the screen-space boundary mesh and cache it, without appending to
     // a draw list. Returns true when the cached geometry was rebuilt (camera
@@ -113,7 +115,8 @@ public:
         double half_u, double half_v,
         int screen_w, int screen_h,
         const std::function<VectorBorderClass(std::uint32_t loc_a, std::uint32_t loc_b)>& classifier,
-        float line_scale = 1.0f) const;
+        float line_scale = 1.0f,
+        const std::function<bool(float u, float v)>& is_land = {}) const;
 
     [[nodiscard]] std::span<const UiVertex> cached_screen_vertices() const noexcept { return temp_vertices_; }
     [[nodiscard]] std::span<const std::uint32_t> cached_screen_indices() const noexcept { return temp_indices_; }

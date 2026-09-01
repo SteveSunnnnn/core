@@ -235,7 +235,13 @@ void LivingMapSystem::generate_province(ProvinceId province, ProvinceCache& cach
             }
             placed.gpu.yaw_u16 = static_cast<std::uint16_t>((r0 >> 16u) & 0xFFFFu);
             placed.gpu.scale_milli = static_cast<std::uint16_t>(std::min<std::uint32_t>(65'535u, static_cast<std::uint32_t>(scale_base) + static_cast<std::uint32_t>((r1 >> 16u) & 0xFFu)));
-            placed.gpu.asset_variant = static_cast<std::uint16_t>(family + static_cast<std::uint16_t>((r0 >> 40u) & 0x0Fu));
+            const auto local_variant = static_cast<std::uint16_t>(
+                (family + static_cast<std::uint16_t>((r0 >> 40u) & 0x0Fu)) & 0x00FFu);
+            // Keep the lower byte available for the semantic building kind;
+            // the upper byte selects the authored architecture family. The
+            // instance remains the existing 16-byte contract.
+            placed.gpu.asset_variant = static_cast<std::uint16_t>(
+                (static_cast<std::uint16_t>(def.architecture_family) << 8u) | local_variant);
             placed.gpu.province_r16 = province_r16(province);
             placed.gpu.kind = static_cast<std::uint8_t>(kind);
             placed.gpu.lod_mask = (kind == LivingInstanceKind::Farm || kind == LivingInstanceKind::Mine) ? 0x01u : 0x03u;

@@ -1,4 +1,7 @@
-# Core 1.0 Living Map Architecture
+# Core Living Map Architecture
+
+> Top-level boundaries and dependency direction live in [ARCHITECTURE.md](ARCHITECTURE.md);
+> this file is the Living Map subsystem contract.
 
 The Living Map converts simulation state into compact, chunk-streamable visual state without making render objects authoritative simulation entities.
 
@@ -22,7 +25,7 @@ Visual categories choose authored candidates by semantic class:
 - Mine → Mine, then Buildable.
 - Port → Port, then Buildable.
 
-Weighted deterministic selection uses stable IDs/seed inputs. If a world pack has no authored spatial data for a Province, the legacy deterministic radial placement around Province centre remains as a compatibility fallback.
+Weighted deterministic selection uses stable IDs/seed inputs. Shipping packs are expected to carry authored semantic hubs and placement candidates; missing authored placement is a content-check failure rather than a second map production path.
 
 ## Settlement clusters
 

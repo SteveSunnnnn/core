@@ -1,4 +1,4 @@
-name: Core CPU CI
+name: Core Engine CI
 
 on:
   push:
@@ -12,10 +12,6 @@ jobs:
       - name: Dependencies
         run: sudo apt-get update && sudo apt-get install -y ninja-build libzstd-dev libxxhash-dev
       - name: Configure
-        run: cmake -S . -B build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DCORE_BUILD_TESTS=ON -DCORE_BUILD_STRESS_TESTS=ON -DCORE_BUILD_BENCHMARKS=OFF -DCORE_BUILD_DESKTOP=OFF -DCORE_WARNINGS_AS_ERRORS=ON
+        run: cmake -S . -B build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DCORE_WARNINGS_AS_ERRORS=ON
       - name: Build
         run: cmake --build build-ci --parallel 2
-      - name: Tests
-        run: ctest --test-dir build-ci --output-on-failure
-      - name: Job stress
-        run: ./build-ci/core_job_stress

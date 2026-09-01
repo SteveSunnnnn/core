@@ -138,21 +138,4 @@ std::vector<RichTextToken> LocalizationStore::parse_rich_text(std::string_view t
     return tokens;
 }
 
-void LocalizationStore::render_rich_text(UiDrawList& ui, std::span<const RichTextToken> tokens,
-                                         float start_x, float start_y, float font_size,
-                                         UiRect scissor) {
-    float cur_x = start_x;
-    for (const auto& tok : tokens) {
-        if (tok.is_icon) {
-            // Draw a styled square token icon
-            ui.quad({cur_x, start_y - 2.0f, font_size, font_size}, 0xffd4af37u, scissor);
-            cur_x += font_size + 4.0f;
-        } else {
-            const float approx_w = static_cast<float>(tok.text.size()) * (font_size * 0.55f);
-            ui.text(tok.text, cur_x, start_y, font_size, tok.rgba, scissor);
-            cur_x += approx_w;
-        }
-    }
-}
-
 } // namespace core

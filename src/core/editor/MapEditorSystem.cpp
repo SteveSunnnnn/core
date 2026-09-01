@@ -1,9 +1,20 @@
 #include "MapEditorSystem.hpp"
+#include "core/render/map/PoliticalMapPageBundle.hpp"
+#include "core/world/WorldBootstrap.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstring>
+#include <fstream>
+#include <limits>
+#include <set>
+#include <stdexcept>
 #include <vector>
 
 namespace core {
+
+MapEditorSystem::MapEditorSystem() = default;
+MapEditorSystem::~MapEditorSystem() = default;
 
 void MapEditorSystem::set_tool(EditorTool tool) noexcept { brush_.tool = tool; }
 void MapEditorSystem::set_brush_shape(EditorBrushShape shape) noexcept { brush_.shape = shape; }
@@ -40,14 +51,18 @@ void MapEditorSystem::on_mouse_up() {
 }
 
 void MapEditorSystem::apply_brush_at(float world_x, float world_y) {
-    // 64-km chunk geometry: 128x128 pixels, 500m per pixel
-    constexpr float kPixelMeters = 500.0f;
+    // 64-km chunk geometry: 128x128 pixels. The editor may be opened on a
+    // compact world pack with a different authored page size, but the page
+    // wire remains 128 samples and the metadata controls its world scale.
+    const float kPixelMeters = static_cast<float>(page_resolution_m_);
 
     const float radius_m = brush_.radius_m;
     const int radius_pixels = std::max(1, static_cast<int>(std::ceil(radius_m / kPixelMeters)));
 
-    const float center_pixel_x = world_x / kPixelMeters;
-    const float center_pixel_y = world_y / kPixelMeters;
+    const float center_pixel_x = static_cast<float>((static_cast<double>(world_x) - page_origin_x_m_) /
+                                                    static_cast<double>(kPixelMeters));
+    const float center_pixel_y = static_cast<float>((static_cast<double>(world_y) - page_origin_y_m_) /
+                                                    static_cast<double>(kPixelMeters));
 
     const int min_px = static_cast<int>(std::floor(center_pixel_x)) - radius_pixels;
     const int max_px = static_cast<int>(std::floor(center_pixel_x)) + radius_pixels;
@@ -78,19 +93,31 @@ void MapEditorSystem::apply_brush_at(float world_x, float world_y) {
             const auto local_x = static_cast<std::uint32_t>(px - chunk_x * kPageSize);
             const auto local_y = static_cast<std::uint32_t>(py - chunk_y * kPageSize);
 
-            EditorCellEdit edit;
-            edit.page_x = chunk_x;
-            edit.page_y = chunk_y;
-            edit.local_x = local_x;
-            edit.local_y = local_y;
-            // NOTE: undo/redo swaps old_value with new_value. old_value is still
-            // a placeholder because this system holds no reference to the
-            // province page store and therefore cannot read the cell being
-            // overwritten; undoing will clear the cell until the store is
-            // wired in and the previous value is captured here.
-            edit.old_value = 0;
-            edit.new_value = static_cast<std::uint16_t>(brush_.paint_province.valid() ? brush_.paint_province.value() + 1 : 1);
-            current_stroke_.edits.push_back(edit);
+            const EditorPageKey key{chunk_x, chunk_y};
+            const auto encoded = brush_.paint_province.valid()
+                ? static_cast<std::uint16_t>(std::min<std::uint32_t>(
+                    brush_.paint_province.value() + 1u, std::numeric_limits<std::uint16_t>::max()))
+                : static_cast<std::uint16_t>(1u);
+            const auto existing = std::find_if(current_stroke_.edits.begin(), current_stroke_.edits.end(),
+                                               [&](const EditorCellEdit& candidate) {
+                                                   return candidate.page_x == chunk_x && candidate.page_y == chunk_y &&
+                                                          candidate.local_x == local_x && candidate.local_y == local_y;
+                                               });
+            if (existing != current_stroke_.edits.end()) {
+                apply_cell(*existing, encoded);
+                existing->new_value = encoded;
+            } else {
+                EditorCellEdit edit;
+                edit.page_x = chunk_x;
+                edit.page_y = chunk_y;
+                edit.local_x = local_x;
+                edit.local_y = local_y;
+                edit.old_value = 0u;
+                if (const auto* page = page_for(key)) edit.old_value = page->province.encoded(local_x, local_y);
+                edit.new_value = encoded;
+                apply_cell(edit, encoded);
+                current_stroke_.edits.push_back(edit);
+            }
             ++edit_count;
         }
     }
@@ -112,9 +139,7 @@ void MapEditorSystem::undo() {
         EditorStroke stroke = undo_stack_.back();
         undo_stack_.pop_back();
 
-        for (auto& edit : stroke.edits) {
-            std::swap(edit.old_value, edit.new_value);
-        }
+        for (const auto& edit : stroke.edits) apply_cell(edit, edit.old_value);
 
         redo_stack_.push_back(stroke);
     }
@@ -125,9 +150,7 @@ void MapEditorSystem::redo() {
         EditorStroke stroke = redo_stack_.back();
         redo_stack_.pop_back();
 
-        for (auto& edit : stroke.edits) {
-            std::swap(edit.old_value, edit.new_value);
-        }
+        for (const auto& edit : stroke.edits) apply_cell(edit, edit.new_value);
 
         undo_stack_.push_back(stroke);
     }
@@ -199,7 +222,183 @@ void MapEditorSystem::render_status_bar(UiDrawList& ui, UiRect screen) const {
     ui.text(status, screen.x + 12.0f, screen.y + screen.h - 19.0f, 12.0f, 0xfff4ebd7u);
 }
 
-bool MapEditorSystem::export_to_worldpack(const std::filesystem::path& /*path*/) const {
+bool MapEditorSystem::load_worldpack(const std::filesystem::path& path, std::string& diagnostic) {
+    diagnostic.clear();
+    world_pack_.close();
+    world_pack_loaded_ = false;
+    resident_pages_.clear();
+    dirty_pages_.clear();
+    bootstrap_.reset();
+    try {
+        world_pack_.open(path);
+        const WorldChunkKey metadata_key{WorldChunkType::Metadata, 0u, 0, 0, 0u};
+        if (!world_pack_.contains(metadata_key)) throw std::runtime_error("world pack has no metadata chunk");
+        world_metadata_ = parse_world_pack_metadata(world_pack_.read(metadata_key));
+        if (!world_metadata_.valid()) throw std::runtime_error("invalid world pack metadata");
+        if (world_metadata_.page_size != ProvinceRasterPage::samples_per_side)
+            throw std::runtime_error("editor page size does not match world pack");
+        page_origin_x_m_ = world_metadata_.bounds_world_m[0];
+        page_origin_y_m_ = world_metadata_.bounds_world_m[1];
+        page_resolution_m_ = world_metadata_.base_page_world_size_m /
+                             static_cast<double>(ProvinceRasterPage::samples_per_side);
+        EconomyDefinitions empty_economy;
+        bootstrap_ = std::make_unique<WorldBootstrapResult>(WorldBootstrap::load(world_pack_, empty_economy));
+        resident_pages_.reserve(128u);
+        world_pack_loaded_ = true;
+        return true;
+    } catch (const std::exception& error) {
+        diagnostic = error.what();
+        world_pack_.close();
+        resident_pages_.clear();
+        dirty_pages_.clear();
+        bootstrap_.reset();
+        world_pack_loaded_ = false;
+        return false;
+    }
+}
+
+MapEditorSystem::EditorPageKey MapEditorSystem::normalise_page_key(EditorPageKey key) const noexcept {
+    if (world_pack_loaded_ && world_metadata_.horizontal_wrap && world_metadata_.base_page_count_x != 0u) {
+        const auto count = static_cast<std::int32_t>(world_metadata_.base_page_count_x);
+        key.x %= count;
+        if (key.x < 0) key.x += count;
+    }
+    return key;
+}
+
+MapEditorSystem::EditorPage* MapEditorSystem::page_for(EditorPageKey key) {
+    key = normalise_page_key(key);
+    const auto found = resident_pages_.find(key);
+    return found == resident_pages_.end() ? nullptr : &found->second;
+}
+
+const MapEditorSystem::EditorPage* MapEditorSystem::page_for(EditorPageKey key) const {
+    key = normalise_page_key(key);
+    const auto found = resident_pages_.find(key);
+    return found == resident_pages_.end() ? nullptr : &found->second;
+}
+
+MapEditorSystem::EditorPage* MapEditorSystem::ensure_page(EditorPageKey key) {
+    key = normalise_page_key(key);
+    if (const auto found = resident_pages_.find(key); found != resident_pages_.end()) return &found->second;
+    EditorPage page;
+    page.province.clear();
+    page.coast.fill(std::int16_t{0});
+    if (world_pack_loaded_) {
+        const auto chunk = world_pack_.find({WorldChunkType::ProvinceCoastBundle, 0u, key.x, key.y, 0u});
+        if (!chunk) return nullptr;
+        const auto bytes = world_pack_.read(chunk->key);
+        if (bytes.size() != PoliticalMapPageBundleView::raw_bytes) return nullptr;
+        PoliticalMapPageBundleView bundle{bytes};
+        bundle.decode_province(page.province);
+        const auto coast = bundle.coast_payload();
+        std::memcpy(page.coast.data(), coast.data(), coast.size());
+    }
+    const auto [inserted, ok] = resident_pages_.emplace(key, std::move(page));
+    (void)ok;
+    return &inserted->second;
+}
+
+void MapEditorSystem::apply_cell(EditorCellEdit edit, std::uint16_t encoded_value) {
+    const auto key = normalise_page_key({static_cast<std::int32_t>(edit.page_x),
+                                         static_cast<std::int32_t>(edit.page_y)});
+    edit.page_x = key.x;
+    edit.page_y = key.y;
+    auto* page = ensure_page(key);
+    if (page == nullptr || edit.local_x >= ProvinceRasterPage::samples_per_side ||
+        edit.local_y >= ProvinceRasterPage::samples_per_side) return;
+    page->province.samples()[static_cast<std::size_t>(edit.local_y) * ProvinceRasterPage::samples_per_side + edit.local_x] = encoded_value;
+    dirty_pages_[key] = true;
+}
+
+bool MapEditorSystem::export_to_worldpack(const std::filesystem::path& path) const {
+    if (!world_pack_loaded_ || dirty_pages_.empty() || path.empty()) return false;
+    const auto temporary = path.string() + ".editor-tmp";
+    try {
+        WorldPackWriter writer;
+        WorldPackWriteOptions options;
+        options.horizontal_wrap = world_pack_.stats().horizontal_wrap;
+        writer.open(temporary, options);
+        for (const auto& entry : world_pack_.index()) {
+            auto bytes = world_pack_.read(entry.key);
+            if (entry.key.type == WorldChunkType::ProvinceCoastBundle && entry.key.level == 0u) {
+                const EditorPageKey key{entry.key.x, entry.key.y};
+                const auto page = resident_pages_.find(key);
+                if (page != resident_pages_.end() && dirty_pages_.contains(key)) {
+                    if (bytes.size() != PoliticalMapPageBundleView::raw_bytes)
+                        throw std::runtime_error("cannot export malformed political page");
+                    for (std::size_t sample = 0; sample < ProvinceRasterPage::sample_count; ++sample) {
+                        const auto value = page->second.province.samples()[sample];
+                        bytes[sample * 2u] = static_cast<std::byte>(value & 0xffu);
+                        bytes[sample * 2u + 1u] = static_cast<std::byte>(value >> 8u);
+                    }
+                }
+            }
+            writer.append(entry.key, bytes);
+        }
+        writer.finalize();
+        if (std::filesystem::exists(path)) std::filesystem::remove(path);
+        std::filesystem::rename(temporary, path);
+        return true;
+    } catch (...) {
+        if (std::filesystem::exists(temporary)) std::filesystem::remove(temporary);
+        return false;
+    }
+}
+
+bool MapEditorSystem::validate_spline_topology(std::span<const EditorSplineLink> links,
+                                               std::string& diagnostic) const {
+    diagnostic.clear();
+    if (!bootstrap_) {
+        diagnostic = "load a world pack before validating spline topology";
+        return false;
+    }
+    const auto& geography = bootstrap_->world.geography;
+    std::set<std::pair<std::uint32_t, std::uint32_t>> authored_state_links;
+    for (const auto& link : links) {
+        if (!link.from.valid() || !link.to.valid() ||
+            link.from.value() >= geography.province_count() ||
+            link.to.value() >= geography.province_count() || link.from == link.to) {
+            diagnostic = "spline references an invalid or self province";
+            return false;
+        }
+        const auto from_state = geography.province_state(link.from);
+        const auto to_state = geography.province_state(link.to);
+        if (!from_state.valid() || !to_state.valid()) {
+            diagnostic = "spline endpoints must be land provinces in states";
+            return false;
+        }
+        if (from_state != to_state && !bootstrap_->adjacency.adjacent(link.from, link.to)) {
+            diagnostic = "cross-state spline connects non-neighbor provinces";
+            return false;
+        }
+        if (from_state != to_state) {
+            const auto a = std::min(from_state.value(), to_state.value());
+            const auto b = std::max(from_state.value(), to_state.value());
+            authored_state_links.emplace(a, b);
+        }
+    }
+
+    std::set<std::pair<std::uint32_t, std::uint32_t>> required_state_links;
+    for (std::uint32_t raw = 0u; raw < geography.province_count(); ++raw) {
+        const auto province = ProvinceId{raw};
+        if (geography.province_kind(province) != ProvinceKind::Land) continue;
+        const auto state = geography.province_state(province);
+        for (const auto& neighbor : bootstrap_->adjacency.neighbors(province)) {
+            const auto other = ProvinceId{neighbor.province};
+            if (other.value() <= raw || geography.province_kind(other) != ProvinceKind::Land) continue;
+            const auto other_state = geography.province_state(other);
+            if (!other_state.valid() || other_state == state) continue;
+            required_state_links.emplace(std::min(state.value(), other_state.value()),
+                                         std::max(state.value(), other_state.value()));
+        }
+    }
+    for (const auto& required : required_state_links) {
+        if (!authored_state_links.contains(required)) {
+            diagnostic = "neighboring states have no authored spline link";
+            return false;
+        }
+    }
     return true;
 }
 
@@ -207,6 +406,19 @@ void MapEditorSystem::select_province(ProvinceId id) {
     selected_province_ = id;
     selected_props_.id = id;
     selected_props_.key = "prov_" + std::to_string(id.value());
+    if (bootstrap_ && id.valid() && id.value() < bootstrap_->world.geography.province_count()) {
+        const auto& geography = bootstrap_->world.geography;
+        selected_props_.key = std::string{geography.province_key(id)};
+        selected_props_.area_km2 = geography.province_areas_km2()[id.value()];
+        selected_props_.center_x = geography.province_center_x(id);
+        selected_props_.center_y = geography.province_center_y(id);
+        const auto owner = geography.province_owner(id);
+        if (owner.valid() && owner.value() < bootstrap_->world.countries.size())
+            selected_props_.country_tag = std::string{bootstrap_->world.countries.tag(owner)};
+        const auto state = geography.province_state(id);
+        if (state.valid() && state.value() < geography.state_count())
+            selected_props_.state_name = std::string{geography.state_key(state)};
+    }
 }
 
 void MapEditorSystem::set_selected_property_terrain(TerrainType terrain) { selected_props_.terrain = terrain; }

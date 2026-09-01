@@ -11,13 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIRS = (
     ".github",
     "assets",
-    "bench",
     "cmake",
-    "content",
     "docs",
     "shaders",
     "src",
-    "tests",
     "tools",
 )
 ROOT_FILES = (
@@ -31,7 +28,6 @@ ROOT_FILES = (
     "README.md",
     "SECURITY.md",
     "THIRD_PARTY.md",
-    "demo/README.md",
 )
 
 

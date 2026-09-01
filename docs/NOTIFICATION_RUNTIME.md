@@ -123,13 +123,13 @@ Older saves without `NTF1` restore an empty notification state with next ID 1. T
 tagged section is emitted once notification content/state requires it, without
 changing the Core 1.0 product version.
 
-## Regression contract
+## Validation contract
 
-`tests/notification_tests.cpp` covers content binding, all dedupe policies, potential
-gating, action effects, state transitions, expiry, stable definition/action restoration
-under registration reordering, save/restore continuation, invalid state rejection and
-atomic failure when content is missing. Future authoritative fields must extend the
-save codec, checksum, validation and these focused tests in the same change.
+Content binding, all dedupe policies, potential gating, action effects, state
+transitions, expiry, stable definition/action restoration under registration
+reordering, save/restore continuation, invalid state rejection and atomic failure
+when content is missing remain part of the engine contract. Future authoritative
+fields must extend the save codec, checksum and validation in the same change.
 
 ## Remaining work
 

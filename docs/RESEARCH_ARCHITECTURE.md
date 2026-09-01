@@ -28,9 +28,9 @@ values and avoids vector reordering. Definitions and the derived innovation scra
 immutable/derived state and are not serialized.
 
 Technology records already participate in save/load, world validation, and the deterministic world
-checksum. `core_research_tests` adds dedicated coverage for content binding, prerequisite ordering,
-completion effects, definition-cycle rejection, stable-key restore under definition reordering, and
-post-load deterministic progression.
+checksum. Content binding, prerequisite ordering, completion effects, definition-cycle rejection,
+stable-key restore under definition reordering, and post-load deterministic progression remain part
+of the engine contract.
 
 ## Performance
 

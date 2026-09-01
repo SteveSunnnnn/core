@@ -63,7 +63,7 @@ Material/normal pages will use GPU block compression; they are intentionally sep
 
 ## 5. Residency and streaming
 
-`TerrainPageCache` maps terrain patch keys to fixed GPU page indices. It reserves lookup capacity up front and uses a clock/oldest-frame eviction scan when full. No GPU page identity is tied to a heap object or scene node.
+`TerrainPageCache` maps terrain patch keys to fixed GPU page indices. It reserves lookup capacity up front and uses a clock/oldest-frame eviction scan when full. No GPU page identity is tied to a heap object or scene node. The political/map page stream uses its own `WorldMapPageCache` and `WorldMapPageKey`; it does not make terrain geometry the owner of map identity.
 
 `TerrainStreamingPlanner` considers only non-resident visible patches and respects a strict byte budget. Requests prioritize fine clipmap levels before coarse levels.
 

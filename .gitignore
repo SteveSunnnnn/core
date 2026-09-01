@@ -34,12 +34,3 @@ Thumbs.db
 *.log
 *.save
 *.tmp
-
-# Versioned binary fixtures used by save/load migration regression tests
-!/tests/fixtures/
-!/tests/fixtures/*.save
-
-# Generated technical demo/world compiler outputs
-/demo/britain_technical_input/
-/demo/britain_technical.coreworld
-/demo/britain_technical_preview.png

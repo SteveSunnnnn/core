@@ -169,9 +169,10 @@ argument mismatches, malformed call/signature blocks, stable-name hash collision
 invalid defaults. The VM has call-depth checks and a per-public-invocation work budget;
 the remaining budget is deliberately transient and excluded from save/checksum.
 
-Use `core_content_check` for startup-equivalent parsing, compilation and link
-diagnostics without starting the game. Production diagnostics still need richer mod
-source chains, script call stacks, cost profiling and desync-context diffs.
+Use the engine's `ScriptCompiler` and `ScriptProgramDatabase` for startup-equivalent
+parsing, compilation and link diagnostics without starting a game. Production
+diagnostics still need richer mod source chains, script call stacks, cost profiling
+and desync-context diffs.
 
 ## Save/checksum contract
 
@@ -180,7 +181,7 @@ restored World. Their checksum covers ROOT/current/FROM/PREV, parameters, variab
 targets, collections, seed and random-draw counters in deterministic order. Resource
 budgets and other VM-local guard state are not simulation state and are not serialized.
 
-Dedicated regression coverage includes insertion-order-independent checksums,
+Dedicated validation coverage includes insertion-order-independent checksums,
 scope-subtype rejection, frame isolation, mixed-backend compilation, empty triggers,
 stable random salts, repeated draw counters, parser limits, non-finite rejection,
 typed signature defaults and failures, link-cycle diagnostics, and save/restore of a

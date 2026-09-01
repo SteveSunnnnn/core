@@ -51,6 +51,7 @@ good grain {
 }
 
 building_type farm {
+    visual = farm
     workers_per_level = 5000
     input  = { good = tools quantity_milli = 50 }
     output = { good = grain quantity_milli = 1200 }
@@ -70,7 +71,9 @@ need_profile workers {
 
 Game content should use stable symbolic keys. Dense `GoodId`,
 `BuildingTypeId`, `ProductionMethodId` and `NeedProfileId` values are generated
-only during binding and must not appear in authored files.
+only during binding and must not appear in authored files. Optional presentation
+roles such as `building_type.visual` are also authored symbolically; the client
+does not infer them from the type key.
 
 ## UI and fonts
 
@@ -91,14 +94,43 @@ the same UTF-8/MSDF path; the mounted content package selects the font file and
 the charset it needs. Pass `--charset <file>` for a UTF-8 charset specification
 containing project-specific ranges or code points.
 
-The desktop shell accepts content-owned resources before renderer
+An engine host may provide content-owned resources before renderer
 initialization:
 
 ```powershell
 $env:CORE_UI_FONT_ATLAS = "<output>/ui_serif_atlas.coreimg"
 $env:CORE_UI_FONT_METRICS = "<output>/ui_serif.corefont"
-$env:CORE_UI_WORLD_MAP = "<optional COREIMG1 image>"
 ```
+
+The world map is not a UI texture. An engine host supplies an external
+`.coreworld` path; the map pipeline streams page, height, coast and
+political-palette chunks directly from that pack.
+
+World entities stay data-defined as well. After the pack resolves stable
+province/state/market IDs, the content layer can materialize script objects such
+as:
+
+```text
+building london_farm {
+    province = london
+    type = farm
+    production_method = farm_standard
+    level = 3
+}
+
+pop london_workers {
+    province = london
+    size = 120000
+    need_profile = household
+    employer = london_farm
+}
+```
+
+The engine provides only the schema and binding mechanics; these values are
+not embedded in C++ or generated from GIS economics.
+
+Country presentation data follows the same rule, for example
+`map_color = { r = 150 g = 72 b = 64 a = 255 }` belongs in the country script.
 
 The built-in 5x7 pixel font is a diagnostics fallback only. It is intentionally
 not a shipping UI path, does not provide CJK coverage and emits a desktop
@@ -106,12 +138,12 @@ warning whenever no MSDF package is configured.
 
 ## Content acceptance gate
 
-Before a package is allowed to start a game:
+Before a package is installed into an engine world:
 
 1. mount the deterministic mod load plan;
-2. run `core_content_check` and reject all parse, unknown-field, link, type and
-   reference diagnostics;
+2. compile through the engine scripting pipeline and reject all parse,
+   unknown-field, link, type and reference diagnostics;
 3. bind definitions into staging stores and commit only after all references
    resolve;
 4. include the effective content hash in save and multiplayer compatibility;
-5. run a deterministic continuation test after save/restore.
+5. validate deterministic continuation after save/restore.

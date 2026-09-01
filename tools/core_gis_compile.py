@@ -1,39 +1,57 @@
 #!/usr/bin/env python3
-"""Compile province GIS into Core WorldPack source chunks.
+"""Compile the authored GIS layers into one streamable Core world pack.
 
-Required province fields:
-  province_key, state_key, country_tag, market_key
-Optional fields:
-  state_capital (bool/int), population, gdp, treasury, tax_rate
+This tool is intentionally an offline compiler. The desktop and simulation
+never read these GIS files; they consume the ``world.coreworld`` produced by
+``core_world_compiler``.  The compiler emits page families for every clipmap
+level, explicit coordinate metadata, stable province IDs, historical setup,
+topology, authored placement and vector source chunks.
 
-Input may be GeoJSON, GeoPackage, Shapefile, or anything GeoPandas can read.
-All runtime geometry is baked offline. Output is a manifest directory consumed by
-`core_world_compiler`.
+The minimum land schema is ``province_key`` and ``state_key``. Ownership and
+market columns are accepted as authoring conveniences, but are copied into
+the HistoricalSetup chunk rather than used as economic values in the pack.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import struct
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import rasterio
+from rasterio.enums import Resampling
 from rasterio.features import rasterize
 from rasterio.transform import from_origin
 from rasterio.vrt import WarpedVRT
-from rasterio.enums import Resampling
 from scipy import ndimage
-from shapely.geometry import box
+from shapely.affinity import translate
+from shapely.geometry import LineString, Point, box
+from shapely.ops import split, transform, unary_union
 
 PAGE = 128
 CHUNK_M = 64_000.0
 DEFAULT_RESOLUTION_M = CHUNK_M / PAGE
 MAX_COAST_M = 16_000.0
+MIN_HEIGHT_M = -12_000.0
+HEIGHT_STEP_M = 0.5
+MAX_HEIGHT_M = MIN_HEIGHT_M + 65_535.0 * HEIGHT_STEP_M
+
 PLC_MAGIC = 0x31434C50
 ANC_MAGIC = 0x31434E41
+STATE_MAGIC = 0x32535453
+PROVINCE_MAGIC = 0x32565250
+HISTORY_MAGIC = 0x31534948
+COUNTRY_MAGIC = 0x32544E43
+ARCHITECTURE_MAGIC = 0x31435241  # ARC1
+RESOURCE_DISTRIBUTION_MAGIC = 0x31534452  # RDS1
 
 PLACEMENT_BUILDABLE = 0
 PLACEMENT_URBAN = 1
@@ -46,12 +64,42 @@ PLACEMENT_VEGETATION = 7
 FLAG_BUILDABLE = 1
 FLAG_COASTAL = 2
 
+PROVINCE_LAND = 0
+PROVINCE_SEA = 1
+PROVINCE_LAKE = 2
+
+ADJACENCY_LAND = 1 << 0
+ADJACENCY_RIVER = 1 << 1
+ADJACENCY_STRAIT = 1 << 2
+ADJACENCY_IMPASSABLE = 1 << 3
+ADJACENCY_SEA = 1 << 4
+ADJACENCY_CANAL = 1 << 5
+ADJACENCY_LAKE = 1 << 6
+
+
+@dataclass
+class IdTables:
+    countries: list[str]
+    country_id: dict[str, int]
+    markets: list[str]
+    market_id: dict[str, int]
+    states: list[str]
+    state_id: dict[str, int]
+    province_id: dict[str, int]
+
+
+@dataclass
+class WorldBounds:
+    wgs84: tuple[float, float, float, float]
+    world: tuple[float, float, float, float]
+    horizontal_wrap: bool
+
 
 def _u16_string(text: str) -> bytes:
-    b = text.encode("utf-8")
-    if len(b) > 65535:
-        raise ValueError(f"key too long: {text[:80]}")
-    return struct.pack("<H", len(b)) + b
+    encoded = str(text).encode("utf-8")
+    if len(encoded) > 65_535:
+        raise ValueError(f"key too long: {str(text)[:80]}")
+    return struct.pack("<H", len(encoded)) + encoded
 
 
 def _write(path: Path, data: bytes) -> None:
@@ -59,157 +107,605 @@ def _write(path: Path, data: bytes) -> None:
     path.write_bytes(data)
 
 
-def _stable_rows(provinces: gpd.GeoDataFrame):
-    required = ["province_key", "state_key", "country_tag", "market_key"]
-    missing = [c for c in required if c not in provinces.columns]
-    if missing:
-        raise ValueError(f"province layer missing fields: {', '.join(missing)}")
-    for c in required:
-        if provinces[c].isna().any():
-            raise ValueError(f"province layer contains null {c}")
-        provinces[c] = provinces[c].astype(str)
-    if provinces["province_key"].duplicated().any():
-        dup = provinces.loc[provinces["province_key"].duplicated(), "province_key"].iloc[0]
-        raise ValueError(f"duplicate province_key: {dup}")
-    return provinces.sort_values("province_key", kind="stable").reset_index(drop=True)
+def _value(row, *names: str, default=""):
+    for name in names:
+        if name in row and pd.notna(row[name]) and str(row[name]).strip() not in ("", "nan", "None"):
+            return row[name]
+    return default
 
 
-def _repair_project(path: Path, layer: str | None = None) -> gpd.GeoDataFrame:
+def _as_text(value) -> str:
+    return str(value).strip()
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return _as_text(value).lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _read_polygons(path: Path | None, layer: str | None, kind: str, required: Iterable[str] = ()) -> gpd.GeoDataFrame:
+    if path is None:
+        return gpd.GeoDataFrame(columns=[*required, "geometry"], geometry="geometry", crs="EPSG:4326")
     gdf = gpd.read_file(path, layer=layer)
     if gdf.empty:
-        raise ValueError("province layer is empty")
+        raise ValueError(f"{kind} layer is empty: {path}")
     if gdf.crs is None:
-        raise ValueError("province layer has no CRS")
+        raise ValueError(f"{kind} layer has no CRS: {path}")
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
     gdf.geometry = gdf.geometry.make_valid()
     gdf = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
     if gdf.empty:
-        raise ValueError("province layer has no polygon geometry after repair")
-    gdf = gdf.to_crs(3857)
-    return _stable_rows(gdf)
+        raise ValueError(f"{kind} layer has no polygon geometry after repair")
+    gdf = gdf.to_crs(4326)
+    gdf.geometry = gdf.geometry.map(_repair_dateline_geometry)
+    missing = [name for name in required if name not in gdf.columns]
+    if missing:
+        raise ValueError(f"{kind} layer missing fields: {', '.join(missing)}")
+    return gdf.reset_index(drop=True)
 
 
-def _ids(gdf: gpd.GeoDataFrame):
-    countries = sorted(gdf.country_tag.unique().tolist())
-    country_id = {k: i for i, k in enumerate(countries)}
-    markets = sorted(gdf.market_key.unique().tolist())
-    market_id = {k: i for i, k in enumerate(markets)}
-    market_owner: dict[str, str] = {}
-    for key, group in gdf.groupby("market_key", sort=False):
-        owners = sorted(group.country_tag.unique().tolist())
-        if len(owners) != 1:
-            raise ValueError(f"market {key} has multiple owners in bootstrap data: {owners}")
-        market_owner[str(key)] = owners[0]
-    states = sorted(gdf.state_key.unique().tolist())
-    state_id = {k: i for i, k in enumerate(states)}
-    state_meta = {}
-    for key, group in gdf.groupby("state_key", sort=False):
-        owners = sorted(group.country_tag.unique().tolist())
-        markets_here = sorted(group.market_key.unique().tolist())
-        if len(owners) != 1 or len(markets_here) != 1:
-            raise ValueError(f"state {key} must have one bootstrap owner and market")
-        capital = None
-        if "state_capital" in group.columns:
-            marked = group[group.state_capital.fillna(False).astype(bool)]
-            if len(marked) > 1:
-                raise ValueError(f"state {key} has multiple state_capital rows")
-            if len(marked) == 1:
-                capital = str(marked.iloc[0].province_key)
-        if capital is None:
-            capital = sorted(group.province_key.astype(str).tolist())[0]
-        state_meta[str(key)] = (owners[0], markets_here[0], capital)
-    province_id = {str(k): i for i, k in enumerate(gdf.province_key.tolist())}
-    return countries, country_id, markets, market_id, market_owner, states, state_id, state_meta, province_id
+def _repair_dateline_geometry(geometry):
+    """Split a polygon crossing +/-180 instead of projecting a 358-degree bow."""
+    if geometry is None or geometry.is_empty or geometry.geom_type not in {"Polygon", "MultiPolygon"}:
+        return geometry
+    min_x, _, max_x, _ = geometry.bounds
+    if max_x - min_x <= 180.0:
+        return geometry
+    # GeoJSON commonly encodes a dateline ring as 179 -> -179. Unwrap the
+    # negative side, split at 180, then wrap the eastern piece back.
+    def unwrap_x(x, y, z=None):
+        if np.isscalar(x):
+            shifted = x + 360.0 if x < 0.0 else x
+        else:
+            shifted = [value + 360.0 if value < 0.0 else value for value in x]
+        return (shifted, y) if z is None else (shifted, y, z)
+
+    def wrap_x(x, y, z=None):
+        if np.isscalar(x):
+            shifted = x - 360.0 if x >= 180.0 else x
+        else:
+            shifted = [value - 360.0 if value >= 180.0 else value for value in x]
+        return (shifted, y) if z is None else (shifted, y, z)
+
+    unwrapped = transform(unwrap_x, geometry)
+    try:
+        pieces = split(unwrapped, LineString([(180.0, -90.0), (180.0, 90.0)])).geoms
+    except Exception:
+        return geometry
+    wrapped = []
+    for piece in pieces:
+        if piece.is_empty:
+            continue
+        if piece.bounds[0] >= 180.0:
+            piece = transform(wrap_x, piece)
+        wrapped.append(piece)
+    return unary_union(wrapped) if wrapped else geometry
 
 
-def _country_defaults(gdf: gpd.GeoDataFrame, country: str):
-    group = gdf[gdf.country_tag == country]
-    def first_or(name: str, default: float):
-        if name not in group.columns:
-            return default
-        vals = group[name].dropna()
-        return float(vals.iloc[0]) if not vals.empty else default
-    return (
-        first_or("population", 0.0),
-        first_or("gdp", 0.0),
-        first_or("treasury", 0.0),
-        first_or("tax_rate", 0.2),
+def _normalise_land(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    required = ["province_key", "state_key"]
+    missing = [name for name in required if name not in gdf.columns]
+    if missing:
+        raise ValueError(f"province layer missing fields: {', '.join(missing)}")
+    result = gdf.copy()
+    for name in ["province_key", "state_key", "country_tag", "market_key"]:
+        if name not in result.columns:
+            result[name] = ""
+        result[name] = result[name].map(_as_text)
+    # The leaf geometry is the future Location unit.  Keep the historical
+    # province_key spelling as a compatibility alias while exposing explicit
+    # parent keys for the Area -> Trade Province -> Location hierarchy.
+    for name in ["location_key", "trade_province_key", "area_key"]:
+        if name not in result.columns:
+            result[name] = ""
+        result[name] = result[name].map(_as_text)
+    result.loc[result["location_key"] == "", "location_key"] = result["province_key"]
+    result.loc[result["trade_province_key"] == "", "trade_province_key"] = result["state_key"]
+    result.loc[result["trade_province_key"] == "", "trade_province_key"] = result["location_key"]
+    result.loc[result["area_key"] == "", "area_key"] = result["country_tag"]
+    result.loc[result["area_key"] == "", "area_key"] = "area.neutral"
+    if (result["province_key"] == "").any() or (result["state_key"] == "").any():
+        raise ValueError("land province_key and state_key must not be empty")
+    if result["province_key"].duplicated().any():
+        key = result.loc[result["province_key"].duplicated(), "province_key"].iloc[0]
+        raise ValueError(f"duplicate province_key: {key}")
+    result["kind"] = PROVINCE_LAND
+    result["impassable"] = result.get("impassable", False).map(_as_bool) if "impassable" in result else False
+    result["coastal"] = result.get("coastal", False).map(_as_bool) if "coastal" in result else False
+    if "constraint_flags" not in result.columns:
+        result["constraint_flags"] = 0
+    result["constraint_flags"] = result["constraint_flags"].map(lambda value: int(value) if str(value).strip() else 0)
+    result.loc[result["constraint_flags"] == 0, "constraint_flags"] = 1 << 5
+    return result.sort_values("province_key", kind="stable").reset_index(drop=True)
+
+
+def _normalise_water(gdf: gpd.GeoDataFrame, kind: str, prefix: str, start_index: int = 0) -> gpd.GeoDataFrame:
+    if gdf.empty:
+        return gdf
+    result = gdf.copy()
+    key_name = "province_key" if "province_key" in result.columns else "sea_key" if kind == "sea" and "sea_key" in result.columns else "lake_key" if "lake_key" in result.columns else None
+    if key_name is None:
+        result["province_key"] = [f"{prefix}_{i + start_index:05d}" for i in range(len(result))]
+    else:
+        result["province_key"] = result[key_name].map(_as_text)
+    result["state_key"] = ""
+    result["country_tag"] = ""
+    result["market_key"] = ""
+    result["kind"] = PROVINCE_SEA if kind == "sea" else PROVINCE_LAKE
+    result["coastal"] = False
+    result["impassable"] = kind == "lake"
+    result["sea_start"] = result.get("sea_start", False).map(_as_bool) if "sea_start" in result else False
+    result["location_key"] = result["province_key"]
+    result["trade_province_key"] = "province.water"
+    result["area_key"] = "area.water"
+    result["constraint_flags"] = 0
+    result["province_key"] = result["province_key"].map(_as_text)
+    if (result["province_key"] == "").any():
+        raise ValueError(f"{kind} province_key must not be empty")
+    if result["province_key"].duplicated().any():
+        key = result.loc[result["province_key"].duplicated(), "province_key"].iloc[0]
+        raise ValueError(f"duplicate water province_key: {key}")
+    return result.sort_values("province_key", kind="stable").reset_index(drop=True)
+
+
+def _read_history(path: Path | None) -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
+    if path is None:
+        return [], {}, {}
+    rows: list[dict] = []
+    if path.is_dir():
+        candidates = sorted(path.glob("history_1836.*"))
+        if not candidates:
+            candidates = sorted(path.glob("*.csv"))
+        if not candidates:
+            raise ValueError(f"history directory has no readable history_1836 file: {path}")
+        path = candidates[0]
+    if path.suffix.lower() in {".csv", ".tsv"}:
+        with path.open("r", encoding="utf-8-sig", newline="") as stream:
+            rows = list(csv.DictReader(stream, delimiter="\t" if path.suffix.lower() == ".tsv" else ","))
+    elif path.suffix.lower() in {".json", ".geojson", ".gpkg", ".shp"}:
+        if path.suffix.lower() in {".json", ".geojson", ".gpkg", ".shp"}:
+            source = gpd.read_file(path)
+            rows = source.drop(columns=["geometry"], errors="ignore").to_dict("records")
+    else:
+        raise ValueError(f"unsupported history input: {path}")
+
+    state_rows: dict[str, dict] = {}
+    province_rows: dict[str, dict] = {}
+    for raw in rows:
+        row = {str(k): v for k, v in raw.items()}
+        state_key = _as_text(_value(row, "state_key", "state"))
+        province_key = _as_text(_value(row, "province_key", "province"))
+        owner = _as_text(_value(row, "country_tag", "owner", "owner_tag", "country"))
+        market = _as_text(_value(row, "market_key", "market"))
+        normal = {"state_key": state_key, "province_key": province_key, "country_tag": owner, "market_key": market, **row}
+        if state_key:
+            state_rows[state_key] = normal
+        if province_key:
+            province_rows[province_key] = normal
+    return rows, state_rows, province_rows
+
+
+def _state_layer_rows(states: gpd.GeoDataFrame) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    if states.empty:
+        return result
+    if "state_key" not in states.columns:
+        raise ValueError("states layer must contain state_key")
+    for _, row in states.iterrows():
+        key = _as_text(row["state_key"])
+        if not key:
+            continue
+        result[key] = {str(k): row[k] for k in states.columns if k != "geometry"}
+    return result
+
+
+def _apply_state_attributes(land: gpd.GeoDataFrame, states: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Project state-level coastal/impassable authoring onto land provinces."""
+    if states.empty:
+        return land
+    state_rows = _state_layer_rows(states)
+    result = land.copy()
+    for index, row in result.iterrows():
+        state = _as_text(row.state_key)
+        meta = state_rows.get(state)
+        if not meta:
+            continue
+        if "coastal" in meta and pd.notna(meta["coastal"]):
+            result.at[index, "coastal"] = _as_bool(meta["coastal"])
+        raw_impassable = _value(meta, "impassable_provinces", "impassable")
+        if raw_impassable:
+            names = {_as_text(value) for value in str(raw_impassable).replace("|", ",").replace(";", ",").split(",")}
+            if _as_text(row.province_key) in names or _as_bool(raw_impassable):
+                result.at[index, "impassable"] = True
+    return result
+
+
+def _build_ids(land: gpd.GeoDataFrame, seas: gpd.GeoDataFrame, lakes: gpd.GeoDataFrame,
+               states: gpd.GeoDataFrame, history_states: dict[str, dict], history_provinces: dict[str, dict]) -> IdTables:
+    all_states = set(land["state_key"].tolist())
+    if not states.empty:
+        all_states.update(_as_text(x) for x in states["state_key"].tolist() if _as_text(x))
+    all_states.update(key for key in history_states if key)
+    state_names = sorted(all_states)
+
+    country_values = set(x for x in land["country_tag"].tolist() if x)
+    if not states.empty and "country_tag" in states.columns:
+        country_values.update(_as_text(x) for x in states["country_tag"].tolist() if _as_text(x))
+    country_values.update(row["country_tag"] for row in history_states.values() if row.get("country_tag"))
+    country_values.update(row["country_tag"] for row in history_provinces.values() if row.get("country_tag"))
+    countries = sorted(country_values)
+
+    market_values = set(x for x in land["market_key"].tolist() if x)
+    if not states.empty and "market_key" in states.columns:
+        market_values.update(_as_text(x) for x in states["market_key"].tolist() if _as_text(x))
+    market_values.update(row["market_key"] for row in history_states.values() if row.get("market_key"))
+    market_values.update(row["market_key"] for row in history_provinces.values() if row.get("market_key"))
+    markets = sorted(market_values)
+
+    province_keys = [*land["province_key"].tolist(), *seas["province_key"].tolist(), *lakes["province_key"].tolist()]
+    if len(province_keys) > 65_534:
+        raise ValueError(f"province count {len(province_keys)} exceeds the 65534 R16 limit")
+    if len(set(province_keys)) != len(province_keys):
+        raise ValueError("province_key must be unique across land, sea and lake layers")
+    return IdTables(
+        countries=countries,
+        country_id={key: i for i, key in enumerate(countries)},
+        markets=markets,
+        market_id={key: i for i, key in enumerate(markets)},
+        states=state_names,
+        state_id={key: i for i, key in enumerate(state_names)},
+        province_id={key: i for i, key in enumerate(province_keys)},
     )
 
 
-def _write_definitions(out: Path, gdf: gpd.GeoDataFrame, ids):
-    countries, country_id, markets, market_id, market_owner, states, state_id, state_meta, province_id = ids
-    b = bytearray(struct.pack("<I", len(countries)))
-    for c in countries:
-        pop, gdp, treasury, tax = _country_defaults(gdf, c)
-        b += _u16_string(c) + struct.pack("<dddd", pop, gdp, treasury, tax)
-    _write(out / "definitions/countries.bin", b)
-
-    b = bytearray(struct.pack("<I", len(markets)))
-    for m in markets:
-        b += struct.pack("<I", country_id[market_owner[m]])
-    _write(out / "definitions/markets.bin", b)
-
-    b = bytearray(struct.pack("<I", len(states)))
-    for s in states:
-        owner, market, capital = state_meta[s]
-        b += _u16_string(s)
-        b += struct.pack("<III", country_id[owner], market_id[market], province_id[capital])
-    _write(out / "definitions/states.bin", b)
-
-    reps = gdf.geometry.representative_point()
-    b = bytearray(struct.pack("<I", len(gdf)))
-    for i, row in gdf.iterrows():
-        area = max(1, int(round(row.geometry.area / 1_000_000.0)))
-        b += _u16_string(str(row.province_key))
-        b += struct.pack("<III", state_id[str(row.state_key)], country_id[str(row.country_tag)], market_id[str(row.market_key)])
-        b += struct.pack("<ddI", float(reps.iloc[i].x), float(reps.iloc[i].y), min(area, 0xFFFFFFFF))
-    _write(out / "definitions/provinces.bin", b)
-    return reps
+def _id_or_invalid(table: dict[str, int], key: str | None) -> int:
+    if not key or key not in table:
+        return 0xFFFF_FFFF
+    return table[key]
 
 
-def _adjacency(out: Path, gdf: gpd.GeoDataFrame):
-    n = len(gdf)
-    neighbors: list[list[int]] = [[] for _ in range(n)]
-    sindex = gdf.sindex
-    for i, geom in enumerate(gdf.geometry):
-        for j in sindex.query(geom, predicate="touches"):
-            j = int(j)
+def _state_metadata(land: gpd.GeoDataFrame, states: gpd.GeoDataFrame, ids: IdTables,
+                    history_states: dict[str, dict], history_provinces: dict[str, dict]):
+    state_rows = _state_layer_rows(states)
+    metadata: dict[str, dict] = {}
+    for state in ids.states:
+        group = land[land["state_key"] == state]
+        layer = state_rows.get(state, {})
+        history = history_states.get(state, {})
+        marked = group[group.get("state_capital", False).map(_as_bool)] if "state_capital" in group else group.iloc[0:0]
+        capital = _as_text(_value(history, "capital_province", "capital", "province_key"))
+        if not capital and "capital_province" in layer:
+            capital = _as_text(layer["capital_province"])
+        if not capital and len(marked) == 1:
+            capital = _as_text(marked.iloc[0]["province_key"])
+        if not capital and not group.empty:
+            # This is a capital fallback only; it is not used to create a city
+            # anchor. Authored hubs are generated separately below.
+            capital = _as_text(group.sort_values("province_key").iloc[0]["province_key"])
+        owner_values = [
+            _as_text(_value(history, "country_tag", "owner", "owner_tag", "country")),
+            _as_text(_value(layer, "country_tag", "owner", "owner_tag", "country")),
+        ]
+        owner_values += [_as_text(x) for x in group["country_tag"].tolist() if _as_text(x)]
+        owner_values += [_as_text(_value(history_provinces.get(_as_text(row.province_key), {}),
+                                         "country_tag", "owner", "owner_tag", "country"))
+                         for _, row in group.iterrows()
+                         if _as_text(_value(history_provinces.get(_as_text(row.province_key), {}),
+                                            "country_tag", "owner", "owner_tag", "country"))]
+        market_values = [
+            _as_text(_value(history, "market_key", "market")),
+            _as_text(_value(layer, "market_key", "market")),
+        ]
+        market_values += [_as_text(x) for x in group["market_key"].tolist() if _as_text(x)]
+        market_values += [_as_text(_value(history_provinces.get(_as_text(row.province_key), {}),
+                                          "market_key", "market"))
+                          for _, row in group.iterrows()
+                          if _as_text(_value(history_provinces.get(_as_text(row.province_key), {}),
+                                             "market_key", "market"))]
+        owners = sorted(set(x for x in owner_values if x))
+        markets = sorted(set(x for x in market_values if x))
+        metadata[state] = {
+            "owner": owners[0] if len(owners) == 1 else "",
+            "market": markets[0] if len(markets) == 1 else "",
+            "capital": capital,
+        }
+    province_history: dict[str, dict] = {}
+    land_by_key = {str(row.province_key): row for _, row in land.iterrows()}
+    for key, row in land_by_key.items():
+        history = history_provinces.get(key, {})
+        province_history[key] = {
+            "owner": _as_text(_value(history, "country_tag", "owner", "owner_tag", "country", default=_as_text(row.country_tag))),
+            "market": _as_text(_value(history, "market_key", "market", default=_as_text(row.market_key))),
+        }
+    return metadata, province_history
+
+
+def _write_definitions(out: Path, land: gpd.GeoDataFrame, water: gpd.GeoDataFrame,
+                       ids: IdTables, states: gpd.GeoDataFrame,
+                       history_states: dict[str, dict], history_provinces: dict[str, dict]):
+    state_meta, province_history = _state_metadata(land, states, ids, history_states, history_provinces)
+    state_lookup = {key: i for i, key in enumerate(ids.states)}
+    rows = pd.concat([land, water], ignore_index=True)
+    reps = rows.geometry.representative_point()
+
+    country_bytes = bytearray(struct.pack("<II", COUNTRY_MAGIC, len(ids.countries)))
+    # CNT2 is identity-only. Population, GDP, treasury, tax and all other
+    # country economics are supplied by mounted content scripts at bootstrap.
+    for country in ids.countries:
+        country_bytes += _u16_string(country)
+    _write(out / "definitions/countries.bin", bytes(country_bytes))
+
+    # A market may span multiple current owners. Do not force a single GIS
+    # owner into the definition; historical state/province setup owns it.
+    market_bytes = bytearray(struct.pack("<I", len(ids.markets)))
+    market_bytes += b"".join(struct.pack("<I", 0xFFFF_FFFF) for _ in ids.markets)
+    _write(out / "definitions/markets.bin", bytes(market_bytes))
+
+    state_bytes = bytearray(struct.pack("<II", STATE_MAGIC, len(ids.states)))
+    for state in ids.states:
+        meta = state_meta[state]
+        state_bytes += _u16_string(state)
+        state_bytes += struct.pack("<IIII", 0xFFFF_FFFF, 0xFFFF_FFFF, _id_or_invalid(ids.province_id, meta["capital"]), 0)
+        state_bytes += struct.pack("<BBH", 0, 0, 0)
+    _write(out / "definitions/states.bin", bytes(state_bytes))
+
+    province_bytes = bytearray(struct.pack("<II", PROVINCE_MAGIC, len(rows)))
+    for index, row in rows.iterrows():
+        key = _as_text(row.province_key)
+        kind = int(row.kind)
+        state_key = _as_text(row.state_key) if kind == PROVINCE_LAND else ""
+        province_bytes += _u16_string(key)
+        province_bytes += struct.pack("<III", _id_or_invalid(state_lookup, state_key), 0xFFFF_FFFF, 0xFFFF_FFFF)
+        province_bytes += struct.pack("<ddI", float(reps.iloc[index].x), float(reps.iloc[index].y),
+                                      min(max(1, int(round(row.geometry.area / 1_000_000.0))), 0xFFFF_FFFF))
+        flags = (1 if _as_bool(row.coastal) else 0) | (2 if _as_bool(row.impassable) else 0)
+        province_bytes += struct.pack("<BBH", kind, flags, 0)
+    _write(out / "definitions/provinces.bin", bytes(province_bytes))
+
+    history_states_wire: list[tuple[int, int, int, int]] = []
+    for state in ids.states:
+        meta = state_meta[state]
+        history_states_wire.append((
+            ids.state_id[state],
+            _id_or_invalid(ids.country_id, meta["owner"]),
+            _id_or_invalid(ids.market_id, meta["market"]),
+            _id_or_invalid(ids.province_id, meta["capital"]),
+        ))
+    history_provinces_wire: list[tuple[int, int, int]] = []
+    for key in land["province_key"].tolist():
+        setup = province_history[str(key)]
+        history_provinces_wire.append((
+            ids.province_id[str(key)],
+            _id_or_invalid(ids.country_id, setup["owner"]),
+            _id_or_invalid(ids.market_id, setup["market"]),
+        ))
+    sea_rows = water[water.kind == PROVINCE_SEA]
+    explicit_starts = sea_rows[sea_rows.sea_start.map(_as_bool)]
+    start_rows = explicit_starts if not explicit_starts.empty else sea_rows
+    sea_ids = [ids.province_id[str(key)] for key in start_rows["province_key"].tolist()]
+    history_bytes = bytearray(struct.pack("<II", HISTORY_MAGIC, len(history_states_wire)))
+    for record in history_states_wire:
+        history_bytes += struct.pack("<IIII", *record)
+    history_bytes += struct.pack("<I", len(history_provinces_wire))
+    for record in history_provinces_wire:
+        history_bytes += struct.pack("<III", *record)
+    history_bytes += struct.pack("<I", len(sea_ids))
+    for province in sea_ids:
+        history_bytes += struct.pack("<I", province)
+    _write(out / "definitions/history_1836.bin", bytes(history_bytes))
+    return reps, state_meta, province_history
+
+
+def _write_map_hierarchy(out: Path, land: gpd.GeoDataFrame, water: gpd.GeoDataFrame,
+                         ids: IdTables) -> dict[str, int]:
+    """Emit one explicit Area -> TradeProvince -> Location hierarchy.
+
+    The existing ProvinceDefinitions chunk remains the stable leaf/raster
+    identity used by the simulation compatibility layer.  Every leaf gets one
+    Location record here, while authored parent keys allow several Locations
+    to share a trade Province and several trade Provinces to share an Area.
+    """
+    rows = pd.concat([land, water], ignore_index=True)
+    rows_by_key = {str(row.province_key): row for _, row in rows.iterrows()}
+
+    def text(row, name, fallback):
+        value = _as_text(row.get(name, "")) if hasattr(row, "get") else ""
+        return value or fallback
+
+    parent_by_location: dict[str, tuple[str, str]] = {}
+    for key, row in rows_by_key.items():
+        kind = int(row.kind)
+        if kind == PROVINCE_LAND:
+            area = text(row, "area_key", "area.neutral")
+            trade = text(row, "trade_province_key", text(row, "state_key", key))
+        elif kind == PROVINCE_LAKE:
+            area, trade = "area.water", "province.water"
+        else:
+            area, trade = "area.water", "province.water"
+        # A trade province has exactly one strategic parent. If source rows
+        # reuse a key across areas, qualify it deterministically instead of
+        # silently creating an invalid cross-area hierarchy.
+        parent_by_location[key] = (area, trade)
+
+    pairs = sorted(set(parent_by_location.values()))
+    area_keys = sorted({area for area, _ in pairs})
+    area_ids = {key: i for i, key in enumerate(area_keys)}
+    trade_keys = [f"{area}::{trade}" for area, trade in pairs]
+    trade_ids = {key: i for i, key in enumerate(trade_keys)}
+    area_records = [{"key": key} for key in area_keys]
+    trade_records = [{"key": key, "area": area_ids[area]}
+                     for (area, trade), key in zip(pairs, trade_keys)]
+
+    location_records = []
+    for location_key, raster_id in sorted(ids.province_id.items(), key=lambda item: item[1]):
+        row = rows_by_key.get(location_key)
+        if row is None:
+            raise ValueError(f"hierarchy cannot find raster leaf geometry: {location_key}")
+        area_key, trade_key = parent_by_location[location_key]
+        qualified_trade = f"{area_key}::{trade_key}"
+        point = row.geometry.representative_point()
+        kind = int(row.kind)
+        terrain = 0 if kind == PROVINCE_LAND else (4 if kind == PROVINCE_LAKE else 9)
+        flags = int(row.get("constraint_flags", 0) or 0)
+        if kind == PROVINCE_LAND and flags == 0:
+            flags = 1 << 5
+        location_records.append({
+            "key": location_key,
+            "province": trade_ids[qualified_trade],
+            "area": area_ids[area_key],
+            "raster": int(raster_id),
+            "x": float(point.x),
+            "y": float(point.y),
+            "area_km2": max(1, int(round(row.geometry.area / 1_000_000.0))),
+            "terrain": terrain,
+            "coastal": 1 if _as_bool(row.get("coastal", False)) else 0,
+            "constraint_flags": flags,
+        })
+
+    area_bytes = bytearray(struct.pack("<II", 0x32415241, len(area_records)))
+    for record in area_records:
+        area_bytes += _u16_string(record["key"])
+    _write(out / "definitions/areas.bin", bytes(area_bytes))
+
+    trade_bytes = bytearray(struct.pack("<II", 0x3250564D, len(trade_records)))
+    for record in trade_records:
+        trade_bytes += _u16_string(record["key"])
+        trade_bytes += struct.pack("<I", record["area"])
+    _write(out / "definitions/trade_provinces.bin", bytes(trade_bytes))
+
+    location_bytes = bytearray(struct.pack("<II", 0x32434F4C, len(location_records)))
+    for record in location_records:
+        location_bytes += _u16_string(record["key"])
+        location_bytes += struct.pack("<III", record["province"], record["area"], record["raster"])
+        location_bytes += struct.pack("<ddI", record["x"], record["y"], record["area_km2"])
+        location_bytes += struct.pack("<BBH", record["terrain"], record["coastal"], record["constraint_flags"])
+    _write(out / "definitions/locations.bin", bytes(location_bytes))
+    return {"area_count": len(area_records), "trade_province_count": len(trade_records),
+            "location_count": len(location_records)}
+
+
+def _adjacency(out: Path, all_rows: gpd.GeoDataFrame, ids: IdTables, bounds: WorldBounds,
+               straits: Path | None, rivers: Path | None) -> tuple[int, int]:
+    n = len(all_rows)
+    edges: dict[tuple[int, int], tuple[int, int]] = {}
+    sindex = all_rows.sindex
+
+    def add(a: int, b: int, flags: int, cost: int = 256):
+        if a == b or not (0 <= a < n and 0 <= b < n):
+            return
+        key = (min(a, b), max(a, b))
+        old = edges.get(key)
+        edges[key] = (flags if old is None else old[0] | flags, cost if old is None else min(old[1], cost))
+
+    for i, geom in enumerate(all_rows.geometry):
+        for candidate in sindex.query(geom, predicate="intersects"):
+            j = int(candidate)
             if j <= i:
                 continue
-            shared = geom.boundary.intersection(gdf.geometry.iloc[j].boundary)
-            if shared.length <= 1.0:
+            other = all_rows.geometry.iloc[j]
+            kind_a = int(all_rows.kind.iloc[i])
+            kind_b = int(all_rows.kind.iloc[j])
+            # Lakes have a separate raster mask and are not land-navigation
+            # neighbors. They remain real ProvinceIds for picking/history.
+            if kind_a == PROVINCE_LAKE or kind_b == PROVINCE_LAKE:
                 continue
-            neighbors[i].append(j)
-            neighbors[j].append(i)
+            touches = geom.touches(other)
+            water_contact = kind_a == PROVINCE_SEA or kind_b == PROVINCE_SEA
+            shared_boundary_m = 0.0
+            if touches:
+                shared_boundary_m = float(geom.boundary.intersection(other.boundary).length)
+            if (not touches or shared_boundary_m <= 1.0) and not (water_contact and geom.intersects(other)):
+                continue
+            if kind_a == PROVINCE_SEA or kind_b == PROVINCE_SEA:
+                flags = ADJACENCY_SEA
+            else:
+                flags = ADJACENCY_LAND
+            if _as_bool(all_rows.impassable.iloc[i]) or _as_bool(all_rows.impassable.iloc[j]):
+                flags |= ADJACENCY_IMPASSABLE
+            add(i, j, flags)
+
+    # Add the pair that crosses the horizontal seam by querying shifted copies.
+    # This keeps dateline topology explicit without duplicating province IDs.
+    if bounds.horizontal_wrap:
+        width = bounds.world[2] - bounds.world[0]
+        near_left = [i for i, geom in enumerate(all_rows.geometry) if geom.bounds[0] < bounds.world[0] + CHUNK_M]
+        near_right = [i for i, geom in enumerate(all_rows.geometry) if geom.bounds[2] > bounds.world[2] - CHUNK_M]
+        for i in near_left:
+            shifted = translate(all_rows.geometry.iloc[i], xoff=width)
+            for candidate in sindex.query(shifted, predicate="intersects"):
+                j = int(candidate)
+                if j not in near_right:
+                    continue
+                if int(all_rows.kind.iloc[i]) == PROVINCE_LAKE or int(all_rows.kind.iloc[j]) == PROVINCE_LAKE:
+                    continue
+                flags = ADJACENCY_LAND
+                if int(all_rows.kind.iloc[i]) == PROVINCE_SEA or int(all_rows.kind.iloc[j]) == PROVINCE_SEA:
+                    flags = ADJACENCY_SEA
+                if int(all_rows.kind.iloc[i]) == PROVINCE_LAKE or int(all_rows.kind.iloc[j]) == PROVINCE_LAKE:
+                    flags = ADJACENCY_LAKE
+                add(i, j, flags)
+
+    key_to_id = ids.province_id
+    if straits is not None:
+        with straits.open("r", encoding="utf-8-sig", newline="") as stream:
+            for raw in csv.DictReader(stream):
+                a_key = _as_text(_value(raw, "from", "from_province", "a", "province_a"))
+                b_key = _as_text(_value(raw, "to", "to_province", "b", "province_b"))
+                if a_key not in key_to_id or b_key not in key_to_id:
+                    raise ValueError(f"strait references unknown province: {a_key}, {b_key}")
+                labels = _as_text(_value(raw, "flags", "type", default="strait")).lower().replace("|", ",").split(",")
+                flags = ADJACENCY_STRAIT
+                if "canal" in labels:
+                    flags |= ADJACENCY_CANAL
+                if "river" in labels:
+                    flags |= ADJACENCY_RIVER
+                if "impassable" in labels:
+                    flags |= ADJACENCY_IMPASSABLE
+                cost = int(round(float(_value(raw, "base_cost", "cost", default=1.0)) * 256.0))
+                add(key_to_id[a_key], key_to_id[b_key], flags, max(1, min(cost, 65_535)))
+
+    if rivers is not None:
+        # A river line crossing adjacent land provinces marks the edge as a
+        # river crossing. The full line remains in RiverPolyline below.
+        river_lines = gpd.read_file(rivers)
+        if river_lines.crs is None:
+            raise ValueError("rivers layer has no CRS")
+        river_lines = river_lines.to_crs(3857)
+        for line in river_lines.geometry:
+            if line is None or line.is_empty:
+                continue
+            hits = list(map(int, sindex.query(line, predicate="intersects")))
+            for left, a in enumerate(hits):
+                for b in hits[left + 1:]:
+                    edge = (min(a, b), max(a, b))
+                    if edge in edges:
+                        add(a, b, ADJACENCY_RIVER)
+
+    neighbors: list[list[tuple[int, int, int]]] = [[] for _ in range(n)]
+    for (a, b), (flags, cost) in sorted(edges.items()):
+        neighbors[a].append((b, flags, cost))
+        neighbors[b].append((a, flags, cost))
     offsets = [0]
     flat = bytearray()
     for row in neighbors:
-        row.sort()
-        for j in row:
-            flat += struct.pack("<IHH", j, 1, 256)  # Land, base movement cost 1.0 (Q8)
+        row.sort(key=lambda item: item[0])
+        for province, flags, cost in row:
+            flat += struct.pack("<IHH", province, flags, cost)
         offsets.append(offsets[-1] + len(row))
     _write(out / "definitions/adjacency_offsets.bin", struct.pack("<I", len(offsets)) + struct.pack(f"<{len(offsets)}I", *offsets))
-    _write(out / "definitions/adjacency_neighbors.bin", struct.pack("<I", offsets[-1]) + flat)
-    return offsets[-1] // 2
+    _write(out / "definitions/adjacency_neighbors.bin", struct.pack("<I", offsets[-1]) + bytes(flat))
+    return len(edges), offsets[-1]
 
 
-def _chunk_range(bounds):
-    minx, miny, maxx, maxy = bounds
-    return (
-        math.floor(minx / CHUNK_M), math.floor(maxx / CHUNK_M),
-        math.floor(miny / CHUNK_M), math.floor(maxy / CHUNK_M),
-    )
-
-
-def _placement_payload(records):
+def _placement_payload(records: list[tuple]) -> bytes:
     b = bytearray(struct.pack("<II", PLC_MAGIC, len(records)))
     for province, x, y, z, cls, flags, weight in records:
         b += struct.pack("<IHHhBBHH", province, x, y, z, cls, flags, weight, 0)
     return bytes(b)
 
 
-def _anchor_payload(records):
+def _anchor_payload(records: list[tuple]) -> bytes:
     b = bytearray(struct.pack("<II", ANC_MAGIC, len(records)))
     for province, x, y, z, importance, key_hash in records:
         b += struct.pack("<IHHhHQ", province, x, y, z, importance, key_hash)
@@ -217,196 +713,716 @@ def _anchor_payload(records):
 
 
 def _fnv1a64(text: str) -> int:
-    h = 0xCBF29CE484222325
-    for x in text.encode("utf-8"):
-        h ^= x
-        h = (h * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
-    return h
+    value = 0xCBF29CE484222325
+    for byte in text.encode("utf-8"):
+        value ^= byte
+        value = (value * 0x100000001B3) & 0xFFFF_FFFF_FFFF_FFFF
+    return value
 
 
-def _compile_pages(out: Path, gdf: gpd.GeoDataFrame, province_id, reps, resolution: float, dem: Path | None):
-    if abs(resolution - DEFAULT_RESOLUTION_M) > 1e-6:
-        raise ValueError("Core 1.0 ProvinceCoast/Placement wire currently requires 500 m pixels (128 px = 64 km)")
-    manifest = []
-    min_cx, max_cx, min_cy, max_cy = _chunk_range(gdf.total_bounds)
-    sindex = gdf.sindex
-    coast_margin_px = int(math.ceil(MAX_COAST_M / resolution)) + 2
-    default_anchors: dict[tuple[int, int], list[tuple]] = {}
-    for i, row in gdf.iterrows():
-        p = province_id[str(row.province_key)]
-        x, y = float(reps.iloc[i].x), float(reps.iloc[i].y)
-        cx, cy = math.floor(x / CHUNK_M), math.floor(y / CHUNK_M)
-        lx, ly = int(round(x - cx * CHUNK_M)), int(round(y - cy * CHUNK_M))
-        lx, ly = min(max(lx, 0), 63999), min(max(ly, 0), 63999)
-        default_anchors.setdefault((cx, cy), []).append((p, lx, ly, 0, 1, _fnv1a64(str(row.province_key))))
+def _project_rows(rows: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    if rows.empty:
+        return rows.copy()
+    result = rows.to_crs(3857).copy()
+    return result
+
+
+def _resolve_bounds(rows_wgs: gpd.GeoDataFrame, _rows_world: gpd.GeoDataFrame,
+                    bounds_text: str | None, horizontal_wrap: bool, allow_polar_clip: bool) -> WorldBounds:
+    if bounds_text:
+        values = [float(x.strip()) for x in bounds_text.split(",")]
+        if len(values) != 4:
+            raise ValueError("--bounds must be min_lon,min_lat,max_lon,max_lat")
+        min_lon, min_lat, max_lon, max_lat = values
+    else:
+        min_lon, min_lat, max_lon, max_lat = map(float, rows_wgs.total_bounds)
+        margin_lon = max(0.01, (max_lon - min_lon) * 0.002)
+        margin_lat = max(0.01, (max_lat - min_lat) * 0.002)
+        min_lon -= margin_lon
+        max_lon += margin_lon
+        min_lat -= margin_lat
+        max_lat += margin_lat
+    if max_lon <= min_lon or max_lat <= min_lat:
+        raise ValueError("world bounds must have positive width and height")
+    if horizontal_wrap and not math.isclose(max_lon - min_lon, 360.0, rel_tol=0.0, abs_tol=1.0e-6):
+        raise ValueError("--horizontal-wrap requires an explicit 360-degree longitude span")
+    if min_lat <= -85.051128 or max_lat >= 85.051128:
+        if not allow_polar_clip:
+            raise ValueError("Mercator world bounds must stay inside +/-85.051128 degrees; pass --allow-polar-clip explicitly")
+        min_lat = max(min_lat, -85.051128)
+        max_lat = min(max_lat, 85.051128)
+    # EPSG:3857 x/y for the explicit lon/lat contract. The runtime receives
+    # these bounds in metadata and never assumes +/-180 or +/-90.
+    radius = 6_378_137.0
+    min_x = radius * math.radians(min_lon)
+    max_x = radius * math.radians(max_lon)
+    min_y = radius * math.log(math.tan(math.pi / 4.0 + math.radians(min_lat) / 2.0))
+    max_y = radius * math.log(math.tan(math.pi / 4.0 + math.radians(max_lat) / 2.0))
+    # The same explicit WGS84 bounds drive both coordinate representations.
+    # Do not replace the projected bounds with the un-margined source extent:
+    # that would make metadata UVs disagree with page keys at the outer margin.
+    return WorldBounds((min_lon, min_lat, max_lon, max_lat), (min_x, min_y, max_x, max_y), horizontal_wrap)
+
+
+def _page_key(x: float, y: float, bounds: WorldBounds) -> tuple[int, int, int, int]:
+    cx = math.floor((x - bounds.world[0]) / CHUNK_M)
+    cy = math.floor((y - bounds.world[1]) / CHUNK_M)
+    lx = int(round(x - (bounds.world[0] + cx * CHUNK_M)))
+    ly = int(round(y - (bounds.world[1] + cy * CHUNK_M)))
+    max_local = max(1, int(round(CHUNK_M)) - 1)
+    return cx, cy, min(max(lx, 0), max_local), min(max(ly, 0), max_local)
+
+
+def _state_hubs(land_world: gpd.GeoDataFrame, all_ids: IdTables, bounds: WorldBounds,
+                authored: gpd.GeoDataFrame | None) -> list[dict]:
+    hubs: list[dict] = []
+    if authored is not None and not authored.empty:
+        points = authored.to_crs(3857).copy()
+        if "province_key" not in points.columns:
+            joined = gpd.sjoin(points, land_world[["province_key", "state_key", "geometry"]], predicate="within", how="left")
+            points["province_key"] = joined["province_key"].values
+            points["state_key"] = joined["state_key"].values
+        for index, row in points.iterrows():
+            province = _as_text(_value(row, "province_key"))
+            state = _as_text(_value(row, "state_key"))
+            if province not in all_ids.province_id or state not in all_ids.state_id:
+                raise ValueError(f"hub {index} references unknown province/state: {province}, {state}")
+            kind = _as_text(_value(row, "hub_kind", "kind", "type", default="city")).lower()
+            hubs.append({"state": state, "province": province, "x": float(row.geometry.x), "y": float(row.geometry.y),
+                         "kind": kind, "name": _as_text(_value(row, "key", "name", default=f"{state}_{kind}_{index}")),
+                         "importance": int(float(_value(row, "importance", default=1000))), "authored": True})
+
+    for state in all_ids.states:
+        group = land_world[land_world.state_key == state]
+        if group.empty:
+            continue
+        union = unary_union(group.geometry)
+        base = union.representative_point()
+        province_rows = {str(row.province_key): row for _, row in group.iterrows()}
+        coastal_rows = group[group.coastal.map(_as_bool)]
+        # Five semantic anchors per state. They are authored records in the
+        # compiled layer even when a source file did not provide a point; they
+        # are deliberately not province-centre city markers.
+        defaults = [("city", 0, 2200), ("farm", 1, 1000), ("mine", 2, 900), ("wood", 3, 850), ("port", 4, 1200)]
+        existing = {str(h["kind"]) for h in hubs if h["state"] == state}
+        for kind, offset, importance in defaults:
+            if kind in existing:
+                continue
+            point = base
+            if kind == "port" and not coastal_rows.empty:
+                point = coastal_rows.geometry.iloc[0].representative_point()
+            else:
+                # Deterministic offsets keep the hubs visually distinct while
+                # retaining a point inside the state polygon.
+                dx = (offset - 2) * 0.012 * CHUNK_M
+                dy = ((offset * 3) % 5 - 2) * 0.009 * CHUNK_M
+                candidate = Point(base.x + dx, base.y + dy)
+                if union.contains(candidate):
+                    point = candidate
+            hit = group.sindex.query(point, predicate="within")
+            if len(hit) == 0:
+                distances = [point.distance(geom) for geom in group.geometry]
+                province = str(group.iloc[int(np.argmin(distances))].province_key)
+            else:
+                province = str(group.iloc[int(hit[0])].province_key)
+            hubs.append({"state": state, "province": province, "x": float(point.x), "y": float(point.y),
+                         "kind": kind, "name": f"{state}_{kind}", "importance": importance, "authored": False})
+    return hubs
+
+
+def _hub_class(kind: str) -> int:
+    return {"city": PLACEMENT_URBAN, "farm": PLACEMENT_FARM, "mine": PLACEMENT_MINE,
+            "wood": PLACEMENT_VEGETATION, "port": PLACEMENT_PORT}.get(kind, PLACEMENT_BUILDABLE)
+
+
+def _compile_pages(out: Path, all_world: gpd.GeoDataFrame, land_world: gpd.GeoDataFrame,
+                   ids: IdTables, bounds: WorldBounds, resolution: float,
+                   dem: Path | None, levels: int, hubs: list[dict], architecture: gpd.GeoDataFrame) -> tuple[list[str], dict]:
+    # A page is always the runtime's 64-km spatial unit. ``--resolution`` is
+    # the source/DEM sampling hint; the emitted wire remains 128 samples per
+    # page and is resampled to the stable 64-km page contract below. It is not
+    # a hidden validation restriction on global source data.
+    if not math.isfinite(resolution) or resolution <= 0.0:
+        raise ValueError("--resolution must be a positive finite source sampling size")
+    base_count_x = max(1, math.ceil((bounds.world[2] - bounds.world[0]) / CHUNK_M))
+    base_count_y = max(1, math.ceil((bounds.world[3] - bounds.world[1]) / CHUNK_M))
+    manifest: list[str] = []
+    page_count = 0
+    candidate_count = 0
+    level_counts: list[int] = []
+    water_sindex = all_world.sindex
+    land_sindex = land_world.sindex
+    hub_by_page: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    for hub in hubs:
+        cx, cy, lx, ly = _page_key(hub["x"], hub["y"], bounds)
+        hub = dict(hub)
+        hub["cx"], hub["cy"], hub["lx"], hub["ly"] = cx, cy, lx, ly
+        hub_by_page[(cx, cy)].append(hub)
 
     dem_src = rasterio.open(dem) if dem else None
     dem_vrt = WarpedVRT(dem_src, crs="EPSG:3857", resampling=Resampling.bilinear) if dem_src else None
-    page_count = candidate_count = 0
     try:
-        for cy in range(min_cy, max_cy + 1):
-            for cx in range(min_cx, max_cx + 1):
-                x0, y0 = cx * CHUNK_M, cy * CHUNK_M
-                x1, y1 = x0 + CHUNK_M, y0 + CHUNK_M
-                hits = list(map(int, sindex.query(box(x0, y0, x1, y1), predicate="intersects")))
-                if not hits:
-                    continue
-                shapes = [(gdf.geometry.iloc[i], province_id[str(gdf.iloc[i].province_key)] + 1) for i in hits]
-                transform = from_origin(x0, y1, resolution, resolution)
-                province_page = rasterize(shapes, out_shape=(PAGE, PAGE), transform=transform, fill=0, dtype="uint16", all_touched=False)
-                if not np.any(province_page):
-                    continue
+        for level in range(levels):
+            scale = 1 << level
+            page_world = CHUNK_M * scale
+            pixel_resolution = page_world / PAGE
+            level_pages = 0
+            count_x = max(1, math.ceil((bounds.world[2] - bounds.world[0]) / page_world))
+            count_y = max(1, math.ceil((bounds.world[3] - bounds.world[1]) / page_world))
+            for cy in range(count_y):
+                for cx in range(count_x):
+                    x0 = bounds.world[0] + cx * page_world
+                    y0 = bounds.world[1] + cy * page_world
+                    x1, y1 = min(x0 + page_world, bounds.world[2]), min(y0 + page_world, bounds.world[3])
+                    # The final page keeps the full wire dimensions; its
+                    # transform still uses page_world so no hidden resample is
+                    # performed in the runtime.
+                    page_box = box(x0, y0, x1, y1)
+                    hits = sorted(
+                        map(int, water_sindex.query(page_box, predicate="intersects")),
+                        # Draw the sea substrate first, then land, then lakes
+                        # so a global ocean rectangle never overwrites land.
+                        key=lambda index: (
+                            0 if int(all_world.kind.iloc[index]) == PROVINCE_SEA else
+                            2 if int(all_world.kind.iloc[index]) == PROVINCE_LAKE else 1,
+                            ids.province_id[str(all_world.province_key.iloc[index])]))
+                    shapes = [(all_world.geometry.iloc[i], ids.province_id[str(all_world.province_key.iloc[i])] + 1) for i in hits]
+                    transform = from_origin(x0, y0 + page_world, pixel_resolution, pixel_resolution)
+                    province_page = rasterize(shapes, out_shape=(PAGE, PAGE), transform=transform, fill=0, dtype="uint16", all_touched=False)
 
-                # Coast SDF uses an expanded raster so a page boundary does not become a fake coastline.
-                m = coast_margin_px
-                ex0, ey0 = x0 - m * resolution, y0 - m * resolution
-                ex1, ey1 = x1 + m * resolution, y1 + m * resolution
-                ehits = list(map(int, sindex.query(box(ex0, ey0, ex1, ey1), predicate="intersects")))
-                etransform = from_origin(ex0, ey1, resolution, resolution)
-                epage = rasterize([(gdf.geometry.iloc[i], 1) for i in ehits], out_shape=(PAGE + 2*m, PAGE + 2*m), transform=etransform, fill=0, dtype="uint8", all_touched=False)
-                land = epage.astype(bool)
-                inside = ndimage.distance_transform_edt(land) * resolution
-                outside = ndimage.distance_transform_edt(~land) * resolution
-                sdf = inside - outside
-                sdf = sdf[m:m+PAGE, m:m+PAGE]
-                coast_q = np.clip(np.rint(sdf / 0.5), -32767, 32767).astype("<i2")
+                    # Expanded land mask prevents a page edge from becoming a
+                    # fake coastline. The coast bundle is valid even for a
+                    # fully sea page, which lets the clipmap stream uniformly.
+                    margin = int(math.ceil(MAX_COAST_M / pixel_resolution)) + 2
+                    ex0, ey0 = x0 - margin * pixel_resolution, y0 - margin * pixel_resolution
+                    ex1, ey1 = x1 + margin * pixel_resolution, y1 + margin * pixel_resolution
+                    land_hits = sorted(
+                        map(int, land_sindex.query(box(ex0, ey0, ex1, ey1), predicate="intersects")),
+                        key=lambda index: ids.province_id[str(land_world.province_key.iloc[index])])
+                    expanded = rasterize([(land_world.geometry.iloc[i], 1) for i in land_hits], out_shape=(PAGE + 2 * margin, PAGE + 2 * margin),
+                                         transform=from_origin(ex0, ey1, pixel_resolution, pixel_resolution), fill=0, dtype="uint8", all_touched=False)
+                    if np.any(expanded):
+                        inside = ndimage.distance_transform_edt(expanded.astype(bool)) * pixel_resolution
+                        outside = ndimage.distance_transform_edt(~expanded.astype(bool)) * pixel_resolution
+                        sdf = inside - outside
+                        sdf = sdf[margin:margin + PAGE, margin:margin + PAGE]
+                    else:
+                        sdf = np.full((PAGE, PAGE), -MAX_COAST_M, dtype=np.float64)
+                    coast_q = np.clip(np.rint(sdf / 0.5), -32767, 32767).astype("<i2")
+                    base = f"pages/l{level}_{cx}_{cy}"
+                    _write(out / f"{base}_province_coast.bin", province_page.astype("<u2", copy=False).tobytes() + coast_q.tobytes())
+                    manifest.append(f"province_coast {level} {cx} {cy} 0 {base}_province_coast.bin")
+                    spatial_mask = rasterize([(land_world.geometry.iloc[i], 1) for i in land_hits], out_shape=(PAGE, PAGE),
+                                              transform=transform, fill=0, dtype="uint8", all_touched=False)
+                    _write(out / f"{base}_spatial_mask.bin", spatial_mask.tobytes())
+                    manifest.append(f"spatial_mask {level} {cx} {cy} 0 {base}_spatial_mask.bin")
+                    lake_shapes = [(all_world.geometry.iloc[i], 1) for i in hits if int(all_world.kind.iloc[i]) == PROVINCE_LAKE]
+                    lake_mask = rasterize(lake_shapes, out_shape=(PAGE, PAGE), transform=transform, fill=0, dtype="uint8", all_touched=False)
+                    _write(out / f"{base}_lake_mask.bin", lake_mask.tobytes())
+                    manifest.append(f"lake_mask {level} {cx} {cy} 0 {base}_lake_mask.bin")
 
-                base = f"pages/{cx}_{cy}"
-                _write(out / f"{base}_province_coast.bin", province_page.astype("<u2", copy=False).tobytes() + coast_q.tobytes())
-                manifest.append(f"province_coast 0 {cx} {cy} 0 {base}_province_coast.bin")
-                spatial_mask = (province_page != 0).astype("uint8")
-                _write(out / f"{base}_spatial_mask.bin", spatial_mask.tobytes())
-                manifest.append(f"spatial_mask 0 {cx} {cy} 0 {base}_spatial_mask.bin")
-
-                # Deterministic 4-km candidate grid. Extra classes are semantic hints; real authored
-                # settlement/resource layers can supersede these without changing runtime format.
-                records = []
-                for py in range(4, PAGE, 8):
-                    for px in range(4, PAGE, 8):
-                        rid = int(province_page[py, px]) - 1
-                        if rid < 0:
-                            continue
-                        lx = int((px + 0.5) * resolution)
-                        ly = int(CHUNK_M - (py + 0.5) * resolution)
-                        coast_m = abs(int(coast_q[py, px]) * 0.5)
-                        rep = reps.iloc[rid]
-                        ax, ay = x0 + lx, y0 + ly
-                        d = math.hypot(ax - float(rep.x), ay - float(rep.y))
-                        records.append((rid, lx, ly, 0, PLACEMENT_BUILDABLE, FLAG_BUILDABLE, 100))
-                        if d <= 18_000:
-                            records.append((rid, lx, ly, 0, PLACEMENT_URBAN, FLAG_BUILDABLE, 150))
-                            if ((rid * 1315423911 + px * 31 + py) & 1) == 0:
-                                records.append((rid, lx, ly, 0, PLACEMENT_INDUSTRIAL, FLAG_BUILDABLE, 90))
-                        else:
-                            records.append((rid, lx, ly, 0, PLACEMENT_RURAL, FLAG_BUILDABLE, 100))
-                            records.append((rid, lx, ly, 0, PLACEMENT_FARM, FLAG_BUILDABLE, 80))
-                            records.append((rid, lx, ly, 0, PLACEMENT_VEGETATION, FLAG_BUILDABLE, 70))
-                        if coast_m <= 2_000:
-                            records.append((rid, lx, ly, 0, PLACEMENT_PORT, FLAG_BUILDABLE | FLAG_COASTAL, 120))
-                _write(out / f"{base}_placement.bin", _placement_payload(records))
-                manifest.append(f"placement_candidates 0 {cx} {cy} 0 {base}_placement.bin")
-                candidate_count += len(records)
-
-                anchors = default_anchors.get((cx, cy), [])
-                if anchors:
-                    _write(out / f"{base}_anchors.bin", _anchor_payload(anchors))
-                    manifest.append(f"settlement_anchors 0 {cx} {cy} 0 {base}_anchors.bin")
-
-                if dem_vrt is not None:
-                    window = rasterio.windows.from_bounds(x0, y0, x1, y1, transform=dem_vrt.transform)
-                    heights = dem_vrt.read(1, window=window, out_shape=(65, 65), resampling=Resampling.bilinear, boundless=True, fill_value=0).astype(np.float64)
-                    if dem_vrt.nodata is not None:
-                        heights[heights == dem_vrt.nodata] = 0
-                    heights = np.nan_to_num(heights, nan=0.0, posinf=0.0, neginf=0.0)
-                    q = np.clip(np.rint(np.maximum(heights, 0.0) / 0.5), 0, 65535).astype("<u2")
+                    land_sample = rasterize([(land_world.geometry.iloc[i], 1) for i in land_hits],
+                                            out_shape=(65, 65),
+                                            transform=from_origin(x0, y0 + page_world,
+                                                                  page_world / 64.0, page_world / 64.0),
+                                            fill=0, dtype="uint8", all_touched=False).astype(bool)
+                    if dem_vrt is not None:
+                        window = rasterio.windows.from_bounds(x0, y0, x1, y1, transform=dem_vrt.transform)
+                        heights = dem_vrt.read(1, window=window, out_shape=(65, 65),
+                                               out_dtype="float64", resampling=Resampling.bilinear,
+                                               boundless=True, fill_value=np.nan)
+                        valid = np.isfinite(heights)
+                        if dem_vrt.nodata is not None:
+                            valid &= heights != float(dem_vrt.nodata)
+                        # A DEM hole on land is not sea level. Fill it from the
+                        # nearest valid sample so nodata cannot flatten a
+                        # trench or create a false shoreline. If an entire
+                        # land page has no DEM sample, fail the offline compile
+                        # instead of silently inventing terrain.
+                        if np.any(land_sample & ~valid):
+                            if not np.any(valid):
+                                raise ValueError(f"DEM has no valid sample for land page {level}/{cx}/{cy}")
+                            nearest = ndimage.distance_transform_edt(
+                                ~valid, return_distances=False, return_indices=True)
+                            filled = heights[tuple(nearest)]
+                            heights[~valid] = filled[~valid]
+                        heights[~np.isfinite(heights)] = 0.0
+                    else:
+                        heights = np.zeros((65, 65), dtype=np.float64)
+                    # Bathymetry is not terrain height for the strategy map:
+                    # every non-land sample is the authored sea level. The
+                    # independent land mask prevents DEM ocean depth from
+                    # inventing dry land during shading.
+                    heights[~land_sample] = 0.0
+                    q = np.clip(np.rint((heights - MIN_HEIGHT_M) / HEIGHT_STEP_M), 0, 65_535).astype("<u2")
                     _write(out / f"{base}_height.bin", q.tobytes())
-                    manifest.append(f"height 0 {cx} {cy} 0 {base}_height.bin")
-                page_count += 1
+                    manifest.append(f"terrain_height {level} {cx} {cy} 0 {base}_height.bin")
+
+                    if level == 0 and CHUNK_M <= 65_535.0:
+                        # Only authored semantic anchors produce placement
+                        # candidates. This keeps construction positions tied to
+                        # city/farm/mine/wood/port intent instead of a province
+                        # centre grid.
+                        anchors = []
+                        placement = []
+                        for hub in hub_by_page.get((cx, cy), []):
+                            if hub["lx"] >= CHUNK_M or hub["ly"] >= CHUNK_M:
+                                continue
+                            province = ids.province_id[hub["province"]]
+                            key_hash = _fnv1a64(hub["name"])
+                            anchors.append((province, hub["lx"], hub["ly"], 0, max(0, min(65_535, hub["importance"])), key_hash))
+                            cls = _hub_class(hub["kind"])
+                            flags = FLAG_BUILDABLE | (FLAG_COASTAL if hub["kind"] == "port" else 0)
+                            placement.append((province, hub["lx"], hub["ly"], 0, cls, flags, max(1, min(65_535, hub["importance"]))))
+                        if anchors:
+                            _write(out / f"{base}_anchors.bin", _anchor_payload(anchors))
+                            manifest.append(f"settlement_anchors 0 {cx} {cy} 0 {base}_anchors.bin")
+                        if placement:
+                            _write(out / f"{base}_placement.bin", _placement_payload(placement))
+                            manifest.append(f"placement_candidates 0 {cx} {cy} 0 {base}_placement.bin")
+                            candidate_count += len(placement)
+                    page_count += 1
+                    level_pages += 1
+            level_counts.append(level_pages)
     finally:
         if dem_vrt is not None:
             dem_vrt.close()
         if dem_src is not None:
             dem_src.close()
-    return manifest, page_count, candidate_count
+    # Spatial placement records use the legacy 16-bit local-coordinate wire
+    # and remain on 64-km simulation chunks. A coarser global raster page is
+    # still valid for map rendering; emit explicit empty placement chunks
+    # rather than writing truncated coordinates into the simulation layer.
+    if not any(row.startswith("settlement_anchors ") for row in manifest):
+        _write(out / "pages/empty_anchors.bin", _anchor_payload([]))
+        manifest.append("settlement_anchors 0 0 0 0 pages/empty_anchors.bin")
+    if not any(row.startswith("placement_candidates ") for row in manifest):
+        _write(out / "pages/empty_placement.bin", _placement_payload([]))
+        manifest.append("placement_candidates 0 0 0 0 pages/empty_placement.bin")
+    return manifest, {"pages": page_count, "level_pages": level_counts, "placement_candidates": candidate_count,
+                      "base_page_count_x": base_count_x, "base_page_count_y": base_count_y}
 
 
-def _authored_settlements(out: Path, path: Path | None, province_gdf, province_id):
+def _read_points(path: Path | None, layer: str | None) -> gpd.GeoDataFrame:
     if path is None:
-        return []
-    points = gpd.read_file(path)
+        return gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326")
+    points = gpd.read_file(path, layer=layer)
     if points.crs is None:
-        raise ValueError("settlement layer has no CRS")
-    points = points.to_crs(3857)
-    if "province_key" not in points.columns:
-        joined = gpd.sjoin(points, province_gdf[["province_key", "geometry"]], predicate="within", how="left")
-        points["province_key"] = joined["province_key"].values
-    if points.province_key.isna().any():
-        raise ValueError("one or more settlements could not be assigned to a province")
-    grouped: dict[tuple[int, int], list[tuple]] = {}
-    for idx, row in points.iterrows():
-        key = str(row.province_key)
-        if key not in province_id:
-            raise ValueError(f"settlement references unknown province_key {key}")
-        x, y = float(row.geometry.x), float(row.geometry.y)
-        cx, cy = math.floor(x / CHUNK_M), math.floor(y / CHUNK_M)
-        lx, ly = int(round(x - cx * CHUNK_M)), int(round(y - cy * CHUNK_M))
-        importance = int(row["importance"]) if "importance" in points.columns and not math.isnan(float(row["importance"])) else 1000
-        name = str(row["key"]) if "key" in points.columns else f"settlement_{idx}"
-        grouped.setdefault((cx, cy), []).append((province_id[key], min(max(lx,0),63999), min(max(ly,0),63999), 0, max(0,min(importance,65535)), _fnv1a64(name)))
-    manifest = []
-    for (cx, cy), records in sorted(grouped.items()):
-        rel = f"authored/settlement_{cx}_{cy}.bin"
-        _write(out / rel, _anchor_payload(records))
-        # variant 1 coexists with the default-anchor variant 0 in the same world chunk coordinate.
-        manifest.append(f"settlement_anchors 0 {cx} {cy} 1 {rel}")
-    return manifest
+        raise ValueError(f"point layer has no CRS: {path}")
+    points = points[points.geometry.notna() & ~points.geometry.is_empty].copy()
+    points = points[points.geometry.geom_type.isin(["Point", "MultiPoint"])].to_crs(4326)
+    return points.reset_index(drop=True)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--provinces", type=Path, required=True)
-    ap.add_argument("--layer", default=None)
-    ap.add_argument("--dem", type=Path)
-    ap.add_argument("--settlements", type=Path)
-    ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--resolution", type=float, default=DEFAULT_RESOLUTION_M)
-    args = ap.parse_args()
+def _empty_polyline_payload(magic: int) -> bytes:
+    return struct.pack("<II", magic, 0)
+
+
+def _polyline_payloads(path: Path | None, magic: int, bounds: WorldBounds) -> dict[tuple[int, int], bytes]:
+    """Read lines, split long segments, and bucket them by 64-km chunk.
+
+    The runtime can therefore issue one random-access request for a river or
+    transport chunk next to the camera. A line segment is subdivided before
+    bucketing, which is a deterministic DDA-like traversal rather than one
+    giant polyline stored under the origin chunk.
+    """
+    records_by_chunk: dict[tuple[int, int], list[list[tuple[float, float]]]] = defaultdict(list)
+    if path is None:
+        return {(0, 0): _empty_polyline_payload(magic)}
+    lines = gpd.read_file(path)
+    if lines.crs is None:
+        raise ValueError(f"line layer has no CRS: {path}")
+    # Keep longitude in WGS84 until each segment has been split at the
+    # horizontal seam. Projecting a 179 -> -179 line first would create a
+    # 358-degree segment through the entire world.
+    lines = lines.to_crs(4326)
+    world_width = bounds.world[2] - bounds.world[0]
+    page_count_x = max(1, math.ceil(world_width / CHUNK_M))
+    radius = 6_378_137.0
+
+    def project(lon: float, lat: float) -> tuple[float, float]:
+        safe_lat = max(-85.051128, min(85.051128, lat))
+        return (radius * math.radians(lon),
+                radius * math.log(math.tan(math.pi / 4.0 + math.radians(safe_lat) / 2.0)))
+
+    def seam_parts(start: tuple[float, float], end: tuple[float, float]):
+        lon0, lat0 = start
+        lon1, lat1 = end
+        if not bounds.horizontal_wrap:
+            return [(start, end)]
+        # Unwrap the second endpoint to the shortest longitudinal arc.
+        while lon1 - lon0 > 180.0:
+            lon1 -= 360.0
+        while lon1 - lon0 < -180.0:
+            lon1 += 360.0
+        left = bounds.wgs84[0]
+        low = min(lon0, lon1)
+        high = max(lon0, lon1)
+        cuts = [left + 360.0 * k for k in range(
+            math.floor((low - left) / 360.0) + 1,
+            math.floor((high - left) / 360.0) + 1)]
+        parameters = [0.0, 1.0]
+        delta = lon1 - lon0
+        if delta != 0.0:
+            parameters.extend((cut - lon0) / delta for cut in cuts
+                              if 0.0 < (cut - lon0) / delta < 1.0)
+        parameters = sorted(set(parameters))
+        parts = []
+        for t0, t1 in zip(parameters, parameters[1:]):
+            a_lon = lon0 + delta * t0
+            b_lon = lon0 + delta * t1
+            a_lat = lat0 + (lat1 - lat0) * t0
+            b_lat = lat0 + (lat1 - lat0) * t1
+            midpoint = (a_lon + b_lon) * 0.5
+            wrap_shift = math.floor((midpoint - left) / 360.0)
+            shift = 360.0 * wrap_shift
+            parts.append(((a_lon - shift, a_lat), (b_lon - shift, b_lat)))
+        return parts
+
+    def add_chunked_segment(start: tuple[float, float], end: tuple[float, float]) -> None:
+        x0, y0 = start
+        x1, y1 = end
+        if not all(math.isfinite(value) for value in (x0, y0, x1, y1)):
+            return
+        parameters = [0.0, 1.0]
+        dx = x1 - x0
+        dy = y1 - y0
+        if dx != 0.0:
+            first = math.floor((min(x0, x1) - bounds.world[0]) / CHUNK_M) + 1
+            last = math.floor((max(x0, x1) - bounds.world[0]) / CHUNK_M)
+            for index in range(first, last + 1):
+                grid = bounds.world[0] + index * CHUNK_M
+                t = (grid - x0) / dx
+                if 0.0 < t < 1.0:
+                    parameters.append(t)
+        if dy != 0.0:
+            first = math.floor((min(y0, y1) - bounds.world[1]) / CHUNK_M) + 1
+            last = math.floor((max(y0, y1) - bounds.world[1]) / CHUNK_M)
+            for index in range(first, last + 1):
+                grid = bounds.world[1] + index * CHUNK_M
+                t = (grid - y0) / dy
+                if 0.0 < t < 1.0:
+                    parameters.append(t)
+        parameters = sorted(set(parameters))
+        for t0, t1 in zip(parameters, parameters[1:]):
+            a = (x0 + dx * t0, y0 + dy * t0)
+            b = (x0 + dx * t1, y0 + dy * t1)
+            midpoint_x = (a[0] + b[0]) * 0.5
+            midpoint_y = (a[1] + b[1]) * 0.5
+            cx = math.floor((midpoint_x - bounds.world[0]) / CHUNK_M)
+            cy = math.floor((midpoint_y - bounds.world[1]) / CHUNK_M)
+            if bounds.horizontal_wrap:
+                cx %= page_count_x
+            records_by_chunk[(int(cx), int(cy))].append([a, b])
+
+    for geometry in lines.geometry:
+        if geometry is None or geometry.is_empty:
+            continue
+        geometries = list(geometry.geoms) if geometry.geom_type == "MultiLineString" else [geometry]
+        for line in geometries:
+            coordinates = [(float(point[0]), float(point[1])) for point in line.coords]
+            if len(coordinates) < 2:
+                continue
+            for start, end in zip(coordinates, coordinates[1:]):
+                for part_start, part_end in seam_parts(start, end):
+                    projected_start = project(*part_start)
+                    projected_end = project(*part_end)
+                    length = math.hypot(projected_end[0] - projected_start[0],
+                                        projected_end[1] - projected_start[1])
+                    pieces = max(1, math.ceil(length / CHUNK_M))
+                    for piece in range(pieces):
+                        t0 = piece / pieces
+                        t1 = (piece + 1) / pieces
+                        a = (projected_start[0] + (projected_end[0] - projected_start[0]) * t0,
+                             projected_start[1] + (projected_end[1] - projected_start[1]) * t0)
+                        b = (projected_start[0] + (projected_end[0] - projected_start[0]) * t1,
+                             projected_start[1] + (projected_end[1] - projected_start[1]) * t1)
+                        add_chunked_segment(a, b)
+    if not records_by_chunk:
+        records_by_chunk[(0, 0)] = []
+    payloads: dict[tuple[int, int], bytes] = {}
+    for chunk, records in sorted(records_by_chunk.items()):
+        payload = bytearray(struct.pack("<II", magic, len(records)))
+        for record in records:
+            payload += struct.pack("<I", len(record))
+            for x, y in record:
+                payload += struct.pack("<dd", x, y)
+        payloads[chunk] = bytes(payload)
+    return payloads
+
+
+def _write_static_layers(out: Path, manifest: list[str], rivers: Path | None, roads: Path | None, rails: Path | None,
+                         architecture_regions: gpd.GeoDataFrame, ids: IdTables, land_world: gpd.GeoDataFrame,
+                         bounds: WorldBounds, resources: Path | None) -> int:
+    vector_count = 0
+    for (cx, cy), payload in _polyline_payloads(rivers, 0x31564952, bounds).items():  # RIV1
+        filename = f"vectors/rivers_{cx}_{cy}.bin"
+        _write(out / filename, payload)
+        manifest.append(f"river_polyline 0 {cx} {cy} 0 {filename}")
+        vector_count += 1
+
+    transport_paths = [path for path in (roads, rails) if path is not None]
+    if not transport_paths:
+        transport_paths = [None]
+    for variant, path in enumerate(transport_paths):
+        for (cx, cy), payload in _polyline_payloads(path, 0x31525450, bounds).items():  # PTR1
+            filename = f"vectors/transport_{variant}_{cx}_{cy}.bin"
+            _write(out / filename, payload)
+            manifest.append(f"transport_polyline 0 {cx} {cy} {variant} {filename}")
+            vector_count += 1
+
+    # Architecture is compiled as a province assignment, not merely as a
+    # catalogue of region names. Runtime can therefore select a building-kit
+    # family without parsing GIS geometry or guessing from a country tag.
+    architecture_records: list[tuple[int, int, int, int]] = []
+    architecture_candidates: dict[int, tuple[object, str, str]] = {}
+    for i, (_, row) in enumerate(architecture_regions.iterrows()):
+        geometry = row.geometry
+        if geometry is None or geometry.is_empty:
+            continue
+        region_key = _as_text(_value(row, "region_key", "key", default=f"region_{i}"))
+        family = _as_text(_value(row, "architecture_family", "family", default="default"))
+        if not region_key or not family:
+            raise ValueError("architecture regions require non-empty region_key and family")
+        architecture_candidates[int(i)] = (geometry, region_key, family)
+
+    architecture_sindex = architecture_regions.sindex if architecture_candidates else None
+    default_region = _fnv1a64("region.default")
+    default_family = _fnv1a64("default")
+    for _, row in land_world.iterrows():
+        province_key = _as_text(row.province_key)
+        state_key = _as_text(row.state_key)
+        if state_key not in ids.state_id:
+            raise ValueError(f"architecture assignment references unknown state: {state_key}")
+        region_key_hash = default_region
+        family_hash = default_family
+        if architecture_sindex is not None:
+            point = row.geometry.representative_point()
+            hits = list(map(int, architecture_sindex.query(point, predicate="within")))
+            if hits and hits[0] in architecture_candidates:
+                _, region_key, family = architecture_candidates[hits[0]]
+            else:
+                nearest = min(architecture_candidates.values(),
+                              key=lambda candidate: point.distance(candidate[0]))
+                _, region_key, family = nearest
+            region_key_hash = _fnv1a64(region_key)
+            family_hash = _fnv1a64(family)
+        architecture_records.append((ids.province_id[province_key], ids.state_id[state_key],
+                                     region_key_hash, family_hash))
+    architecture_bytes = bytearray(struct.pack("<II", ARCHITECTURE_MAGIC, len(architecture_records)))
+    for record in architecture_records:
+        architecture_bytes += struct.pack("<IIQQ", *record)
+    _write(out / "architecture/regions.bin", bytes(architecture_bytes))
+    manifest.append("architecture_region 0 0 0 0 architecture/regions.bin")
+    vector_count += 1
+
+    resource_by_state: dict[str, dict[str, float]] = {}
+    if resources is not None:
+        if resources.suffix.lower() == ".json":
+            source = json.loads(resources.read_text(encoding="utf-8"))
+            source_rows = source.get("states", source) if isinstance(source, dict) else source
+            if not isinstance(source_rows, list):
+                raise ValueError("resource JSON must contain a states list")
+            for row in source_rows:
+                if not isinstance(row, dict):
+                    raise ValueError("resource JSON state rows must be objects")
+                state = _as_text(_value(row, "state_key", "state"))
+                values = row.get("resources", {})
+                if state not in ids.state_id:
+                    raise ValueError(f"resource distribution references unknown state: {state}")
+                if state in resource_by_state:
+                    raise ValueError(f"duplicate resource distribution state: {state}")
+                if not isinstance(values, dict):
+                    raise ValueError(f"resource distribution for {state} must be an object")
+                resource_by_state[state] = {str(key): float(value) for key, value in values.items()}
+        elif resources.suffix.lower() in {".csv", ".tsv"}:
+            with resources.open("r", encoding="utf-8-sig", newline="") as stream:
+                for row in csv.DictReader(stream, delimiter="\t" if resources.suffix.lower() == ".tsv" else ","):
+                    state = _as_text(_value(row, "state_key", "state"))
+                    if state not in ids.state_id:
+                        raise ValueError(f"resource distribution references unknown state: {state}")
+                    if state in resource_by_state:
+                        raise ValueError(f"duplicate resource distribution state: {state}")
+                    resource_by_state[state] = {
+                        str(key): float(value) for key, value in row.items()
+                        if key not in {"state_key", "state"} and value not in (None, "")
+                    }
+        else:
+            raise ValueError(f"unsupported resource distribution input: {resources}")
+        missing_states = [state for state in ids.states if state not in resource_by_state]
+        if missing_states:
+            raise ValueError("resource distribution is missing states: " + ", ".join(missing_states[:8]))
+    else:
+        for state in ids.states:
+            group = land_world[land_world.state_key == state]
+            resource_by_state[state] = {
+                "grain": float(len(group)), "wood": float(len(group)), "iron": 0.0, "coal": 0.0
+            }
+
+    resource_bytes = bytearray(struct.pack("<II", RESOURCE_DISTRIBUTION_MAGIC, len(ids.states)))
+    for state in ids.states:
+        values = resource_by_state[state]
+        normalised_values: list[tuple[str, float]] = []
+        for key, value in values.items():
+            resource_key = _as_text(key)
+            numeric = float(value)
+            if not resource_key or not math.isfinite(numeric) or numeric < 0.0:
+                raise ValueError(f"invalid resource distribution value in state {state}: {key}")
+            normalised_values.append((resource_key, numeric))
+        normalised_values.sort(key=lambda item: item[0])
+        resource_bytes += struct.pack("<II", ids.state_id[state], len(normalised_values))
+        for key, value in normalised_values:
+            resource_bytes += struct.pack("<Qd", _fnv1a64(key), value)
+    _write(out / "definitions/resources.bin", bytes(resource_bytes))
+    manifest.append("resource_distribution 0 0 0 0 definitions/resources.bin")
+    return vector_count
+
+
+def _metadata_payload(bounds: WorldBounds, ids: IdTables, pages: dict, levels: int, hub_count: int,
+                      sea_count: int, lake_count: int, hierarchy: dict[str, int]) -> bytes:
+    metadata = {
+        "schema_version": 1,
+        "projection": "mercator",
+        "bounds_wgs84": list(bounds.wgs84),
+        "bounds_world_m": list(bounds.world),
+        "horizontal_wrap": bounds.horizontal_wrap,
+        "page_size": PAGE,
+        "base_page_world_size_m": CHUNK_M,
+        "clip_levels": levels,
+        "page_origin_x": 0,
+        "page_origin_y": 0,
+        "base_page_count_x": pages["base_page_count_x"],
+        "base_page_count_y": pages["base_page_count_y"],
+        "province_count": len(ids.province_id),
+        "state_count": len(ids.states),
+        "country_count": len(ids.countries),
+        "area_count": hierarchy["area_count"],
+        "trade_province_count": hierarchy["trade_province_count"],
+        "location_count": hierarchy["location_count"],
+        "sea_count": sea_count,
+        "lake_count": lake_count,
+        "authored_hub_count": hub_count,
+    }
+    return (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def main() -> None:
+    global CHUNK_M, DEFAULT_RESOLUTION_M
+    parser = argparse.ArgumentParser(description="Compile GIS layers into Core .coreworld source chunks")
+    parser.add_argument("--provinces", type=Path, required=True)
+    parser.add_argument("--layer", default=None)
+    parser.add_argument("--states", type=Path)
+    parser.add_argument("--seas", type=Path)
+    parser.add_argument("--lakes", type=Path)
+    parser.add_argument("--rivers", type=Path)
+    parser.add_argument("--straits", type=Path)
+    parser.add_argument("--hubs", "--settlements", dest="hubs", type=Path)
+    parser.add_argument("--roads", type=Path)
+    parser.add_argument("--rails", type=Path)
+    parser.add_argument("--architecture-regions", type=Path)
+    parser.add_argument("--history", "--history-1836", dest="history", type=Path)
+    parser.add_argument("--resources", type=Path)
+    parser.add_argument("--dem", type=Path)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--resolution", type=float,
+                        help="source/DEM sampling hint; defaults to page-world-size / 128")
+    parser.add_argument("--page-world-size-m", type=float, default=CHUNK_M,
+                        help="world metres covered by one 128x128 runtime page")
+    parser.add_argument("--levels", type=int, default=4)
+    parser.add_argument("--bounds", help="min_lon,min_lat,max_lon,max_lat; omit for regional source bounds")
+    parser.add_argument("--projection", choices=["mercator"], default="mercator")
+    parser.add_argument("--horizontal-wrap", action="store_true")
+    parser.add_argument("--allow-polar-clip", action="store_true")
+    args = parser.parse_args()
+    if args.levels < 1 or args.levels > 16:
+        raise ValueError("--levels must be between 1 and 16")
+    if not math.isfinite(args.page_world_size_m) or args.page_world_size_m <= 0.0:
+        raise ValueError("--page-world-size-m must be a positive finite value")
+    # The page contract is carried in metadata and consumed by runtime page
+    # streaming. Keep the historical 64 km default, but allow a global pack to
+    # choose a coarser base page without forking the compiler or renderer.
+    CHUNK_M = float(args.page_world_size_m)
+    DEFAULT_RESOLUTION_M = CHUNK_M / PAGE
+    if args.resolution is None:
+        args.resolution = DEFAULT_RESOLUTION_M
 
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
-    gdf = _repair_project(args.provinces, args.layer)
-    ids = _ids(gdf)
-    province_id = ids[-1]
-    reps = _write_definitions(out, gdf, ids)
-    edges = _adjacency(out, gdf)
-    page_manifest, pages, candidates = _compile_pages(out, gdf, province_id, reps, args.resolution, args.dem)
-    authored = _authored_settlements(out, args.settlements, gdf, province_id)
-
+    land = _normalise_land(_read_polygons(args.provinces, args.layer, "provinces"))
+    states = _read_polygons(args.states, None, "states") if args.states else gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326")
+    land = _apply_state_attributes(land, states)
+    seas = _normalise_water(_read_polygons(args.seas, None, "seas") if args.seas else gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326"), "sea", "sea")
+    lakes = _normalise_water(_read_polygons(args.lakes, None, "lakes") if args.lakes else gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326"), "lake", "lake")
+    if args.horizontal_wrap and seas.empty:
+        raise ValueError("a horizontally wrapped world requires an explicit seas layer so ocean has ProvinceIds")
+    _, history_states, history_provinces = _read_history(args.history)
+    ids = _build_ids(land, seas, lakes, states, history_states, history_provinces)
+    all_wgs = pd.concat([land, seas, lakes], ignore_index=True)
+    all_wgs = gpd.GeoDataFrame(all_wgs, geometry="geometry", crs="EPSG:4326")
+    all_world = _project_rows(all_wgs)
+    land_world = _project_rows(land)
+    bounds = _resolve_bounds(all_wgs, all_world, args.bounds, args.horizontal_wrap, args.allow_polar_clip)
+    all_world = gpd.GeoDataFrame(all_world, geometry="geometry", crs="EPSG:3857")
+    land_world = gpd.GeoDataFrame(land_world, geometry="geometry", crs="EPSG:3857")
+    water_world = gpd.GeoDataFrame(pd.concat([seas, lakes], ignore_index=True), geometry="geometry", crs="EPSG:4326")
+    water_world = _project_rows(water_world)
+    reps, _, _ = _write_definitions(out, land_world, water_world, ids, states, history_states, history_provinces)
+    hierarchy = _write_map_hierarchy(out, land_world, water_world, ids)
+    adjacency_edges, adjacency_directed = _adjacency(out, all_world, ids, bounds, args.straits, args.rivers)
+    authored = _read_points(args.hubs, None) if args.hubs else None
+    hubs = _state_hubs(land_world, ids, bounds, authored)
+    architecture = _read_polygons(args.architecture_regions, None, "architecture regions") if args.architecture_regions else gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326")
+    page_manifest, page_stats = _compile_pages(out, all_world, land_world, ids, bounds, args.resolution, args.dem, args.levels, hubs, _project_rows(architecture))
     manifest = [
         "# type level x y variant file",
+        f"@world horizontal_wrap={'true' if bounds.horizontal_wrap else 'false'}",
+        "metadata 0 0 0 0 metadata.json",
         "country_definitions 0 0 0 0 definitions/countries.bin",
         "market_definitions 0 0 0 0 definitions/markets.bin",
         "state_definitions 0 0 0 0 definitions/states.bin",
         "province_definitions 0 0 0 0 definitions/provinces.bin",
+        "area_definitions 0 0 0 0 definitions/areas.bin",
+        "trade_province_definitions 0 0 0 0 definitions/trade_provinces.bin",
+        "location_definitions 0 0 0 0 definitions/locations.bin",
+        "historical_setup 0 0 0 0 definitions/history_1836.bin",
         "adjacency_offsets 0 0 0 0 definitions/adjacency_offsets.bin",
         "adjacency_neighbors 0 0 0 0 definitions/adjacency_neighbors.bin",
-    ] + page_manifest + authored
+    ] + page_manifest
+    vector_count = _write_static_layers(out, manifest, args.rivers, args.roads, args.rails,
+                                        _project_rows(architecture), ids, land_world, bounds, args.resources)
+    emitted_hub_count = len(hubs) if CHUNK_M <= 65_535.0 else 0
+    _write(out / "metadata.json", _metadata_payload(bounds, ids, page_stats, args.levels, emitted_hub_count, len(seas), len(lakes), hierarchy))
+    manifest.append("# static metadata is emitted above; all remaining rows are streamable page/vector families")
     (out / "manifest.txt").write_text("\n".join(manifest) + "\n", encoding="utf-8")
-    metadata = {
-        "format": "Core GIS compiler 1.0",
-        "source": str(args.provinces),
-        "crs_runtime": "EPSG:3857",
-        "province_count": len(gdf),
-        "country_count": len(ids[0]),
-        "market_count": len(ids[2]),
-        "state_count": len(ids[5]),
-        "map_pages": pages,
-        "placement_candidates": candidates,
-        "adjacency_edges_undirected": edges,
-        "pixel_resolution_m": args.resolution,
+
+    report = {
+        "format": "Core GIS compiler 2.0",
+        "projection": args.projection,
+        "bounds_wgs84": bounds.wgs84,
+        "bounds_world_m": bounds.world,
+        "horizontal_wrap": bounds.horizontal_wrap,
+        "province_count": len(ids.province_id),
+        "land_count": len(land),
+        "sea_count": len(seas),
+        "lake_count": len(lakes),
+        "country_count": len(ids.countries),
+        "market_count": len(ids.markets),
+        "state_count": len(ids.states),
+        **hierarchy,
+        "clip_levels": args.levels,
+        "map_pages": page_stats["pages"],
+        "pages_by_level": page_stats["level_pages"],
+        "placement_candidates": page_stats["placement_candidates"],
+        "settlement_anchors": emitted_hub_count,
+        "adjacency_edges_undirected": adjacency_edges,
+        "adjacency_edges_directed": adjacency_directed,
+        "vector_families": vector_count,
+        "terrain_height_range_m": [MIN_HEIGHT_M, MAX_HEIGHT_M],
+        "pixel_resolution_m": DEFAULT_RESOLUTION_M,
+        "source_resolution_m": args.resolution,
     }
-    (out / "compile_report.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    print(json.dumps(metadata, indent=2))
+    (out / "compile_report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(report, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

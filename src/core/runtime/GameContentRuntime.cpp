@@ -1,9 +1,13 @@
 #include "core/runtime/GameContentRuntime.hpp"
 
 #include "core/runtime/CoreEngine.hpp"
+#include "core/content/WorldContentBinder.hpp"
+#include "core/simulation/GameClock.hpp"
+#include "core/world/WorldBootstrap.hpp"
 
 #include <stdexcept>
 #include <string>
+#include <optional>
 
 namespace core {
 
@@ -21,6 +25,14 @@ bool GameContentRuntime::install_new_game(
     CoreEngine& engine,
     std::int32_t history_date,
     std::vector<ScriptCompileDiagnostic>& diagnostics) {
+    return install_new_game(engine, history_date, diagnostics, nullptr);
+}
+
+bool GameContentRuntime::install_new_game(
+    CoreEngine& engine,
+    std::int32_t history_date,
+    std::vector<ScriptCompileDiagnostic>& diagnostics,
+    const WorldPackReader* world_pack) {
     if (!loaded_ || installed_) {
         diagnostics.push_back({!loaded_ ? "content must be loaded before install" :
                                           "content snapshot is already installed", 0});
@@ -60,19 +72,40 @@ bool GameContentRuntime::install_new_game(
     ResearchSystem staged_research{registry_, &definitions_.scripts()};
     NotificationRuntime staged_notifications{registry_, &definitions_.scripts()};
     OnActionRuntime staged_on_actions{registry_, &definitions_.scripts()};
+    WorldContentBinder world_content{definitions_};
 
     bool ok = definitions_.bind_economy(staged_economy, diagnostics);
     ok &= definitions_.bind_gameplay(staged_gameplay, staged_ai, diagnostics);
     ok &= definitions_.bind_research(staged_research, diagnostics);
     ok &= definitions_.bind_notifications(staged_notifications, diagnostics);
     ok &= definitions_.bind_on_actions(staged_gameplay, staged_on_actions, diagnostics);
-    definitions_.instantiate_world(staged_world);
-    definitions_.apply_history(history_date, staged_world);
+    std::optional<WorldBootstrapResult> staged_bootstrap;
+    if (world_pack != nullptr) {
+        try {
+            staged_bootstrap.emplace(WorldBootstrap::load(*world_pack, staged_economy));
+            staged_world = std::move(staged_bootstrap->world);
+            ok &= world_content.hydrate_countries(staged_world, diagnostics);
+            ok &= world_content.instantiate_entities(staged_world, staged_economy, diagnostics);
+        } catch (const std::exception& error) {
+            diagnostics.push_back({std::string{"world pack bootstrap failed: "} + error.what(), 0});
+            ok = false;
+        }
+    } else {
+        world_content.instantiate_countries(staged_world);
+    }
+    world_content.apply_history(history_date, staged_world);
     if (!ok || !diagnostics.empty()) return false;
 
     engine.set_new_game_content_hash(result_.content_hash);
+    if (world_pack != nullptr) engine.set_world_pack_hash(world_pack->stats().build_hash);
     engine.clock().restore_state(start_date, 0u, 0u);
     engine.definitions() = std::move(staged_economy);
+    if (staged_bootstrap) {
+        engine.set_world_topology(std::move(staged_bootstrap->adjacency),
+                                  std::move(staged_bootstrap->spatial_placement),
+                                  std::move(staged_bootstrap->state_regions));
+        engine.set_world_static_layers(std::move(staged_bootstrap->static_layers));
+    }
     engine.world() = std::move(staged_world);
 
     const auto before = diagnostics.size();

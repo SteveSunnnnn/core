@@ -13,7 +13,10 @@ enum ProvinceAdjacencyFlag : std::uint16_t {
     AdjacencyLand = 1u << 0u,
     AdjacencyRiver = 1u << 1u,
     AdjacencyStrait = 1u << 2u,
-    AdjacencyImpassable = 1u << 3u
+    AdjacencyImpassable = 1u << 3u,
+    AdjacencySea = 1u << 4u,
+    AdjacencyCanal = 1u << 5u,
+    AdjacencyLake = 1u << 6u
 };
 
 struct ProvinceAdjacencyInput {
@@ -45,6 +48,7 @@ public:
     }
     [[nodiscard]] std::span<const ProvinceNeighbor> neighbors(ProvinceId province) const noexcept;
     [[nodiscard]] bool adjacent(ProvinceId a, ProvinceId b) const noexcept;
+    [[nodiscard]] bool is_symmetric() const noexcept;
     [[nodiscard]] std::size_t directed_edge_count() const noexcept { return neighbors_.size(); }
     [[nodiscard]] std::size_t memory_bytes() const noexcept {
         return offsets_.size() * sizeof(std::uint32_t) + neighbors_.size() * sizeof(ProvinceNeighbor);

@@ -26,6 +26,7 @@ struct TooltipFrame {
     std::vector<TooltipTerm> terms;     // extracted hoverable terms
     UiRect bounds{};                    // computed screen rect of this tooltip
     UiRect anchor{};                    // the rect this tooltip is anchored to
+    UiRect screen{};                    // screen used for placement/clamping
     int depth = 0;                      // nesting level (0 = root)
     bool is_locked = false;             // pinned by hotkey
 };

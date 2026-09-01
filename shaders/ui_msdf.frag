@@ -8,7 +8,7 @@ layout(location = 0) out vec4 outColor;
 layout(push_constant) uniform Push {
     vec2 invViewport;
     float pxRange;
-    float reserved;
+    float mapTextMode;
 } pc;
 
 float median3(float r, float g, float b) {
@@ -30,5 +30,13 @@ void main() {
     // edges. This is the MSDF equivalent of restrained small-size hinting.
     float smallGlyphBias = mix(0.035, 0.0, clamp((screenPxRange - 1.15) / 2.0, 0.0, 1.0));
     float alpha = clamp((signedDistance + smallGlyphBias) * screenPxRange + 0.5, 0.0, 1.0);
-    outColor = vec4(color.rgb, color.a * alpha);
+
+    if (pc.mapTextMode > 0.5) {
+        alpha *= 0.78;
+        float edgeBand = smoothstep(0.0, 0.08, signedDistance) * (1.0 - smoothstep(0.08, 0.16, signedDistance));
+        vec3 inkColor = mix(color.rgb, vec3(0.98, 0.96, 0.92), edgeBand * 0.18);
+        outColor = vec4(inkColor, color.a * alpha);
+    } else {
+        outColor = vec4(color.rgb, color.a * alpha);
+    }
 }

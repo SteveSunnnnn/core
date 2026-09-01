@@ -35,6 +35,7 @@ constexpr std::array<char, 8> magic{{'C','O','R','E','W','P','0','1'}};
 constexpr std::uint32_t format_version = 2;
 constexpr std::uint32_t header_bytes = 64;
 constexpr std::uint32_t index_entry_bytes = 48;
+constexpr std::uint32_t world_pack_flag_horizontal_wrap = 1u << 0u;
 
 // Largest uncompressed chunk we are willing to allocate. Real chunks are far
 // smaller; this only stops a malformed pack from claiming ~4 GiB.
@@ -155,8 +156,12 @@ void hash_le(Fnv1a64& hash, T value) noexcept {
     hash.add_bytes(bytes);
 }
 
-std::uint64_t compute_build_hash(std::span<const WorldChunkIndexEntry> index) noexcept {
+std::uint64_t compute_build_hash(std::span<const WorldChunkIndexEntry> index,
+                                 bool horizontal_wrap = false) noexcept {
     Fnv1a64 hash;
+    // Preserve the hash of pre-wrap packs (the default is false), while making
+    // the coordinate contract part of the identity for global wrapped packs.
+    if (horizontal_wrap) hash.add(world_pack_flag_horizontal_wrap);
     for (const auto& entry : index) {
         hash_le(hash, entry.key.type);
         hash_le(hash, entry.key.level);
@@ -177,7 +182,7 @@ void write_header(std::ostream& out, std::uint32_t chunk_count, std::uint64_t in
     write_le(out, format_version);
     write_le(out, header_bytes);
     write_le(out, chunk_count);
-    write_le(out, std::uint32_t{0});
+    write_le(out, stats.horizontal_wrap ? world_pack_flag_horizontal_wrap : 0u);
     write_le(out, index_offset);
     write_le(out, index_size);
     write_le(out, stats.raw_bytes);
@@ -214,6 +219,9 @@ void write_header(std::ostream& out, std::uint32_t chunk_count, std::uint64_t in
         case WorldChunkType::ArchitectureRegion:
         case WorldChunkType::HistoricalSetup:
         case WorldChunkType::ResourceDistribution:
+        case WorldChunkType::AreaDefinitions:
+        case WorldChunkType::TradeProvinceDefinitions:
+        case WorldChunkType::LocationDefinitions:
             return true;
     }
     return false;
@@ -236,7 +244,10 @@ void read_header(std::istream& in, std::uint32_t& chunk_count, std::uint64_t& in
     const auto hbytes = read_le<std::uint32_t>(in);
     if (version != format_version || hbytes != header_bytes) throw std::runtime_error("unsupported Core world pack version");
     chunk_count = read_le<std::uint32_t>(in);
-    (void)read_le<std::uint32_t>(in);
+    const auto flags = read_le<std::uint32_t>(in);
+    if ((flags & ~world_pack_flag_horizontal_wrap) != 0u)
+        throw std::runtime_error("unknown Core world pack header flags");
+    stats.horizontal_wrap = (flags & world_pack_flag_horizontal_wrap) != 0u;
     index_offset = read_le<std::uint64_t>(in);
     index_size = read_le<std::uint64_t>(in);
     stats.raw_bytes = read_le<std::uint64_t>(in);
@@ -262,6 +273,7 @@ void WorldPackWriter::open(const std::filesystem::path& path, WorldPackWriteOpti
     keys_.clear();
     keys_.reserve(4096u);
     stats_ = {};
+    stats_.horizontal_wrap = options_.horizontal_wrap;
     finalized_ = false;
     stream_.open(path, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);
     if (!stream_) throw std::runtime_error("failed to create world pack: " + path.string());
@@ -317,7 +329,7 @@ void WorldPackWriter::append(WorldChunkKey key, std::span<const std::byte> paylo
 WorldPackStats WorldPackWriter::finalize() {
     if (!stream_.is_open() || finalized_) throw std::logic_error("WorldPackWriter cannot finalize");
     std::sort(index_.begin(), index_.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
-    stats_.build_hash = compute_build_hash(index_);
+    stats_.build_hash = compute_build_hash(index_, stats_.horizontal_wrap);
 
     align_data();
     const auto index_offset = static_cast<std::uint64_t>(stream_.tellp());
@@ -402,7 +414,7 @@ void WorldPackReader::open(const std::filesystem::path& path) {
             throw std::runtime_error("world pack index contains duplicate chunk keys");
     if (raw_total != stats_.raw_bytes || stored_total != stats_.stored_bytes)
         throw std::runtime_error("world pack header byte statistics mismatch");
-    if (compute_build_hash(index_) != stats_.build_hash)
+    if (compute_build_hash(index_, stats_.horizontal_wrap) != stats_.build_hash)
         throw std::runtime_error("world pack content build hash mismatch");
     path_ = path;
 }
@@ -506,6 +518,9 @@ std::string_view world_chunk_type_name(WorldChunkType type) noexcept {
         case WorldChunkType::ArchitectureRegion: return "architecture_region";
         case WorldChunkType::HistoricalSetup: return "historical_setup";
         case WorldChunkType::ResourceDistribution: return "resource_distribution";
+        case WorldChunkType::AreaDefinitions: return "area_definitions";
+        case WorldChunkType::TradeProvinceDefinitions: return "trade_province_definitions";
+        case WorldChunkType::LocationDefinitions: return "location_definitions";
     }
     return "unknown";
 }
@@ -521,8 +536,11 @@ std::optional<WorldChunkType> parse_world_chunk_type(std::string_view text) noex
                             WorldChunkType::SettlementAnchors, WorldChunkType::ResourceAnchors,
                             WorldChunkType::TransportPolyline, WorldChunkType::RiverPolyline,
                             WorldChunkType::LakeMask, WorldChunkType::ArchitectureRegion,
-                            WorldChunkType::HistoricalSetup, WorldChunkType::ResourceDistribution}) {
-        if (world_chunk_type_name(type) == text) return type;
+                            WorldChunkType::HistoricalSetup, WorldChunkType::ResourceDistribution,
+                            WorldChunkType::AreaDefinitions, WorldChunkType::TradeProvinceDefinitions,
+                            WorldChunkType::LocationDefinitions}) {
+        if (world_chunk_type_name(type) == text ||
+            (type == WorldChunkType::TerrainHeightPage && text == "terrain_height")) return type;
     }
     return std::nullopt;
 }

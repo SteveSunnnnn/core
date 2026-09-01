@@ -1,210 +1,234 @@
 #version 460
 
-// Layered grand-strategy map. The far camera is an administrative paper map;
-// the close camera is terrain-led. Province IDs remain categorical while
-// terrain and height use filtered sampling, so political data never turns into
-// a blurred colour screenshot.
-
+// The map pass is one continuous material. The page atlas supplies stable
+// categorical geography; all paper, pigment and water variation is sampled in
+// world-UV space so page/Location boundaries cannot restart the texture.
 layout(location = 0) in vec2 uv;
+layout(location = 1) in float elevation;
+layout(location = 2) in float closeFactor;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D provinceIds;
-layout(set = 0, binding = 1) uniform sampler2D terrainTexture;
-layout(set = 0, binding = 2) uniform sampler2D heightTexture;
-layout(set = 0, binding = 3) uniform sampler2D politicalLut;
+layout(set = 0, binding = 0) uniform sampler2D pageTexture;
+layout(set = 0, binding = 1) uniform sampler2D heightTexture;
+layout(set = 0, binding = 2) uniform sampler2D politicalPalette;
 
 layout(push_constant) uniform Push {
-    vec4 view;   // center uv, half extents
-    vec4 params; // reserved for selectable map modes
-} pc;
+    vec4 view;
+    vec4 stream;
+};
 
 vec2 map_uv(vec2 value) {
     return vec2(fract(value.x), clamp(value.y, 0.0, 1.0));
 }
 
-uint decode_location(vec4 packed) {
-    uvec3 bytes = uvec3(floor(packed.rgb * 255.0 + 0.5));
-    return bytes.r | (bytes.g << 8u) | (bytes.b << 16u);
+vec2 stream_uv(vec2 value) {
+    vec2 mapped = (map_uv(value) - stream.xy) / max(stream.zw, vec2(1.0e-6));
+    mapped.x = fract(mapped.x);
+    return clamp(mapped, vec2(0.0), vec2(1.0));
 }
 
-ivec2 id_coordinate(vec2 value) {
-    ivec2 size = textureSize(provinceIds, 0);
-    vec2 wrapped = map_uv(value);
-    return ivec2(clamp(ivec2(floor(wrapped * vec2(size))), ivec2(0), size - 1));
+ivec2 page_coordinate(vec2 value) {
+    ivec2 size = textureSize(pageTexture, 0);
+    return clamp(ivec2(floor(stream_uv(value) * vec2(size))), ivec2(0), size - 1);
 }
 
-uint location_at(vec2 value) {
-    return decode_location(texelFetch(provinceIds, id_coordinate(value), 0));
+uvec4 page_bytes(ivec2 coordinate) {
+    return uvec4(floor(texelFetch(pageTexture, coordinate, 0) * 255.0 + 0.5));
 }
 
-vec4 political_colour(uint locationId) {
-    if (locationId == 0u) return vec4(0.0);
-    ivec2 size = textureSize(politicalLut, 0);
+uint province_at(vec2 value) {
+    uvec4 packed = page_bytes(page_coordinate(value));
+    return packed.r | (packed.g << 8u);
+}
+
+int coast_at(vec2 value) {
+    uvec4 packed = page_bytes(page_coordinate(value));
+    uint bits = packed.b | (packed.a << 8u);
+    return int(bits >= 32768u ? bits - 65536u : bits);
+}
+
+vec4 political_colour(uint provinceId) {
+    if (provinceId == 0u) return vec4(0.0);
+    ivec2 size = textureSize(politicalPalette, 0);
     uint capacity = uint(size.x * size.y);
-    if (locationId >= capacity) return vec4(0.0);
-    ivec2 coordinate = ivec2(int(locationId % uint(size.x)),
-                             int(locationId / uint(size.x)));
-    return texelFetch(politicalLut, coordinate, 0);
+    if (provinceId >= capacity) return vec4(0.0);
+    ivec2 coordinate = ivec2(int(provinceId % uint(size.x)),
+                             int(provinceId / uint(size.x)));
+    return texelFetch(politicalPalette, coordinate, 0);
 }
 
 float height_at(vec2 value) {
-    vec2 encoded = texture(heightTexture, map_uv(value)).rg;
-    return dot(encoded, vec2(255.0, 65280.0)) / 65535.0;
+    vec2 encoded = texture(heightTexture, stream_uv(value)).rg;
+    return -12000.0 + (encoded.r * 255.0 + encoded.g * 65280.0) * 0.5;
+}
+
+float lake_at(vec2 value) {
+    return texture(heightTexture, stream_uv(value)).b;
+}
+
+float spatial_land_at(vec2 value) {
+    return texture(heightTexture, stream_uv(value)).a;
+}
+
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+float value_noise(vec2 p) {
+    vec2 cell = floor(p);
+    vec2 f = fract(p);
+    vec2 smooth_f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash12(cell), hash12(cell + vec2(1.0, 0.0)), smooth_f.x),
+               mix(hash12(cell + vec2(0.0, 1.0)), hash12(cell + vec2(1.0)), smooth_f.x),
+               smooth_f.y);
+}
+
+float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    mat2 rotate = mat2(0.80, -0.60, 0.60, 0.80);
+    for (int octave = 0; octave < 5; ++octave) {
+        value += amplitude * value_noise(p);
+        p = rotate * p * 2.03 + 17.1;
+        amplitude *= 0.48;
+    }
+    return value;
+}
+
+// Distance in page texels to a neighbouring sovereign colour. Sampling the
+// palette, not the leaf ID, means internal Location boundaries do not become
+// international borders after the three-level hierarchy is installed.
+float sovereign_border_distance(vec2 value, uint centre_id, vec4 centre_colour) {
+    ivec2 size = textureSize(pageTexture, 0);
+    vec2 texel = 1.0 / vec2(size);
+    const vec2 directions[8] = vec2[](
+        vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
+        vec2(0.707, 0.707), vec2(-0.707, 0.707),
+        vec2(0.707, -0.707), vec2(-0.707, -0.707));
+    float nearest = 18.0;
+    for (int radius = 1; radius <= 16; radius *= 2) {
+        for (int direction = 0; direction < 8; ++direction) {
+            vec2 sample_uv = value + directions[direction] * texel * float(radius);
+            uint neighbour_id = province_at(sample_uv);
+            if (neighbour_id == 0u || neighbour_id == centre_id) continue;
+            vec4 neighbour = political_colour(neighbour_id);
+            if (distance(neighbour.rgb, centre_colour.rgb) > 0.025)
+                nearest = min(nearest, float(radius));
+        }
+    }
+    return nearest;
+}
+
+float location_border_distance(vec2 value, uint centre_id) {
+    if (centre_id == 0u) return 8.0;
+    ivec2 size = textureSize(pageTexture, 0);
+    vec2 texel = 1.0 / vec2(size);
+    const vec2 directions[4] = vec2[](
+        vec2(1.0, 0.0), vec2(-1.0, 0.0),
+        vec2(0.0, 1.0), vec2(0.0, -1.0));
+    float nearest = 8.0;
+    for (int radius = 1; radius <= 4; radius *= 2) {
+        for (int direction = 0; direction < 4; ++direction) {
+            uint neighbour_id = province_at(value + directions[direction] * texel * float(radius));
+            if (neighbour_id != 0u && neighbour_id != centre_id)
+                nearest = min(nearest, float(radius));
+        }
+    }
+    return nearest;
 }
 
 vec3 srgb_to_linear(vec3 value) {
     return pow(max(value, vec3(0.0)), vec3(2.2));
 }
 
-float luminance(vec3 value) {
-    return dot(value, vec3(0.2126, 0.7152, 0.0722));
-}
-
-float hash12(vec2 value) {
-    vec3 p = fract(vec3(value.xyx) * 0.1031);
-    p += dot(p, p.yzx + 33.33);
-    return fract((p.x + p.y) * p.z);
-}
-
-float grid_line(float coordinate) {
-    float distanceToLine = min(fract(coordinate), 1.0 - fract(coordinate));
-    float antialias = max(fwidth(coordinate), 0.001);
-    return 1.0 - smoothstep(0.006, 0.006 + antialias, distanceToLine);
-}
-
 void main() {
     vec2 mapUv = map_uv(uv);
-    ivec2 idSize = textureSize(provinceIds, 0);
-    vec2 idTexel = 1.0 / vec2(idSize);
+    uint centre_id = province_at(mapUv);
+    vec4 political = political_colour(centre_id);
+    float lake = lake_at(mapUv);
+    float land = (centre_id != 0u && lake < 0.5 && spatial_land_at(mapUv) > 0.5) ? 1.0 : 0.0;
 
-    // Four categorical samples provide coverage only at the edge. IDs are
-    // never interpolated into invented province numbers.
-    vec2 pixel = mapUv * vec2(idSize) - 0.5;
-    vec2 fraction = fract(pixel);
-    ivec2 base = ivec2(floor(pixel));
-    ivec2 p00 = clamp(base, ivec2(0), idSize - 1);
-    ivec2 p10 = clamp(base + ivec2(1, 0), ivec2(0), idSize - 1);
-    ivec2 p01 = clamp(base + ivec2(0, 1), ivec2(0), idSize - 1);
-    ivec2 p11 = clamp(base + ivec2(1, 1), ivec2(0), idSize - 1);
-    uint id00 = decode_location(texelFetch(provinceIds, p00, 0));
-    uint id10 = decode_location(texelFetch(provinceIds, p10, 0));
-    uint id01 = decode_location(texelFetch(provinceIds, p01, 0));
-    uint id11 = decode_location(texelFetch(provinceIds, p11, 0));
+    // Stable geographic coordinates: broad masses, medium mottle and fine
+    // paper grain are all continuous across pages and political ownership.
+    vec2 world = (mapUv - vec2(0.5)) * vec2(34.0, 18.0);
+    float broad = fbm(world * 0.18 + vec2(4.0, -7.0));
+    float medium = fbm(world * 0.72 + vec2(-19.0, 13.0));
+    float paper_grain = value_noise(world * 8.5 + vec2(21.0, 5.0)) - 0.5;
+    float fibers = sin(dot(world, vec2(5.7, 0.41)) + broad * 4.0) * 0.5 + 0.5;
 
-    float l00 = id00 != 0u ? 1.0 : 0.0;
-    float l10 = id10 != 0u ? 1.0 : 0.0;
-    float l01 = id01 != 0u ? 1.0 : 0.0;
-    float l11 = id11 != 0u ? 1.0 : 0.0;
-    float rawLand = mix(mix(l00, l10, fraction.x),
-                        mix(l01, l11, fraction.x), fraction.y);
-    float landCoverage = smoothstep(0.20, 0.80, rawLand);
+    vec3 paper = vec3(0.76, 0.745, 0.705);
+    paper *= 0.975 + broad * 0.035 + medium * 0.018;
+    paper += paper_grain * 0.010 + (fibers - 0.5) * 0.003;
 
-    vec4 c00 = political_colour(id00);
-    vec4 c10 = political_colour(id10);
-    vec4 c01 = political_colour(id01);
-    vec4 c11 = political_colour(id11);
-    float w00 = (1.0 - fraction.x) * (1.0 - fraction.y) * l00;
-    float w10 = fraction.x * (1.0 - fraction.y) * l10;
-    float w01 = (1.0 - fraction.x) * fraction.y * l01;
-    float w11 = fraction.x * fraction.y * l11;
-    float politicalWeight = w00 + w10 + w01 + w11;
-    vec4 political = vec4(0.0);
-    if (politicalWeight > 0.0001) {
-        political = (c00 * w00 + c10 * w10 + c01 * w01 + c11 * w11) /
-                    politicalWeight;
-    }
+    // The requested ocean palette is intentionally pale blue-grey rather than
+    // saturated seawater. Its variation is 800-3000 km scale plus restrained
+    // regional mottle, never a per-page tile.
+    float ocean_wash = fbm(world * 0.055 + vec2(-31.0, 18.0));
+    float ocean_mottle = fbm(world * 0.22 + vec2(11.0, -24.0));
+    vec3 ocean = vec3(0.43, 0.56, 0.58);
+    ocean = mix(ocean, vec3(0.52, 0.63, 0.64), ocean_wash * 0.38);
+    ocean *= 0.985 + ocean_mottle * 0.025 + paper_grain * 0.012;
 
-    // Zoom hierarchy: theatre/world scales become a calm paper map; closer
-    // scales reveal terrain and progressively reduce political paint.
-    float paperBlend = smoothstep(0.065, 0.145, pc.view.z);
-    float terrainBlend = 1.0 - paperBlend;
-    float localDetail = 1.0 - smoothstep(0.040, 0.105, pc.view.z);
+    vec3 terrain = mix(vec3(0.48, 0.48, 0.40), vec3(0.68, 0.63, 0.51),
+                       smoothstep(0.35, 0.85, elevation));
+    float dx = dFdx(elevation);
+    float dy = dFdy(elevation);
+    vec3 normal = normalize(vec3(-dx * 16.0, -dy * 16.0, 1.0));
+    float light = 0.80 + 0.14 * max(dot(normal, normalize(vec3(-0.40, -0.34, 0.82))), 0.0);
+    // Match the vertex relief field at pixel scale so the close view reads as
+    // lit terrain instead of a flat political fill, even when the pack has no
+    // optional DEM payload.
+    float topo_field = fbm(world * 0.52 + vec2(7.0, -11.0)) * 0.72 +
+                       fbm(world * 1.65 + vec2(-23.0, 19.0)) * 0.28;
+    vec3 topo_normal = normalize(vec3(-dFdx(topo_field) * 24.0,
+                                      -dFdy(topo_field) * 24.0, 1.0));
+    float topo_light = 0.68 + 0.46 * max(dot(topo_normal,
+                                               normalize(vec3(-0.48, -0.34, 0.80))), 0.0);
+    terrain *= light;
 
-    vec3 sourceTerrain = srgb_to_linear(texture(terrainTexture, mapUv).rgb);
-    float sourceLuma = luminance(sourceTerrain);
-    // Colourless relief: the land base carries only luminance so political
-    // ownership paint stays the visual lead; the 3D module supplies its own
-    // surface colour later.
-    vec3 terrainColour = mix(vec3(sourceLuma), sourceTerrain, 0.08);
-    terrainColour = mix(terrainColour, vec3(0.30, 0.31, 0.23), 0.055);
+    vec3 pigment = srgb_to_linear(political.rgb);
+    float border_distance = sovereign_border_distance(mapUv, centre_id, political);
+    float broad_edge = 1.0 - smoothstep(1.0, 15.0, border_distance);
+    // Prevent small countries from becoming black blobs: edge pigment is
+    // bounded and the interior never falls below a readable paper tint.
+    float pigment_strength = 0.33 + broad_edge * 0.17;
+    pigment_strength *= 0.92 + broad * 0.10 + medium * 0.06 + paper_grain * 0.025;
+    vec3 land_colour = mix(paper, pigment, pigment_strength);
+    land_colour = mix(land_colour, terrain, closeFactor * 0.42);
+    land_colour *= light;
+    land_colour *= mix(1.0, topo_light, closeFactor * 0.90);
+    float topo_contour = 1.0 - smoothstep(0.025, 0.075,
+                                           abs(fract(topo_field * 9.0) - 0.5));
+    land_colour *= 1.0 - topo_contour * closeFactor * 0.055;
 
-    vec2 heightStep = max(idTexel, fwidth(mapUv) * 0.75);
-    float hLeft = height_at(mapUv - vec2(heightStep.x, 0.0));
-    float hRight = height_at(mapUv + vec2(heightStep.x, 0.0));
-    float hUp = height_at(mapUv - vec2(0.0, heightStep.y));
-    float hDown = height_at(mapUv + vec2(0.0, heightStep.y));
-    vec3 normal = normalize(vec3((hLeft - hRight) * mix(2.0, 8.0, terrainBlend),
-                                 (hUp - hDown) * mix(2.0, 8.0, terrainBlend), 1.0));
-    vec3 lightDirection = normalize(vec3(-0.42, -0.54, 0.73));
-    float hillLight = 0.76 + max(dot(normal, lightDirection), 0.0) * 0.30;
-    // A single stable grain lookup replaces the previous two four-octave FBM
-    // stacks. The authored terrain and mip chain already carry large-scale
-    // variation; this only prevents the close view from feeling sterile.
-    vec2 grainScale = mix(vec2(520.0, 320.0), vec2(2100.0, 1280.0), localDetail);
-    float surfaceGrain = hash12(floor(mapUv * grainScale));
-    terrainColour *= hillLight * (1.0 + (surfaceGrain - 0.50) * 0.055 * localDetail);
+    vec3 close_ocean = vec3(0.075, 0.19, 0.24) + vec3(0.02, 0.035, 0.04) * ocean_mottle;
+    vec3 map_colour = mix(close_ocean, land_colour, land);
+    map_colour = mix(map_colour, mix(ocean, land_colour, land), 1.0 - closeFactor);
 
-    vec3 politicalLinear = srgb_to_linear(political.rgb);
-    float politicalLuma = luminance(politicalLinear);
-    vec3 mutedPolitical = mix(vec3(politicalLuma), politicalLinear, 0.85);
+    // Country shadow + thin carbon core; coastline gets only a land-side
+    // shadow and a pale cyan edge, never a black sovereign outline.
+    float country_shadow = (1.0 - smoothstep(1.0, 10.0, border_distance)) * land;
+    float country_line = (1.0 - smoothstep(0.55, 1.35, border_distance)) * land;
+    map_colour = mix(map_colour, map_colour * vec3(0.90, 0.885, 0.86), country_shadow * 0.30);
+    map_colour = mix(map_colour, vec3(0.16, 0.145, 0.13), country_line * 0.70);
 
-    // Close map: political ownership leads over the colourless relief.
-    float closePoliticalOpacity = mix(0.30, 0.48, smoothstep(0.035, 0.11, pc.view.z)) * political.a;
-    vec3 closeLand = mix(terrainColour, mutedPolitical, closePoliticalOpacity);
-    vec3 closeOcean = vec3(0.075, 0.235, 0.315);
-    closeOcean += vec3(0.035, 0.055, 0.060) * (sourceLuma - 0.35);
-    closeOcean *= 0.988 + (surfaceGrain - 0.5) * 0.018 * localDetail;
-    vec3 closeMap = mix(closeOcean, closeLand, landCoverage);
+    // Leaf/location boundaries stay in the same page atlas as political
+    // colour, so close zoom has a usable parcel hairline without a CPU walk
+    // over the entire near-vector file during a drag.
+    float location_distance = location_border_distance(mapUv, centre_id);
+    float location_line = (1.0 - smoothstep(0.65, 1.45, location_distance)) * land * closeFactor * 0.42;
+    map_colour = mix(map_colour, vec3(0.28, 0.265, 0.24), location_line);
 
-    // Far map: warm paper, low-chroma country washes and pale blue-grey seas.
-    vec3 paperLandBase = vec3(0.705, 0.680, 0.615) *
-                         (0.990 + (surfaceGrain - 0.5) * 0.018);
-    vec3 pastelPolitical = mix(paperLandBase, mutedPolitical, 0.62);
-    vec3 paperLand = mix(paperLandBase, pastelPolitical, 0.88 * political.a);
-    paperLand *= mix(1.0, hillLight, 0.10);
+    float coast_distance = abs(float(coast_at(mapUv))) * 0.5;
+    float coast_width = max(fwidth(coast_distance) * 2.0, 2.0);
+    float coast_edge = 1.0 - smoothstep(0.0, coast_width, coast_distance);
+    float land_coast_shadow = coast_edge * land * 0.28;
+    map_colour *= 1.0 - land_coast_shadow;
+    map_colour = mix(map_colour, vec3(0.45, 0.61, 0.61), coast_edge * (1.0 - land) * 0.14);
 
-    vec3 paperOcean = vec3(0.610, 0.705, 0.735) *
-                      (0.994 + (surfaceGrain - 0.5) * 0.012);
-    float atlasGrid = max(grid_line(mapUv.x * 24.0), grid_line(mapUv.y * 12.0));
-    paperOcean = mix(paperOcean, vec3(0.42, 0.52, 0.57), atlasGrid * 0.075);
-    vec3 paperMap = mix(paperOcean, paperLand, landCoverage);
-
-    vec3 mapColour = mix(closeMap, paperMap, paperBlend);
-
-    // Coastline coverage is independent of political colour and remains stable
-    // through the paper/terrain transition.
-    float coastBand = 4.0 * landCoverage * (1.0 - landCoverage);
-    mapColour = mix(mapColour,
-                    mix(vec3(0.055, 0.105, 0.125), vec3(0.24, 0.25, 0.23), paperBlend),
-                    coastBand * 0.34);
-
-    // Screen-footprint categorical neighbours produce constant-pixel-width
-    // borders without uploading hundreds of thousands of CPU line vertices.
-    vec2 footprint = max(fwidth(mapUv) * 1.20, idTexel);
-    uint centreId = location_at(mapUv);
-    vec4 centreColour = political_colour(centreId);
-    uint eastId = location_at(mapUv + vec2(footprint.x, 0.0));
-    uint westId = location_at(mapUv - vec2(footprint.x, 0.0));
-    uint southId = location_at(mapUv + vec2(0.0, footprint.y));
-    uint northId = location_at(mapUv - vec2(0.0, footprint.y));
-    uint neighbours[4] = uint[4](eastId, westId, southId, northId);
-    float countryEdge = 0.0;
-    float provinceEdge = 0.0;
-    for (int index = 0; index < 4; ++index) {
-        uint neighbourId = neighbours[index];
-        if (neighbourId == centreId || neighbourId == 0u || centreId == 0u) continue;
-        provinceEdge = 1.0;
-        vec4 neighbourColour = political_colour(neighbourId);
-        if (abs(neighbourColour.a - centreColour.a) > 0.25 ||
-            distance(neighbourColour.rgb, centreColour.rgb) > 0.035) {
-            countryEdge = 1.0;
-        }
-    }
-    float provinceVisibility = localDetail * (1.0 - countryEdge) * 0.11;
-    mapColour = mix(mapColour, vec3(0.13, 0.12, 0.105),
-                    provinceEdge * provinceVisibility);
-    mapColour = mix(mapColour, vec3(0.095, 0.085, 0.073),
-                    countryEdge * mix(0.30, 0.52, paperBlend));
-
-    outColor = vec4(max(mapColour, vec3(0.0)), 1.0);
+    // Close terrain is more legible; far paper remains subdued and clean.
+    map_colour *= 1.0 + (paper_grain - 0.5) * 0.018 * (0.4 + closeFactor);
+    outColor = vec4(max(map_colour, vec3(0.0)), 1.0);
 }

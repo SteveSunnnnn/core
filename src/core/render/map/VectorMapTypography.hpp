@@ -48,7 +48,9 @@ public:
                                                               std::span<const VectorPoint> anchors,
                                                               float font_size = 16.0f,
                                                               std::uint32_t rgba = 0xff3a2618u,
-                                                              int priority = 10);
+                                                              int priority = 10,
+                                                              float tracking_factor = 1.0f,
+                                                              float fill_ratio = 0.8f);
 
     // Prunes overlapping labels based on priority
     static void prune_collisions(std::span<CurvedLabelLayout> labels);

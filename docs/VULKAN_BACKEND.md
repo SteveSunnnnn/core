@@ -1,4 +1,7 @@
-# Core Vulkan Backend — 0.2 implementation contract
+# Core Vulkan Backend contract
+
+> Top-level boundaries and dependency direction live in [ARCHITECTURE.md](ARCHITECTURE.md);
+> this file is the Vulkan backend implementation contract.
 
 The renderer backend is intentionally narrow and strategy-specific.
 
@@ -63,7 +66,7 @@ The renderer does not maintain one C++ render object for each visible world obje
 
 ## 1.0 RC-GPU live validation draw
 
-When `CORE_SHADER_DIR` points to the SPIR-V output produced by `tools/windows/validate_core.ps1`, the desktop backend creates graphics pipelines for Terrain, Ocean, Political Overlay, Living Map and solid Strategy UI. The 300-frame release gate executes all five pipelines under Dynamic Rendering and `VK_LAYER_KHRONOS_validation`. Render-finished binary semaphores are owned per swapchain image rather than per CPU frame, so they are not recycled before the presentation engine releases that image. This path is a production-API integration gate; final world-resource descriptor bindings, GPU culling/indirect dispatch and art-direction approval remain separate from the validation scene.
+When `CORE_SHADER_DIR` points to the SPIR-V output produced by `tools/windows/validate_core.ps1`, the desktop backend creates graphics pipelines for the streamed world-page mesh, Living Map, map labels and Strategy UI. Terrain/ocean shader contracts remain available for the next renderer stage; they are not claimed as live production passes until their resources and GPU draw paths are bound. Render-finished binary semaphores are owned per swapchain image rather than per CPU frame, so they are not recycled before the presentation engine releases that image.
 
 Strategy UI coordinates are logical window coordinates with a top-left origin
 and positive Y downward. A positive Vulkan viewport height uses the same window
@@ -72,6 +75,11 @@ Scissors are converted to swapchain pixels using the current SDL logical/pixel
 ratio, which keeps geometry, clipping and input aligned on high-DPI displays.
 
 Shipping text uses `.corefont` MSDF metrics and a matching `COREIMG1` atlas.
+The world map is separate: Vulkan accepts only `world.coreworld`, streams the
+province/coast + height + lake-mask page family, and never uploads the legacy
+full-world map `.coreimg` assets. Pack opening, page admission and CPU decode
+live in `WorldMapPageStreamer`; the Vulkan translation unit only records the
+bounded atlas uploads, page-mesh instance buffer and their image barriers.
 The fragment shader derives screen-space distance coverage from `fwidth`, so
 thin strokes do not disappear when DPI or scripted font size changes. See
 `SCRIPT_FIRST_CONTENT.md` for the content-owned font pipeline.

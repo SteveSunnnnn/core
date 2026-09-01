@@ -19,7 +19,6 @@ looks*.
 | `core::UiDrawList` | Materials + generic components; reads `theme()` (default `UiTheme::victorian()`) |
 | `core::ScriptedGuiPainter` | Scripted GUI widget styling from `ScriptedGuiPaintTheme` (mapped from `UiTheme`) |
 | `core::TooltipStack` | Tooltip chrome (parchment, leather title plaque, term links) |
-| `src/game` HUD | Game composition only; all colors come from the draw-list theme |
 
 A custom theme is installed per draw list (`draw_list.set_theme(&my_theme)`)
 or per scripted painter (`make_scripted_gui_paint_theme(my_theme)`). A null
@@ -96,7 +95,7 @@ out below the header.
 - `ui_display` — Playfair Display Bold, for display roles;
 - `ui_body` — EB Garamond Medium, the default body/number face.
 
-The desktop shell auto-loads `ui_body` when `CORE_UI_FONT_ATLAS` is unset
+An engine host may auto-load `ui_body` when `CORE_UI_FONT_ATLAS` is unset
 (searched from `assets/fonts`, `../assets/fonts`, `../../assets/fonts`). Bake
 alternates with `tools/assets/cook_fonts.py` and `tools/assets/charset_ui.txt`
 (ASCII plus em/en dash, middle dot, multiplication sign, ellipsis). CJK
@@ -138,7 +137,7 @@ python tools/assets/cook_fonts.py --font <path.ttf> --out-dir assets/font \
     --name ui_serif --atlas-key ui/serif --size 48
 ```
 
-The desktop shell loads the atlas through `CORE_UI_FONT_ATLAS` /
+An engine host loads the atlas through `CORE_UI_FONT_ATLAS` /
 `CORE_UI_FONT_METRICS` (`.coreimg` + `.corefont`). CJK games bake a second
 atlas with a `--charset` file; the runtime falls back per glyph.
 

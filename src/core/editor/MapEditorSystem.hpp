@@ -1,11 +1,21 @@
 #pragma once
 #include "core/base/StrongId.hpp"
+#include "core/render/map/CoastDistancePage.hpp"
+#include "core/render/map/ProvinceRasterPage.hpp"
 #include "core/ui/StrategyUi.hpp"
+#include "core/world/GeographyStore.hpp"
+#include "core/world/WorldBootstrap.hpp"
+#include "core/worldpack/WorldPack.hpp"
+#include "core/worldpack/WorldPackMetadata.hpp"
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace core {
@@ -22,19 +32,6 @@ enum class EditorTool : std::uint8_t {
 enum class EditorBrushShape : std::uint8_t {
     Circle = 0,
     Square = 1
-};
-
-enum class TerrainType : std::uint8_t {
-    Plains = 0,
-    Hills = 1,
-    Mountains = 2,
-    Forest = 3,
-    Desert = 4,
-    Marsh = 5,
-    Jungle = 6,
-    Arctic = 7,
-    Ocean = 8,
-    Count = 9
 };
 
 struct EditorBrushState {
@@ -82,7 +79,8 @@ struct EditorProvinceProperties {
 
 class MapEditorSystem {
 public:
-    MapEditorSystem() = default;
+    MapEditorSystem();
+    ~MapEditorSystem();
 
     // Editor mode toggle
     void set_active(bool active) noexcept { active_ = active; }
@@ -127,15 +125,51 @@ public:
     void render_status_bar(UiDrawList& ui, UiRect screen) const;
 
     // Export modified world
+    bool load_worldpack(const std::filesystem::path& path, std::string& diagnostic);
     bool export_to_worldpack(const std::filesystem::path& path) const;
+
+    struct EditorSplineLink {
+        ProvinceId from{};
+        ProvinceId to{};
+    };
+    [[nodiscard]] bool validate_spline_topology(
+        std::span<const EditorSplineLink> links, std::string& diagnostic) const;
 
     // Stats
     [[nodiscard]] std::size_t total_edits() const noexcept;
     [[nodiscard]] bool has_unsaved_changes() const noexcept { return has_unsaved_changes_; }
 
 private:
+    struct EditorPageKey {
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        friend bool operator==(const EditorPageKey&, const EditorPageKey&) = default;
+    };
+    struct EditorPageKeyHash {
+        [[nodiscard]] std::size_t operator()(const EditorPageKey& key) const noexcept {
+            const auto x = static_cast<std::uint64_t>(static_cast<std::uint32_t>(key.x));
+            const auto y = static_cast<std::uint64_t>(static_cast<std::uint32_t>(key.y));
+            std::uint64_t value = (x << 32u) ^ y;
+            value ^= value >> 30u;
+            value *= 0xbf58476d1ce4e5b9ull;
+            value ^= value >> 27u;
+            value *= 0x94d049bb133111ebull;
+            value ^= value >> 31u;
+            return static_cast<std::size_t>(value);
+        }
+    };
+    struct EditorPage {
+        ProvinceRasterPage province;
+        CoastDistancePage::Storage coast{};
+    };
+
     void apply_brush_at(float world_x, float world_y);
     void commit_stroke();
+    [[nodiscard]] EditorPageKey normalise_page_key(EditorPageKey key) const noexcept;
+    [[nodiscard]] EditorPage* page_for(EditorPageKey key);
+    [[nodiscard]] const EditorPage* page_for(EditorPageKey key) const;
+    [[nodiscard]] EditorPage* ensure_page(EditorPageKey key);
+    void apply_cell(EditorCellEdit edit, std::uint16_t encoded_value);
 
     bool active_ = false;
     EditorBrushState brush_;
@@ -149,6 +183,16 @@ private:
     std::optional<ProvinceId> selected_province_;
     EditorProvinceProperties selected_props_;
     bool has_unsaved_changes_ = false;
+
+    WorldPackReader world_pack_;
+    WorldPackMetadata world_metadata_{};
+    bool world_pack_loaded_ = false;
+    double page_origin_x_m_ = 0.0;
+    double page_origin_y_m_ = 0.0;
+    double page_resolution_m_ = 500.0;
+    std::unordered_map<EditorPageKey, EditorPage, EditorPageKeyHash> resident_pages_;
+    std::unordered_map<EditorPageKey, bool, EditorPageKeyHash> dirty_pages_;
+    std::unique_ptr<WorldBootstrapResult> bootstrap_;
 };
 
 } // namespace core

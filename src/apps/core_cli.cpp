@@ -1,4 +1,4 @@
-#include "core/render/RenderSnapshot.hpp"
+#include "core/render/RenderSnapshotBuilder.hpp"
 #include "core/jobs/JobSystem.hpp"
 #include "core/geo/MercatorProjection.hpp"
 #include "core/render/terrain/TerrainClipmap.hpp"

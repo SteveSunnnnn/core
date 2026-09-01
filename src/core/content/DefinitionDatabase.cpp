@@ -26,6 +26,24 @@ DefinitionDatabase::DefinitionDatabase(SymbolTable& symbols, const ScriptRegistr
     sym_output_ = symbols_.intern("output");
     sym_need_ = symbols_.intern("need");
     sym_quantity_milli_ = symbols_.intern("quantity_milli");
+    sym_map_color_ = symbols_.intern("map_color");
+    sym_red_ = symbols_.intern("r");
+    sym_green_ = symbols_.intern("g");
+    sym_blue_ = symbols_.intern("b");
+    sym_alpha_ = symbols_.intern("a");
+    sym_building_ = symbols_.intern("building");
+    sym_pop_ = symbols_.intern("pop");
+    sym_type_ = symbols_.intern("type");
+    sym_province_ = symbols_.intern("province");
+    sym_state_ = symbols_.intern("state");
+    sym_level_ = symbols_.intern("level");
+    sym_size_ = symbols_.intern("size");
+    sym_employer_ = symbols_.intern("employer");
+    sym_literacy_permyriad_ = symbols_.intern("literacy_permyriad");
+    sym_qualification_permyriad_ = symbols_.intern("qualification_permyriad");
+    sym_wealth_milli_ = symbols_.intern("wealth_milli");
+    sym_political_strength_milli_ = symbols_.intern("political_strength_milli");
+    sym_visual_ = symbols_.intern("visual");
     country_lookup_.reserve(512u);
     runtime_country_lookup_.reserve(512u);
 }
@@ -133,6 +151,13 @@ bool DefinitionDatabase::ingest(const ScriptParseResult& parsed, std::vector<Scr
                                 "building_type workers_per_level", value)) {
                         definition.workers_per_level = static_cast<std::uint32_t>(value);
                     }
+                } else if (field.key == sym_visual_) {
+                    if (field.kind != ScriptValueKind::Symbol) {
+                        diagnostics.push_back({"building_type visual must be a symbol", field.line});
+                        ok = false;
+                    } else {
+                        definition.visual = field.symbol;
+                    }
                 } else if (field.key == sym_input_ || field.key == sym_output_) {
                     EconomyFlowSpec flow;
                     if (parse_flow(field, flow)) {
@@ -190,6 +215,132 @@ bool DefinitionDatabase::ingest(const ScriptParseResult& parsed, std::vector<Scr
                 }
             }
             upsert(need_profiles_, std::move(definition));
+        } else if (object.type == sym_building_) {
+            BuildingContentDefinition definition;
+            definition.key = object.name;
+            bool has_type = false;
+            bool has_province = false;
+            bool has_state = false;
+            for (const auto& field : object.fields) {
+                if (field.key == sym_type_) {
+                    if (field.kind != ScriptValueKind::Symbol) {
+                        diagnostics.push_back({"building type must be a symbol", field.line});
+                        ok = false;
+                    } else {
+                        definition.type = field.symbol;
+                        has_type = true;
+                    }
+                } else if (field.key == sym_province_ || field.key == sym_state_) {
+                    if (field.kind != ScriptValueKind::Symbol) {
+                        diagnostics.push_back({"building province/state must be a symbol", field.line});
+                        ok = false;
+                    } else if (field.key == sym_province_) {
+                        definition.province = field.symbol;
+                        has_province = true;
+                    } else {
+                        definition.state = field.symbol;
+                        has_state = true;
+                    }
+                } else if (field.key == sym_production_method_) {
+                    if (field.kind != ScriptValueKind::Symbol) {
+                        diagnostics.push_back({"building production_method must be a symbol", field.line});
+                        ok = false;
+                    } else {
+                        definition.production_method = field.symbol;
+                    }
+                } else if (field.key == sym_level_) {
+                    std::int64_t value = 0;
+                    if (integer(field, 1, std::numeric_limits<std::uint16_t>::max(),
+                                "building level", value))
+                        definition.level = static_cast<std::uint16_t>(value);
+                } else {
+                    diagnostics.push_back({"unknown building field: " +
+                                               std::string{symbols_.text(field.key)}, field.line});
+                    ok = false;
+                }
+            }
+            if (!has_type || (has_province == has_state)) {
+                diagnostics.push_back({"building requires type and exactly one province/state", object.line});
+                ok = false;
+            }
+            upsert(buildings_, std::move(definition));
+        } else if (object.type == sym_pop_) {
+            PopContentDefinition definition;
+            definition.key = object.name;
+            bool has_size = false;
+            bool has_need_profile = false;
+            bool has_province = false;
+            bool has_state = false;
+            for (const auto& field : object.fields) {
+                if (field.key == sym_size_) {
+                    std::int64_t value = 0;
+                    if (integer(field, 1, std::numeric_limits<PopulationCount>::max(),
+                                "pop size", value)) {
+                        definition.size = static_cast<PopulationCount>(value);
+                        has_size = true;
+                    }
+                } else if (field.key == sym_need_profile_) {
+                    if (field.kind != ScriptValueKind::Symbol) {
+                        diagnostics.push_back({"pop need_profile must be a symbol", field.line});
+                        ok = false;
+                    } else {
+                        definition.need_profile = field.symbol;
+                        has_need_profile = true;
+                    }
+                } else if (field.key == sym_province_ || field.key == sym_state_) {
+                    if (field.kind != ScriptValueKind::Symbol) {
+                        diagnostics.push_back({"pop province/state must be a symbol", field.line});
+                        ok = false;
+                    } else if (field.key == sym_province_) {
+                        definition.province = field.symbol;
+                        has_province = true;
+                    } else {
+                        definition.state = field.symbol;
+                        has_state = true;
+                    }
+                } else if (field.key == sym_employer_) {
+                    if (field.kind != ScriptValueKind::Symbol) {
+                        diagnostics.push_back({"pop employer must be a symbol", field.line});
+                        ok = false;
+                    } else {
+                        definition.employer = field.symbol;
+                    }
+                } else if (field.key == sym_literacy_permyriad_ ||
+                           field.key == sym_qualification_permyriad_ ||
+                           field.key == sym_political_strength_milli_) {
+                    std::int64_t value = 0;
+                    const auto label = field.key == sym_literacy_permyriad_
+                        ? "pop literacy_permyriad"
+                        : field.key == sym_qualification_permyriad_
+                            ? "pop qualification_permyriad"
+                            : "pop political_strength_milli";
+                    const auto maximum = field.key == sym_political_strength_milli_
+                        ? static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())
+                        : 10'000;
+                    if (integer(field, 0, maximum, label, value)) {
+                        if (field.key == sym_literacy_permyriad_)
+                            definition.literacy_permyriad = static_cast<std::uint16_t>(value);
+                        else if (field.key == sym_qualification_permyriad_)
+                            definition.qualification_permyriad = static_cast<std::uint16_t>(value);
+                        else
+                            definition.political_strength_milli = static_cast<std::uint32_t>(value);
+                    }
+                } else if (field.key == sym_wealth_milli_) {
+                    std::int64_t value = 0;
+                    if (integer(field, std::numeric_limits<std::int32_t>::min(),
+                                std::numeric_limits<std::int32_t>::max(), "pop wealth_milli", value))
+                        definition.wealth_milli = static_cast<std::int32_t>(value);
+                } else {
+                    diagnostics.push_back({"unknown pop field: " +
+                                               std::string{symbols_.text(field.key)}, field.line});
+                    ok = false;
+                }
+            }
+            if (!has_size || !has_need_profile || (has_province == has_state)) {
+                diagnostics.push_back({"pop requires size, need_profile and exactly one province/state", object.line});
+                ok = false;
+            }
+            upsert(pops_, std::move(definition));
         }
     }
 
@@ -211,6 +362,40 @@ bool DefinitionDatabase::ingest(const ScriptParseResult& parsed, std::vector<Scr
             } else if (field.key == sym_tax_rate_) {
                 if (field.kind != ScriptValueKind::Number) { diagnostics.push_back({"country tax_rate must be numeric", field.line}); object_ok = false; }
                 else def.tax_rate = field.number;
+            } else if (field.key == sym_map_color_) {
+                if (field.kind != ScriptValueKind::Block) {
+                    diagnostics.push_back({"country map_color must be a block", field.line});
+                    object_ok = false;
+                } else {
+                    bool seen[4] = {false, false, false, false};
+                    for (const auto& channel : field.children) {
+                        int slot = -1;
+                        if (channel.key == sym_red_) slot = 0;
+                        else if (channel.key == sym_green_) slot = 1;
+                        else if (channel.key == sym_blue_) slot = 2;
+                        else if (channel.key == sym_alpha_) slot = 3;
+                        else {
+                            diagnostics.push_back({"unknown map_color channel: " +
+                                                       std::string{symbols_.text(channel.key)}, channel.line});
+                            object_ok = false;
+                            continue;
+                        }
+                        std::int64_t value = 0;
+                        if (seen[slot] || !integer(channel, 0, 255, "map_color channel", value)) {
+                            object_ok = false;
+                            continue;
+                        }
+                        seen[slot] = true;
+                        def.map_color[static_cast<std::size_t>(slot)] = static_cast<std::uint8_t>(value);
+                    }
+                    for (const bool channel : seen) {
+                        if (!channel) {
+                            diagnostics.push_back({"map_color requires r, g, b and a", field.line});
+                            object_ok = false;
+                            break;
+                        }
+                    }
+                }
             } else {
                 // Every other definition type rejects unknown fields; country
                 // silently ignored them, so a typo like `treasur = 100` produced
@@ -372,6 +557,15 @@ const CountryDefinition* DefinitionDatabase::find_country(SymbolId tag) const no
     return it == country_lookup_.end() ? nullptr : &countries_[it->second];
 }
 
+bool DefinitionDatabase::country_map_color(std::string_view tag,
+                                            std::array<std::uint8_t, 4>& out) const noexcept {
+    const auto symbol = symbols_.find(tag);
+    const auto* country = find_country(symbol);
+    if (country == nullptr) return false;
+    out = country->map_color;
+    return true;
+}
+
 CountryId DefinitionDatabase::runtime_country(SymbolId tag) const noexcept {
     const auto it = runtime_country_lookup_.find(tag.value());
     return it == runtime_country_lookup_.end() ? CountryId{} : it->second;
@@ -390,7 +584,9 @@ std::size_t DefinitionDatabase::immutable_bytes() const noexcept {
         economy_bytes += (definition.inputs.capacity() + definition.outputs.capacity()) * sizeof(EconomyFlowSpec);
     for (const auto& definition : need_profiles_)
         economy_bytes += definition.needs.capacity() * sizeof(EconomyFlowSpec);
-    return countries_.capacity() * sizeof(CountryDefinition) + economy_bytes + scripts_.instruction_bytes() +
+    return countries_.capacity() * sizeof(CountryDefinition) +
+           buildings_.capacity() * sizeof(BuildingContentDefinition) +
+           pops_.capacity() * sizeof(PopContentDefinition) + economy_bytes + scripts_.instruction_bytes() +
            localization_.memory_bytes() + gameplay_content_.memory_bytes() +
            research_content_.memory_bytes() + notification_content_.memory_bytes() +
            on_action_content_.memory_bytes() + generic +

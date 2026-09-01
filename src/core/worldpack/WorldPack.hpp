@@ -41,6 +41,9 @@ enum class WorldChunkType : std::uint16_t {
     ArchitectureRegion = 20,
     HistoricalSetup = 21,
     ResourceDistribution = 22,
+    AreaDefinitions = 23,
+    TradeProvinceDefinitions = 24,
+    LocationDefinitions = 25,
 };
 
 enum class WorldChunkCodec : std::uint8_t {
@@ -84,6 +87,9 @@ struct WorldPackStats {
     std::uint64_t stored_bytes = 0;
     std::uint64_t index_bytes = 0;
     std::uint64_t build_hash = 0;
+    // The x axis of page keys wraps when this flag is set. It is stored in
+    // the reserved header word so existing 64-byte packs remain readable.
+    bool horizontal_wrap = false;
 
     [[nodiscard]] double compression_ratio() const noexcept {
         return raw_bytes == 0 ? 1.0 : static_cast<double>(stored_bytes) / static_cast<double>(raw_bytes);
@@ -96,6 +102,7 @@ struct WorldPackWriteOptions {
     // compression saves at least this fraction of payload bytes.
     double minimum_savings_fraction = 0.05;
     std::uint32_t data_alignment = 64;
+    bool horizontal_wrap = false;
 };
 
 class WorldPackWriter {
